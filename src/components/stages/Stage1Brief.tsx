@@ -48,8 +48,101 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
   onApproveAndContinue,
 }) => {
   const [isAnalysing, setIsAnalysing] = useState(false);
+  const [isCopilotDrafting, setIsCopilotDrafting] = useState(false);
+  const [copilotBriefPrompt, setCopilotBriefPrompt] = useState('');
+  const [copilotNotice, setCopilotNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const brief = project.brief;
+
+  const handleCopilotAutoFillStage1 = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const text = copilotBriefPrompt.trim();
+    if (!text || isCopilotDrafting) return;
+    setIsCopilotDrafting(true);
+    setErrorMsg(null);
+    setCopilotNotice(null);
+    try {
+      const res = await fetch('/api/v2/copilot/draft-course', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: text,
+          template,
+          currentBrief: brief,
+          currentModules: project.curriculum.modules,
+          provider: selectedProvider,
+          model: selectedModel,
+        }),
+      });
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Copilot could not draft Stage 1 placeholders.');
+      }
+      const drafted = data.brief || {};
+      const protectedKeys = new Set([
+        'title',
+        'code',
+        'industryDomain',
+        'targetAudience',
+        'estimatedDuration',
+        'language',
+      ]);
+
+      onUpdateProject(
+        prev => {
+          const nextBrief = {
+            ...prev.brief,
+            templateFieldValues: {
+              ...prev.brief.templateFieldValues,
+              ...(drafted.templateFieldValues || {}),
+            },
+            fieldStatuses: {
+              ...prev.brief.fieldStatuses,
+              ...(drafted.fieldStatuses || {}),
+            },
+            approval: { approved: false },
+          };
+          for (const [k, v] of Object.entries(drafted)) {
+            if (k === 'templateFieldValues' || k === 'fieldStatuses') continue;
+            if (prev.brief.metadataLocked && protectedKeys.has(k)) continue;
+            if (v !== undefined && v !== null && String(v).trim() !== '') {
+              (nextBrief as any)[k] = v;
+            }
+          }
+
+          const shouldSeedModules =
+            prev.curriculum.modules.length === 0 &&
+            Array.isArray(data.modules) &&
+            data.modules.length > 0;
+
+          return {
+            ...prev,
+            lifecycleStatus: prev.lifecycleStatus === 'draft' ? 'in_development' : prev.lifecycleStatus,
+            brief: nextBrief,
+            curriculum: shouldSeedModules
+              ? {
+                  ...prev.curriculum,
+                  rationale: `Starter ${data.modules.length}-module structure drafted by Course Copilot.`,
+                  modules: data.modules,
+                  approval: { approved: false },
+                }
+              : prev.curriculum,
+          };
+        },
+        { trigger: 'ai_generation', summary: 'Populated Stage 1 Brief & placeholders via Copilot' }
+      );
+      setCopilotBriefPrompt('');
+      setCopilotNotice(
+        data.modules?.length && project.curriculum.modules.length === 0
+          ? `${data.reply || 'Drafted brief and template placeholders.'} (${data.modules.length} starter modules also added to Stage 2.)`
+          : data.reply || 'Populated Stage 1 Brief and template placeholders.'
+      );
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Copilot auto-fill failed.');
+    } finally {
+      setIsCopilotDrafting(false);
+    }
+  };
 
   const updateBrief = (patch: Partial<typeof brief>) => {
     onUpdateProject(prev => ({
@@ -172,6 +265,49 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Inline Copilot Auto-Fill Placeholders Bar */}
+      <section className="bg-white border border-[#052B66]/20 rounded-xl p-4 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-[#45CC42]" />
+            <h3 className="text-xs font-bold text-[#052B66]">
+              Copilot Auto-Fill Helper — Fill Placeholders from Your Prompt
+            </h3>
+          </div>
+          {brief.metadataLocked && (
+            <span className="text-[11px] text-slate-500">
+              Locked metadata stays protected
+            </span>
+          )}
+        </div>
+        <form onSubmit={handleCopilotAutoFillStage1} className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            value={copilotBriefPrompt}
+            onChange={e => setCopilotBriefPrompt(e.target.value)}
+            placeholder="Describe your course goal (e.g. 'Create a 6-module GEN AI course for non-technical business teams, 8 hours')..."
+            className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg bg-[#F5F7FA] focus:bg-white focus:outline-none focus:border-[#052B66]"
+          />
+          <button
+            type="submit"
+            disabled={isCopilotDrafting || !copilotBriefPrompt.trim()}
+            className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            {isCopilotDrafting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
+            )}
+            <span>{isCopilotDrafting ? 'Filling Placeholders...' : 'Fill Placeholders with Copilot'}</span>
+          </button>
+        </form>
+        {copilotNotice && (
+          <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
+            {copilotNotice}
+          </div>
+        )}
+      </section>
 
       {/* Mode 3 Diagnosis Panel (if Improve Existing Course) */}
       {project.creationMode === 'improve' && project.improveDiagnosis && (

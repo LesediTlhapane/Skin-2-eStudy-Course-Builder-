@@ -1,18 +1,22 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  CheckCircle2,
   FileText,
   FileUp,
   Loader2,
+  Send,
   Sparkles,
   Wrench,
   X,
-  AlertTriangle,
 } from 'lucide-react';
 import type {
   AIProvider,
+  CourseBrief,
   CourseCreationMode,
   CourseProject,
   CourseTemplate,
+  CurriculumModulePlan,
   SourceDocument,
 } from '../types';
 import { BENCHMARK_PRESETS, createEmptyCourseProject } from '../data/benchmarks';
@@ -28,6 +32,19 @@ interface CreateCourseModalProps {
   onCreateProject: (project: CourseProject) => void;
 }
 
+interface ModalCopilotTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  followUps?: string[];
+}
+
+const QUICK_PROMPTS = [
+  'Create a 6-module GEN AI course for business professionals (8 hours)',
+  'Workplace Health, Safety & Hazard Reporting induction (4 modules)',
+  'Consultative Customer Service & Complaint Resolution (5 modules)',
+];
+
 export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
   isOpen,
   templates,
@@ -37,10 +54,16 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
   onClose,
   onCreateProject,
 }) => {
-  const [mode, setMode] = useState<CourseCreationMode>('brief');
+  const [mode, setMode] = useState<CourseCreationMode>('copilot');
   const [templateId, setTemplateId] = useState<string>(
     initialTemplateId || templates[0]?.id || 'tpl-estudy-master-v9'
   );
+  useEffect(() => {
+    if (isOpen) {
+      setTemplateId(initialTemplateId || templates[0]?.id || 'tpl-estudy-master-v9');
+      setErrorMsg(null);
+    }
+  }, [isOpen, initialTemplateId]);
   const [presetId, setPresetId] = useState<string>('');
   const [rawText, setRawText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -48,9 +71,25 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Copilot Guided Onboarding State
+  const [copilotPrompt, setCopilotPrompt] = useState('');
+  const [copilotHistory, setCopilotHistory] = useState<ModalCopilotTurn[]>([
+    {
+      id: 'welcome',
+      role: 'assistant',
+      content:
+        'Describe the course you want to build (topic, audience, duration, or module count). I will automatically fill out the Stage 1 Course Brief, template placeholders, and a starter module plan so you never have to guess what goes into blank fields.',
+      followUps: QUICK_PROMPTS,
+    },
+  ]);
+  const [draftedBrief, setDraftedBrief] = useState<Partial<CourseBrief> | null>(null);
+  const [draftedModules, setDraftedModules] = useState<CurriculumModulePlan[]>([]);
+  const [includeDraftedModules, setIncludeDraftedModules] = useState(true);
+
   if (!isOpen) return null;
 
   const selectedTemplate = templates.find(t => t.id === templateId) || templates[0];
+  const templateFields = selectedTemplate?.sections.flatMap(s => s.fields) || [];
 
   const readFilePayload = async (file: File) => {
     const isText =
@@ -70,6 +109,123 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
       reader.readAsDataURL(file);
     });
     return { rawText: undefined, base64Data };
+  };
+
+  const handleCopilotDraft = async (overridePrompt?: string) => {
+    const promptText = (overridePrompt ?? copilotPrompt).trim();
+    if (!promptText || isProcessing) return;
+
+    const userTurn: ModalCopilotTurn = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: promptText,
+    };
+    const nextHistory = [...copilotHistory, userTurn];
+    setCopilotHistory(nextHistory);
+    if (!overridePrompt) setCopilotPrompt('');
+    setIsProcessing(true);
+    setErrorMsg(null);
+
+    try {
+      const res = await fetch('/api/v2/copilot/draft-course', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: promptText,
+          template: selectedTemplate,
+          currentBrief: draftedBrief || undefined,
+          currentModules: draftedModules.length > 0 ? draftedModules : undefined,
+          messages: nextHistory.map(m => ({ role: m.role, content: m.content })),
+          provider: selectedProvider,
+          model: selectedModel,
+        }),
+      });
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Copilot could not draft the course brief.');
+      }
+
+      const mergedBrief: Partial<CourseBrief> = {
+        ...(draftedBrief || {}),
+        ...(data.brief || {}),
+        templateFieldValues: {
+          ...(draftedBrief?.templateFieldValues || {}),
+          ...(data.brief?.templateFieldValues || {}),
+        },
+        fieldStatuses: {
+          ...(draftedBrief?.fieldStatuses || {}),
+          ...(data.brief?.fieldStatuses || {}),
+        },
+      };
+
+      setDraftedBrief(mergedBrief);
+      if (Array.isArray(data.modules)) {
+        setDraftedModules(data.modules);
+      }
+
+      setCopilotHistory(prev => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          content: data.reply || 'Draft updated. Review the filled fields on the right.',
+          followUps: Array.isArray(data.suggestedFollowUps) ? data.suggestedFollowUps : [],
+        },
+      ]);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Copilot request failed.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCreateFromCopilot = () => {
+    if (!draftedBrief) return;
+    const project = createEmptyCourseProject({
+      templateId: selectedTemplate.id,
+      templateName: selectedTemplate.name,
+      creationMode: 'copilot',
+    });
+
+    project.brief = {
+      ...project.brief,
+      ...draftedBrief,
+      templateFieldValues: {
+        ...project.brief.templateFieldValues,
+        ...(draftedBrief.templateFieldValues || {}),
+      },
+      fieldStatuses: {
+        ...project.brief.fieldStatuses,
+        ...(draftedBrief.fieldStatuses || {}),
+      },
+      saCompliance: project.brief.saCompliance,
+      metadataLocked: false,
+      approval: { approved: false },
+    };
+
+    if (includeDraftedModules && draftedModules.length > 0) {
+      project.curriculum = {
+        ...project.curriculum,
+        rationale: `Initial ${draftedModules.length}-module structure drafted by Course Copilot during project creation.`,
+        modules: draftedModules,
+        approval: { approved: false },
+      };
+    }
+
+    onCreateProject(project);
+    setDraftedBrief(null);
+    setDraftedModules([]);
+    setCopilotPrompt('');
+    setCopilotHistory([
+      {
+        id: 'welcome',
+        role: 'assistant',
+        content:
+          'Describe the course you want to build (topic, audience, duration, or module count). I will automatically fill out the Stage 1 Course Brief, template placeholders, and a starter module plan so you never have to guess what goes into blank fields.',
+        followUps: QUICK_PROMPTS,
+      },
+    ]);
+    onClose();
   };
 
   const handleStartBriefMode = () => {
@@ -210,12 +366,12 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl border border-slate-200 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-xl">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+      <div className="bg-white rounded-xl border border-slate-200 max-w-4xl w-full max-h-[92vh] flex flex-col shadow-xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
           <div>
             <h2 className="text-lg font-bold text-[#052B66]">Start a New Course Project</h2>
             <p className="text-xs text-slate-500">
-              Choose how to initialise the 7-stage instructional design workspace
+              Use Course Copilot to populate brief & template placeholders from a prompt, or start from a blank brief or document.
             </p>
           </div>
           <button
@@ -227,26 +383,33 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 space-y-6">
-          {/* 3 Creation Modes */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          {/* 4 Creation Modes */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               {
+                id: 'copilot' as const,
+                title: '1. Course Copilot',
+                desc: 'Prompt Copilot to fill Stage 1 & template placeholders.',
+                icon: Sparkles,
+                accent: true,
+              },
+              {
                 id: 'brief' as const,
-                title: '1. From a Brief',
-                desc: 'Define brief, audience, and topics in Stage 1.',
+                title: '2. Blank / Preset Brief',
+                desc: 'Fill fields manually or load a benchmark brief.',
                 icon: FileText,
               },
               {
                 id: 'source' as const,
-                title: '2. From Source Material',
-                desc: 'Upload manuals, policies, or legislation for AI analysis.',
+                title: '3. From Source File',
+                desc: 'Upload manuals or policies for AI analysis.',
                 icon: FileUp,
               },
               {
                 id: 'improve' as const,
-                title: '3. Improve Existing Course',
-                desc: 'Diagnose weaknesses first while preserving curriculum.',
+                title: '4. Improve Course',
+                desc: 'Diagnose an existing course while preserving structure.',
                 icon: Wrench,
               },
             ].map(item => {
@@ -260,13 +423,21 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                     setMode(item.id);
                     setErrorMsg(null);
                   }}
-                  className={`p-3.5 rounded-lg border text-left transition-colors cursor-pointer ${
+                  className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
                     active
-                      ? 'border-[#052B66] bg-[#052B66]/5'
+                      ? 'border-[#052B66] bg-[#052B66]/5 ring-1 ring-[#052B66]/20'
                       : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 mb-2 ${active ? 'text-[#052B66]' : 'text-slate-500'}`} />
+                  <Icon
+                    className={`w-4 h-4 mb-1.5 ${
+                      active
+                        ? item.accent
+                          ? 'text-[#45CC42]'
+                          : 'text-[#052B66]'
+                        : 'text-slate-500'
+                    }`}
+                  />
                   <div className="text-xs font-bold text-[#052B66]">{item.title}</div>
                   <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{item.desc}</div>
                 </button>
@@ -275,25 +446,270 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
           </div>
 
           {/* Template Selection */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-[#052B66]">
-              Course Template
-            </label>
-            <select
-              value={templateId}
-              onChange={e => setTemplateId(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-[#F5F7FA] focus:bg-white focus:outline-none focus:border-[#052B66]"
-            >
-              {templates.map(tpl => (
-                <option key={tpl.id} value={tpl.id}>
-                  {tpl.name} ({tpl.category})
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-slate-500">{selectedTemplate?.description}</p>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+            <div className="md:col-span-7 space-y-1">
+              <label className="block text-xs font-bold text-[#052B66]">
+                Course Template
+              </label>
+              <select
+                value={templateId}
+                onChange={e => setTemplateId(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-[#F5F7FA] focus:bg-white focus:outline-none focus:border-[#052B66]"
+              >
+                {templates.map(tpl => (
+                  <option key={tpl.id} value={tpl.id}>
+                    {tpl.name} ({tpl.category})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-5 text-[11px] text-slate-500 pb-1.5">
+              {selectedTemplate?.sections.length || 0} template sections · {templateFields.length} custom placeholders
+            </div>
           </div>
 
-          {mode === 'brief' ? (
+          {mode === 'copilot' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+              {/* Left: Copilot Prompt & Conversation */}
+              <div className="lg:col-span-6 border border-slate-200 rounded-xl flex flex-col bg-[#F5F7FA] overflow-hidden min-h-[340px]">
+                <div className="px-4 py-2.5 bg-[#052B66] text-white flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-[#45CC42]" />
+                    <span className="text-xs font-bold">Course Onboarding Copilot</span>
+                  </div>
+                  <span className="text-[11px] text-slate-300">Auto-fills placeholders</span>
+                </div>
+
+                <div className="flex-1 p-3.5 space-y-3 overflow-y-auto max-h-[260px]">
+                  {copilotHistory.map(turn => (
+                    <div
+                      key={turn.id}
+                      className={`space-y-1.5 ${turn.role === 'user' ? 'text-right' : 'text-left'}`}
+                    >
+                      <div
+                        className={`inline-block max-w-[94%] rounded-lg px-3 py-2 text-xs leading-relaxed ${
+                          turn.role === 'user'
+                            ? 'bg-[#052B66] text-white text-left'
+                            : 'bg-white border border-slate-200 text-slate-800'
+                        }`}
+                      >
+                        {turn.content}
+                      </div>
+                      {turn.role === 'assistant' && turn.followUps && turn.followUps.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pt-0.5">
+                          {turn.followUps.map(s => (
+                            <button
+                              key={s}
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={() => handleCopilotDraft(s)}
+                              className="px-2.5 py-1 text-[11px] font-medium bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-md text-left cursor-pointer disabled:opacity-50"
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {isProcessing && (
+                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#052B66]" />
+                      <span>Drafting course brief, placeholders & module outline...</span>
+                    </div>
+                  )}
+                </div>
+
+                <form
+                  onSubmit={e => {
+                    e.preventDefault();
+                    handleCopilotDraft();
+                  }}
+                  className="p-3 bg-white border-t border-slate-200 space-y-2"
+                >
+                  <textarea
+                    rows={2}
+                    value={copilotPrompt}
+                    onChange={e => setCopilotPrompt(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleCopilotDraft();
+                      }
+                    }}
+                    placeholder="e.g. Create a 6-module GEN AI course for non-technical managers, 8 hours, with practical prompt exercises..."
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500">
+                      Press Enter or click Draft to populate fields
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={isProcessing || !copilotPrompt.trim()}
+                      className="px-3.5 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {isProcessing ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5 text-[#45CC42]" />
+                      )}
+                      <span>{draftedBrief ? 'Refine Draft' : 'Draft Fields'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Right: Live Populated Placeholders Preview */}
+              <div className="lg:col-span-6 border border-slate-200 rounded-xl bg-white flex flex-col overflow-hidden min-h-[340px]">
+                <div className="px-4 py-2.5 border-b border-slate-200 bg-[#F5F7FA] flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#052B66]">
+                    Drafted Brief & Placeholder Preview
+                  </span>
+                  {draftedBrief && (
+                    <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Ready to Create
+                    </span>
+                  )}
+                </div>
+
+                {!draftedBrief ? (
+                  <div className="flex-1 p-5 flex flex-col justify-center space-y-3 text-xs text-slate-600">
+                    <p className="font-bold text-[#052B66]">
+                      Copilot will automatically populate these fields for you:
+                    </p>
+                    <ul className="space-y-1.5 list-disc pl-4">
+                      <li>Course Title, Code, Domain, Experience Level & Duration</li>
+                      <li>Target Audience, Job Roles & Prerequisites</li>
+                      <li>Course Purpose, Workplace Need & Learning Requirements</li>
+                      <li>Mandatory Subject Topics list (Stage 2 Coverage Baseline)</li>
+                      <li>
+                        All {templateFields.length} template-specific placeholders for{' '}
+                        <strong>{selectedTemplate?.name}</strong>
+                      </li>
+                      <li>Starter module sequence (matching any module count you specify)</li>
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="flex-1 p-4 space-y-3 overflow-y-auto max-h-[340px] text-xs">
+                    <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <input
+                          type="text"
+                          value={draftedBrief.title || ''}
+                          onChange={e =>
+                            setDraftedBrief(prev => ({ ...(prev || {}), title: e.target.value }))
+                          }
+                          placeholder="Course Title"
+                          className="flex-1 px-2.5 py-1 text-sm font-bold text-[#052B66] bg-white border border-slate-200 rounded"
+                        />
+                        <span className="text-[11px] font-mono text-slate-600 bg-white px-2 py-1 border border-slate-200 rounded">
+                          {draftedBrief.code || 'Code TBC'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-700">
+                        <div>
+                          <strong>Domain:</strong> {draftedBrief.industryDomain || 'TBC'}
+                        </div>
+                        <div>
+                          <strong>Duration:</strong> {draftedBrief.estimatedDuration || 'TBC'}
+                        </div>
+                        <div>
+                          <strong>Level:</strong> {draftedBrief.experienceLevel || 'Intermediate'}
+                        </div>
+                        <div>
+                          <strong>AI Mode:</strong> {draftedBrief.aiIntegrationMode || 'optional'}
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-slate-700">
+                        <strong>Target Audience:</strong> {draftedBrief.targetAudience}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-bold text-[#052B66]">
+                        Purpose & Workplace Need
+                      </div>
+                      <p className="text-[11px] text-slate-700 leading-relaxed">
+                        {draftedBrief.purpose}
+                      </p>
+                      {draftedBrief.workplaceProblem && (
+                        <p className="text-[11px] text-slate-500">
+                          <strong>Need:</strong> {draftedBrief.workplaceProblem}
+                        </p>
+                      )}
+                    </div>
+
+                    {draftedBrief.subjectTopicsInput && (
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-bold text-[#052B66]">
+                          Mandatory Subject Topics
+                        </div>
+                        <div className="p-2.5 rounded bg-[#F5F7FA] border border-slate-200 text-[11px] text-slate-700 whitespace-pre-line">
+                          {draftedBrief.subjectTopicsInput}
+                        </div>
+                      </div>
+                    )}
+
+                    {templateFields.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] font-bold text-[#052B66]">
+                          Template Placeholders Filled ({templateFields.length})
+                        </div>
+                        <div className="space-y-1.5">
+                          {templateFields.map(tf => (
+                            <div
+                              key={tf.id}
+                              className="p-2 rounded border border-slate-200 bg-white space-y-0.5"
+                            >
+                              <div className="text-[11px] font-semibold text-slate-700">
+                                {tf.label}
+                              </div>
+                              <div className="text-[11px] text-slate-600">
+                                {draftedBrief.templateFieldValues?.[tf.key] ||
+                                  'Pending refinement'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {draftedModules.length > 0 && (
+                      <div className="space-y-1.5 pt-1 border-t border-slate-200">
+                        <label className="flex items-center justify-between text-[11px] font-bold text-[#052B66] cursor-pointer">
+                          <span>
+                            Starter Curriculum Outline ({draftedModules.length} Modules)
+                          </span>
+                          <span className="flex items-center gap-1.5 font-normal text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={includeDraftedModules}
+                              onChange={e => setIncludeDraftedModules(e.target.checked)}
+                            />
+                            Pre-fill Stage 2
+                          </span>
+                        </label>
+                        <div className="space-y-1">
+                          {draftedModules.map(m => (
+                            <div
+                              key={m.id}
+                              className="px-2.5 py-1.5 rounded bg-[#F5F7FA] border border-slate-200 text-[11px] text-slate-800"
+                            >
+                              <strong className="text-[#052B66]">M{m.order}:</strong> {m.title}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {mode === 'brief' && (
             <div className="space-y-2">
               <label className="block text-xs font-bold text-[#052B66]">
                 Optional Benchmark Starter Brief (for rapid testing)
@@ -311,7 +727,9 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                 ))}
               </select>
             </div>
-          ) : (
+          )}
+
+          {(mode === 'source' || mode === 'improve') && (
             <div className="space-y-3">
               <div className="border border-dashed border-slate-300 rounded-lg p-4 bg-[#F5F7FA] space-y-2">
                 <input
@@ -366,42 +784,67 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
           )}
         </div>
 
-        <div className="px-6 py-4 border-t border-slate-200 bg-[#F5F7FA] flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
-          >
-            Cancel
-          </button>
-          {mode === 'brief' ? (
+        <div className="px-6 py-4 border-t border-slate-200 bg-[#F5F7FA] flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div>
+            {mode === 'copilot' && (
+              <button
+                type="button"
+                onClick={handleStartBriefMode}
+                className="text-xs font-semibold text-[#052B66] hover:underline cursor-pointer"
+              >
+                Or open blank Stage 1 Brief without Copilot
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={handleStartBriefMode}
-              className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
             >
-              <span>Open Course Brief</span>
+              Cancel
             </button>
-          ) : (
-            <button
-              type="button"
-              disabled={isProcessing}
-              onClick={handleSourceOrImproveMode}
-              className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>{mode === 'source' ? 'Analysing Source...' : 'Diagnosing Course...'}</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 text-[#45CC42]" />
-                  <span>{mode === 'source' ? 'Analyse Source & Start' : 'Run Diagnosis & Start'}</span>
-                </>
-              )}
-            </button>
-          )}
+
+            {mode === 'copilot' ? (
+              <button
+                type="button"
+                disabled={!draftedBrief}
+                onClick={handleCreateFromCopilot}
+                className="px-5 py-2.5 rounded-lg bg-[#45CC42] hover:bg-[#3ab837] disabled:opacity-50 text-[#052B66] text-xs font-bold flex items-center gap-2 cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Create Course with Drafted Fields</span>
+              </button>
+            ) : mode === 'brief' ? (
+              <button
+                type="button"
+                onClick={handleStartBriefMode}
+                className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+              >
+                <span>Open Course Brief</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isProcessing}
+                onClick={handleSourceOrImproveMode}
+                className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+              >
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>{mode === 'source' ? 'Analysing Source...' : 'Diagnosing Course...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-[#45CC42]" />
+                    <span>{mode === 'source' ? 'Analyse Source & Start' : 'Run Diagnosis & Start'}</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

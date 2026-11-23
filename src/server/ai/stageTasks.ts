@@ -934,3 +934,145 @@ Return JSON:
 
   return extractAndParseJSON(res.text);
 }
+
+/* ============================================================================
+ * 12. NEW COURSE COPILOT: DRAFT BRIEF, TEMPLATE PLACEHOLDERS & MODULE OUTLINE
+ * ============================================================================ */
+export async function draftCourseFromCopilotPromptWithAI(params: {
+  prompt: string;
+  template?: CourseTemplate;
+  currentBrief?: Partial<CourseBrief>;
+  currentModules?: CurriculumModulePlan[];
+  messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  provider?: AIProvider;
+  model?: string;
+}): Promise<{
+  reply: string;
+  brief: Partial<CourseBrief>;
+  suggestedModuleCount: number;
+  modules: CurriculumModulePlan[];
+  suggestedFollowUps: string[];
+}> {
+  const templateFields = (params.template?.sections || []).flatMap(sec =>
+    sec.fields.map(f => ({
+      key: f.key,
+      label: f.label,
+      placeholder: f.placeholder,
+      required: f.required,
+      helpText: f.helpText || '',
+    }))
+  );
+
+  const historyText = (params.messages || [])
+    .slice(-8)
+    .map(m => `[${m.role.toUpperCase()}]: ${m.content}`)
+    .join('\n');
+
+  const res = await aiRouter.execute({
+    provider: params.provider,
+    model: params.model,
+    responseFormat: 'json',
+    systemInstruction: `You are the eStudy Course Copilot — helping instructional designers and first-time course creators turn a plain-language course idea into a complete, well-structured Stage 1 Course Brief, template placeholder values, and starter module outline.
+
+CRITICAL RULES:
+1. Fill ALL relevant Stage 1 Brief fields clearly and specifically for the user's requested subject — NEVER leave generic "{{...}}" placeholder strings in any output field.
+2. Fill EVERY template field key listed under TEMPLATE FIELDS inside "brief.templateFieldValues" with domain-specific, practical instructional content matching that field's label/purpose.
+3. If the user asks for a specific number of modules (e.g. "6 modules"), generate EXACTLY that number of detailed starter modules in "modules" (with topics and lessons). Otherwise generate an optimal 4 to 6 modules suited to the subject and duration.
+4. Honesty & Metadata Integrity:
+   - Never fabricate official SAQA/QCTO qualification IDs, SETA accreditation claims, or unverified legislation.
+   - Suggest a sensible provisional Course Code (e.g. "EST-GENAI-101") and mark "code" as "to_be_confirmed" in "fieldStatuses" so the user knows they can edit or confirm it.
+   - Use "Entry / Foundational", "Intermediate", "Advanced", or "Executive / Specialist" for "experienceLevel".
+   - Use "none", "optional", or "core" for "aiIntegrationMode" strictly based on whether AI belongs in the course subject.
+5. If "CURRENT DRAFT BRIEF" already has user-entered values, preserve them unless the user's latest prompt explicitly asks to change or refine them.
+Return ONLY valid JSON.`,
+    prompt: `USER PROMPT:
+${params.prompt}
+
+SELECTED TEMPLATE: ${params.template?.name || 'eStudy Master Course Generation Template v9.0'} (defaultAiMode: ${params.template?.defaultAiMode || 'optional'})
+TEMPLATE FIELDS TO POPULATE IN brief.templateFieldValues:
+${JSON.stringify(templateFields, null, 2)}
+
+CURRENT DRAFT BRIEF (refine/complete any missing or requested fields):
+${JSON.stringify(params.currentBrief || {}, null, 2)}
+
+CONVERSATION HISTORY:
+${historyText || 'None'}
+
+Return JSON matching this exact schema:
+{
+  "reply": "Warm, concise explanation of the drafted course brief, placeholders, and module structure, noting any items marked To Be Confirmed.",
+  "brief": {
+    "title": "Course Title",
+    "code": "EST-SUBJ-101",
+    "industryDomain": "Specific Industry / Subject Domain",
+    "purpose": "Clear 2-3 sentence workplace capability goal",
+    "workplaceProblem": "Concrete workplace performance gap or operational need addressed",
+    "targetAudience": "Specific target learners",
+    "targetJobRoles": "Specific job roles (comma-separated)",
+    "experienceLevel": "Entry / Foundational | Intermediate | Advanced | Executive / Specialist",
+    "prerequisites": "Realistic prior knowledge or 'None required for foundational entry'",
+    "estimatedDuration": "e.g. 8 Hours or 2 Days",
+    "language": "English (South African Context)",
+    "learningRequirements": "Pedagogical depth, hands-on tasks, and verification boundaries",
+    "subjectTopicsInput": "Topic 1\\nTopic 2\\nTopic 3\\nTopic 4\\nTopic 5",
+    "aiIntegrationMode": "none | optional | core",
+    "aiIntegrationRequirements": "Specific AI tools/governance scope or 'Not applicable'",
+    "templateFieldValues": {
+      "fieldKeyFromTemplate": "Drafted field content replacing placeholder"
+    },
+    "fieldStatuses": {
+      "title": "confirmed",
+      "code": "to_be_confirmed",
+      "estimatedDuration": "to_be_confirmed"
+    }
+  },
+  "suggestedModuleCount": 6,
+  "modules": [
+    {
+      "id": "mod-1",
+      "order": 1,
+      "title": "Module 1 Title",
+      "qctoModuleType": "Standard Module",
+      "purpose": "Specific module purpose",
+      "objectives": ["Measurable objective 1", "Measurable objective 2"],
+      "competencies": ["Workplace competency 1"],
+      "topics": [
+        { "id": "top-1-1", "title": "Topic 1.1", "subtopics": ["Subtopic A", "Subtopic B"] }
+      ],
+      "lessons": [
+        { "id": "les-1-1", "title": "Lesson 1.1", "durationMinutes": 35, "purpose": "What learners do", "keyTerms": ["Term 1"] }
+      ]
+    }
+  ],
+  "suggestedFollowUps": [
+    "Make it beginner-friendly with hands-on exercises",
+    "Adjust duration to 12 hours and add POPIA governance",
+    "Tailor examples for South African retail teams"
+  ]
+}`,
+  });
+
+  const parsed = extractAndParseJSON<any>(res.text);
+  const rawModules = Array.isArray(parsed.modules) ? parsed.modules : [];
+  const modules: CurriculumModulePlan[] = rawModules.map((m: any, idx: number) => ({
+    id: m.id || `mod-${Date.now()}-${idx + 1}`,
+    order: idx + 1,
+    title: m.title || `Module ${idx + 1}`,
+    qctoModuleType: m.qctoModuleType || 'Standard Module',
+    purpose: m.purpose || '',
+    objectives: Array.isArray(m.objectives) ? m.objectives : [],
+    competencies: Array.isArray(m.competencies) ? m.competencies : [],
+    topics: Array.isArray(m.topics) ? m.topics : [],
+    lessons: Array.isArray(m.lessons) ? m.lessons : [],
+  }));
+
+  return {
+    reply: parsed.reply || 'I have drafted the Course Brief fields, template placeholders, and starter modules based on your prompt.',
+    brief: parsed.brief || {},
+    suggestedModuleCount: Number(parsed.suggestedModuleCount) || modules.length || 4,
+    modules,
+    suggestedFollowUps: Array.isArray(parsed.suggestedFollowUps)
+      ? parsed.suggestedFollowUps.slice(0, 3)
+      : [],
+  };
+}

@@ -1,4 +1,4 @@
-import type { CourseBrief, CourseProject, CurriculumModulePlan } from '../types';
+import type { CourseBrief, CourseCreationMode, CourseProject, CurriculumModulePlan } from '../types';
 import { DEFAULT_QA_WEIGHTS } from './templates';
 
 export interface BenchmarkBriefPreset {
@@ -225,7 +225,7 @@ export const BENCHMARK_PRESETS: BenchmarkBriefPreset[] = [
 export function createEmptyCourseProject(options: {
   templateId: string;
   templateName: string;
-  creationMode: 'brief' | 'source' | 'improve';
+  creationMode: CourseCreationMode;
   preset?: BenchmarkBriefPreset;
 }): CourseProject {
   const now = new Date().toISOString();

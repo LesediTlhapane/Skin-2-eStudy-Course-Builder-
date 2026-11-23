@@ -19,7 +19,7 @@ export type CourseLifecycleStatus =
   | 'revision_required'
   | 'completed';
 
-export type CourseCreationMode = 'brief' | 'source' | 'improve';
+export type CourseCreationMode = 'copilot' | 'brief' | 'source' | 'improve';
 
 export type WorkflowStage = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 

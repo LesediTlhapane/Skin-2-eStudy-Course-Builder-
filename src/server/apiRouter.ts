@@ -13,6 +13,7 @@ import {
   generateModuleContentWithAI,
   regenerateComponentWithAI,
   processCopilotChatWithAI,
+  draftCourseFromCopilotPromptWithAI,
   extractTemplateFromDocumentWithAI,
   evaluateCourseQAWithAI,
 } from './ai/index.js';
@@ -276,6 +277,27 @@ export function createApiRouter(): express.Router {
       return res.json({ success: true, ...result });
     } catch (err: any) {
       return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Copilot chat failed.' });
+    }
+  });
+
+  router.post('/v2/copilot/draft-course', async (req, res) => {
+    try {
+      const { prompt, template, currentBrief, currentModules, messages, provider, model } = req.body || {};
+      if (!prompt || !String(prompt).trim()) {
+        return res.status(400).json({ success: false, error: 'Missing prompt describing the course.' });
+      }
+      const result = await draftCourseFromCopilotPromptWithAI({
+        prompt: String(prompt).trim(),
+        template,
+        currentBrief,
+        currentModules,
+        messages,
+        provider,
+        model,
+      });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Copilot draft failed.' });
     }
   });
 

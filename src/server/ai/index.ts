@@ -12,6 +12,7 @@ export {
   generateModuleContentWithAI,
   regenerateComponentWithAI,
   processCopilotChatWithAI,
+  draftCourseFromCopilotPromptWithAI,
   extractTemplateFromDocumentWithAI,
 } from './stageTasks.js';
 export {

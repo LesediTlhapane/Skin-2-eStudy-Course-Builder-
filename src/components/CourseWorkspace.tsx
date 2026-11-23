@@ -157,13 +157,29 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
             'targetAudience',
             'targetJobRoles',
             'experienceLevel',
+            'prerequisites',
             'estimatedDuration',
+            'language',
             'learningRequirements',
             'subjectTopicsInput',
             'aiIntegrationMode',
             'aiIntegrationRequirements',
           ] as const;
-          const nextBrief = { ...prev.brief };
+          const nextBrief = {
+            ...prev.brief,
+            templateFieldValues: {
+              ...prev.brief.templateFieldValues,
+              ...(patch.templateFieldValues && typeof patch.templateFieldValues === 'object'
+                ? patch.templateFieldValues
+                : {}),
+            },
+            fieldStatuses: {
+              ...prev.brief.fieldStatuses,
+              ...(patch.fieldStatuses && typeof patch.fieldStatuses === 'object'
+                ? patch.fieldStatuses
+                : {}),
+            },
+          };
           for (const key of allowedKeys) {
             if (patch[key] !== undefined && !(prev.brief.metadataLocked && ['title', 'code', 'industryDomain', 'targetAudience', 'estimatedDuration'].includes(key))) {
               (nextBrief as any)[key] = patch[key];
