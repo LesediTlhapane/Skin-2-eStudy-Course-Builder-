@@ -11,6 +11,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { AIProvider, CourseTemplate, TemplateField, TemplateSection } from '../types';
+import { parseApiJson } from '../utils/apiClient';
 
 interface TemplateStudioProps {
   templates: CourseTemplate[];
@@ -131,7 +132,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to extract template.');
       }

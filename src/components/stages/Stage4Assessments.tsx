@@ -16,6 +16,7 @@ import type {
   CourseProject,
 } from '../../types';
 import { computeFullAlignmentReport } from '../../utils/alignmentHelpers';
+import { parseApiJson } from '../../utils/apiClient';
 
 interface Stage4AssessmentsProps {
   project: CourseProject;
@@ -147,7 +148,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Assessment design failed.');
       }

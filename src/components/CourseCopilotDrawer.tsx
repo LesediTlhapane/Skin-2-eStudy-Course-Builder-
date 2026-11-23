@@ -6,6 +6,7 @@ import type {
   CopilotProposedChange,
   CourseProject,
 } from '../types';
+import { parseApiJson } from '../utils/apiClient';
 
 interface CourseCopilotDrawerProps {
   isOpen: boolean;
@@ -65,7 +66,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Copilot request failed.');
       }

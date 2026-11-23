@@ -146,6 +146,89 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
             },
           };
         }
+        if (proposal.targetType === 'brief_note') {
+          const patch = proposal.patchPayload || {};
+          const allowedKeys = [
+            'title',
+            'code',
+            'industryDomain',
+            'purpose',
+            'workplaceProblem',
+            'targetAudience',
+            'targetJobRoles',
+            'experienceLevel',
+            'estimatedDuration',
+            'learningRequirements',
+            'subjectTopicsInput',
+            'aiIntegrationMode',
+            'aiIntegrationRequirements',
+          ] as const;
+          const nextBrief = { ...prev.brief };
+          for (const key of allowedKeys) {
+            if (patch[key] !== undefined && !(prev.brief.metadataLocked && ['title', 'code', 'industryDomain', 'targetAudience', 'estimatedDuration'].includes(key))) {
+              (nextBrief as any)[key] = patch[key];
+            }
+          }
+          return {
+            ...prev,
+            brief: nextBrief,
+          };
+        }
+        if (proposal.targetType === 'curriculum_module') {
+          const patch = proposal.patchPayload || {};
+          const existing = prev.curriculum.modules;
+          if (Array.isArray(patch.modules)) {
+            const normalized = patch.modules.map((m: any, idx: number) => ({
+              id: m.id || `mod-${Date.now()}-${idx}`,
+              order: idx + 1,
+              title: m.title || `Module ${idx + 1}`,
+              qctoModuleType: m.qctoModuleType || 'Standard Module',
+              purpose: m.purpose || '',
+              objectives: Array.isArray(m.objectives) ? m.objectives : [],
+              competencies: Array.isArray(m.competencies) ? m.competencies : [],
+              topics: Array.isArray(m.topics) ? m.topics : [],
+              lessons: Array.isArray(m.lessons) ? m.lessons : [],
+            }));
+            return {
+              ...prev,
+              curriculum: {
+                ...prev.curriculum,
+                modules: normalized,
+                approval: { approved: false },
+              },
+            };
+          }
+          const targetModId = proposal.moduleId || proposal.targetId;
+          if (targetModId && existing.some(m => m.id === targetModId)) {
+            return {
+              ...prev,
+              curriculum: {
+                ...prev.curriculum,
+                modules: existing.map(m => (m.id === targetModId ? { ...m, ...patch } : m)),
+                approval: { approved: false },
+              },
+            };
+          }
+          const newMod = {
+            id: `mod-${Date.now()}`,
+            order: existing.length + 1,
+            title: patch.title || `Module ${existing.length + 1}`,
+            qctoModuleType: patch.qctoModuleType || 'Standard Module',
+            purpose: patch.purpose || '',
+            objectives: Array.isArray(patch.objectives) ? patch.objectives : [],
+            competencies: Array.isArray(patch.competencies) ? patch.competencies : [],
+            topics: Array.isArray(patch.topics) ? patch.topics : [],
+            lessons: Array.isArray(patch.lessons) ? patch.lessons : [],
+          };
+          return {
+            ...prev,
+            curriculum: {
+              ...prev.curriculum,
+              modules: [...existing, newMod],
+              approval: { approved: false },
+            },
+          };
+        }
         return prev;
       },
       { trigger: 'manual_snapshot', summary: `Applied Copilot proposal: ${proposal.title}` }

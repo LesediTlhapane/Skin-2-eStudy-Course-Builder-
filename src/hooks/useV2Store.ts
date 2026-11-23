@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import { SYSTEM_TEMPLATES } from '../data/templates';
 import { BENCHMARK_PRESETS, createEmptyCourseProject } from '../data/benchmarks';
+import { parseApiJson } from '../utils/apiClient';
 
 const DB_NAME = 'estudy_course_builder_v2';
 const DB_VERSION = 1;
@@ -93,7 +94,7 @@ export function useV2Store() {
   // Load AI models & configured keys from backend
   useEffect(() => {
     fetch('/api/ai/models')
-      .then(r => r.json())
+      .then(r => parseApiJson<any>(r))
       .then(data => {
         if (Array.isArray(data.models)) {
           setAvailableModels(data.models);

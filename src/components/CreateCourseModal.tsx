@@ -16,6 +16,7 @@ import type {
   SourceDocument,
 } from '../types';
 import { BENCHMARK_PRESETS, createEmptyCourseProject } from '../data/benchmarks';
+import { parseApiJson } from '../utils/apiClient';
 
 interface CreateCourseModalProps {
   isOpen: boolean;
@@ -115,7 +116,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
             model: selectedModel,
           }),
         });
-        const data = await res.json();
+        const data = await parseApiJson<any>(res);
         if (!res.ok || !data.success) {
           throw new Error(data.error || 'Failed to analyse source material.');
         }
@@ -164,7 +165,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
             model: selectedModel,
           }),
         });
-        const data = await res.json();
+        const data = await parseApiJson<any>(res);
         if (!res.ok || !data.success) {
           throw new Error(data.error || 'Failed to diagnose existing course.');
         }

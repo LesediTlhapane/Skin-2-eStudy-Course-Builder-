@@ -15,6 +15,7 @@ import type {
   CourseProject,
   CurriculumModulePlan,
 } from '../../types';
+import { parseApiJson } from '../../utils/apiClient';
 
 interface Stage2CurriculumProps {
   project: CourseProject;
@@ -68,7 +69,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to propose curriculum.');
       }
@@ -101,7 +102,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Coverage check failed.');
       }

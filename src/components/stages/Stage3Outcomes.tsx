@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import type { AIProvider, BloomLevel, CourseProject, LearningOutcome } from '../../types';
 import { detectVagueOutcomeWarning } from '../../utils/alignmentHelpers';
+import { parseApiJson } from '../../utils/apiClient';
 
 interface Stage3OutcomesProps {
   project: CourseProject;
@@ -59,7 +60,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to generate learning outcomes.');
       }

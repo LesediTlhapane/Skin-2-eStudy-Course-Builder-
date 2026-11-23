@@ -21,6 +21,7 @@ import {
   runAccessibilityChecks,
   runTechnicalValidationChecks,
 } from '../../utils/validationChecks';
+import { parseApiJson } from '../../utils/apiClient';
 
 interface Stage6QAProps {
   project: CourseProject;
@@ -147,7 +148,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'QA evaluation failed.');
       }

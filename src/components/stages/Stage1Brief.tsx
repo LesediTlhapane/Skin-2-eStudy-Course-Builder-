@@ -14,6 +14,7 @@ import type {
   CourseTemplate,
   FieldStatus,
 } from '../../types';
+import { parseApiJson } from '../../utils/apiClient';
 
 interface Stage1BriefProps {
   project: CourseProject;
@@ -85,7 +86,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to analyse brief.');
       }

@@ -15,6 +15,7 @@ import type {
   GeneratedModuleContent,
   SourceVerificationStatus,
 } from '../../types';
+import { parseApiJson } from '../../utils/apiClient';
 
 interface Stage5ContentProps {
   project: CourseProject;
@@ -72,7 +73,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         model: selectedModel,
       }),
     });
-    const data = await res.json();
+    const data = await parseApiJson<any>(res);
     if (!res.ok || !data.success) {
       throw new Error(data.error || `Failed to generate Module ${modPlan.order}.`);
     }
@@ -162,7 +163,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Selective regeneration failed.');
       }

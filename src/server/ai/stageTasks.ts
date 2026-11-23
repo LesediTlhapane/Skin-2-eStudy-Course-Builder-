@@ -834,7 +834,10 @@ export async function processCopilotChatWithAI(params: {
 CRITICAL RULES:
 1. You understand the active course, approved curriculum, outcomes, sources, QA findings, and current stage (${activeStage}/7).
 2. NEVER silently modify approved course metadata or content.
-3. When the developer asks you to improve an outcome, rewrite a lesson, refine a scenario, fix a rubric/assessment, or address a QA finding, provide your explanation in "reply" AND include concrete structured proposals in "proposedChanges" so the developer can inspect and click Accept or Reject.
+3. When the developer asks you to improve an outcome, rewrite a lesson, refine a scenario, fix a rubric/assessment, address a QA finding, OR initialize/set a course title, scope, or module outline (for example creating a 6-module "GEN AI" course), provide clear step-by-step guidance in "reply" AND include structured proposals in "proposedChanges" so the developer can click Accept Change or Reject:
+   - For course title/purpose/topics/AI mode updates, use "targetType": "brief_note" with fields inside "patchPayload" (e.g. { "title": "GEN AI", "aiIntegrationMode": "core", "purpose": "...", "subjectTopicsInput": "..." }).
+   - For proposing a full list of modules, use "targetType": "curriculum_module" with "patchPayload": { "modules": [ { "title": "...", "purpose": "...", "objectives": ["..."], "competencies": ["..."], "topics": [{ "id": "top-1", "title": "...", "subtopics": [] }], "lessons": [{ "id": "les-1", "title": "...", "durationMinutes": 45, "purpose": "...", "keyTerms": [] }] } ] }.
+   - Remind them they can also set the module count in Stage 2 ("Modules (auto)") and click "Propose Curriculum" after approving Stage 1.
 4. Use plain, clear instructional-design language.
 Return ONLY valid JSON.`,
     prompt: `ACTIVE COURSE CONTEXT:

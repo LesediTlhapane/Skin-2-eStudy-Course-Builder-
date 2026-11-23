@@ -13,6 +13,7 @@ import type {
   SourceDocument,
   SourceVerificationStatus,
 } from '../types';
+import { parseApiJson } from '../utils/apiClient';
 
 interface SourceManagerModalProps {
   isOpen: boolean;
@@ -76,7 +77,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
           model: selectedModel,
         }),
       });
-      const data = await res.json();
+      const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to analyse source.');
       }
