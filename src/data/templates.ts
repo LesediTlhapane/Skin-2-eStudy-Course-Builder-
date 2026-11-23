@@ -1,0 +1,295 @@
+import type { CourseTemplate, QADimensionWeight } from '../types';
+
+export const DEFAULT_QA_WEIGHTS: QADimensionWeight[] = [
+  { id: 'curriculum_coverage', label: 'Curriculum and subject coverage', weight: 20 },
+  { id: 'outcomes_alignment', label: 'Learning outcomes and alignment', weight: 20 },
+  { id: 'assessment_quality', label: 'Assessment quality', weight: 20 },
+  { id: 'content_accuracy_sources', label: 'Content accuracy and sources', weight: 15 },
+  { id: 'learning_experience', label: 'Learning experience', weight: 10 },
+  { id: 'compliance_accessibility', label: 'Compliance and accessibility', weight: 10 },
+  { id: 'presentation_usability', label: 'Presentation and usability', weight: 5 },
+];
+
+export const SYSTEM_TEMPLATES: CourseTemplate[] = [
+  {
+    id: 'tpl-estudy-master-v9',
+    name: 'eStudy Master Course Generation Template v9.0',
+    category: 'Official Reference Standard',
+    description:
+      'Official 9-section eStudy South Africa template incorporating problem framing, source verification, outcomes-based architecture, workplace scenarios, responsible AI governance, and South African compliance.',
+    version: 'v9.0',
+    isSystemReference: true,
+    defaultAiMode: 'optional',
+    qualityRules: [
+      'Protect course title, code, duration, and audience metadata against silent AI modification.',
+      'Mark unverified or missing specialist data as "To Be Confirmed" or "Requires SME/Stakeholder Validation".',
+      'Preserve all supplied curriculum topics without silent omission or generalisation.',
+      'Ensure measurable Bloom-aligned learning outcomes map 1:1 to assessments.',
+      'Maintain South African workplace relevance and plain-language accessibility.',
+    ],
+    sections: [
+      {
+        id: 'sec-problem',
+        title: '1. Problem, Development Need & Workplace Context',
+        description: 'Define the performance gap, root causes, and workplace constraints.',
+        required: true,
+        order: 1,
+        fields: [
+          {
+            id: 'f-root-causes',
+            key: 'rootCauses',
+            label: 'Primary Root Causes',
+            placeholder: '{{Insert verified operational or skills root causes}}',
+            fieldType: 'textarea',
+            required: true,
+            helpText: 'Identify process failures, knowledge gaps, or environmental constraints.',
+          },
+          {
+            id: 'f-constraints',
+            key: 'organisationalConstraints',
+            label: 'Organisational & Operational Constraints',
+            placeholder: '{{Insert shift patterns, connectivity limits, or budget boundaries}}',
+            fieldType: 'textarea',
+            required: false,
+          },
+        ],
+      },
+      {
+        id: 'sec-sources',
+        title: '2. Research Sources & Regulatory Grounding',
+        description: 'Authoritative legislation, technical standards, and internal policies.',
+        required: true,
+        order: 2,
+        fields: [
+          {
+            id: 'f-evidence-standard',
+            key: 'evidenceStandard',
+            label: 'Verification & Citation Standard',
+            placeholder: '{{e.g. All statutory claims verified against official Acts/circulars}}',
+            fieldType: 'text',
+            required: true,
+          },
+        ],
+      },
+      {
+        id: 'sec-learning-design',
+        title: '3. Instructional Strategy & Workplace Scenarios',
+        description: 'Pedagogical progression, practical tasks, and realistic scenarios.',
+        required: true,
+        order: 3,
+        fields: [
+          {
+            id: 'f-pedagogical-approach',
+            key: 'pedagogicalApproach',
+            label: 'Instructional Approach',
+            placeholder: '{{e.g. Case-based walkthroughs, worked calculations, role-play}}',
+            fieldType: 'textarea',
+            required: true,
+          },
+        ],
+      },
+      {
+        id: 'sec-ethics',
+        title: '4. Ethics, POPIA & Responsible Practice',
+        description: 'Privacy safeguards, ethical conduct, and AI governance where applicable.',
+        required: false,
+        order: 4,
+        fields: [
+          {
+            id: 'f-privacy-notes',
+            key: 'privacyGovernanceNotes',
+            label: 'Data Privacy & Governance Notes',
+            placeholder: '{{Specify POPIA, confidentiality, or human-oversight requirements}}',
+            fieldType: 'textarea',
+            required: false,
+          },
+        ],
+      },
+      {
+        id: 'sec-customisation',
+        title: '5. Branding, Tone & Delivery Customisation',
+        description: 'eStudy South Africa voice, reading level, and LMS delivery preferences.',
+        required: true,
+        order: 5,
+        fields: [
+          {
+            id: 'f-tone-voice',
+            key: 'toneAndReadingLevel',
+            label: 'Tone & Target Reading Level',
+            placeholder: '{{e.g. Professional South African English, plain language NQF-aligned}}',
+            fieldType: 'text',
+            required: true,
+          },
+        ],
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'tpl-technical-engineering',
+    name: 'Technical & Engineering Mastery Template',
+    category: 'Technical / STEM',
+    description:
+      'Designed for engineering, scientific, and technical courses requiring equations, system assumptions, boundary conditions, worked calculations, and technical accuracy verification.',
+    version: 'v2.0',
+    isSystemReference: false,
+    defaultAiMode: 'optional',
+    qualityRules: [
+      'Preserve exact technical terminology, units, equations, and engineering assumptions.',
+      'Include step-by-step worked calculations and boundary-condition analysis.',
+      'Flag unverified safety or design thresholds as Requires SME/Stakeholder Validation.',
+    ],
+    sections: [
+      {
+        id: 'sec-tech-scope',
+        title: '1. Technical Scope & Engineering Assumptions',
+        description: 'Mathematical models, operating envelopes, and safety boundaries.',
+        required: true,
+        order: 1,
+        fields: [
+          {
+            id: 'f-equations-tools',
+            key: 'technicalEquationsAndTools',
+            label: 'Core Equations, Models & Software Environment',
+            placeholder: '{{List governing equations, simulation tools, or lab datasets}}',
+            fieldType: 'textarea',
+            required: true,
+          },
+          {
+            id: 'f-safety-envelope',
+            key: 'safetyAndValidationEnvelope',
+            label: 'Safety & Verification Boundaries',
+            placeholder: '{{Specify operational tolerances and human engineering sign-off rules}}',
+            fieldType: 'textarea',
+            required: true,
+          },
+        ],
+      },
+      {
+        id: 'sec-tech-delivery',
+        title: '2. Worked Problem & Lab Structure',
+        description: 'Applied engineering labs and failure-mode diagnostics.',
+        required: true,
+        order: 2,
+        fields: [
+          {
+            id: 'f-lab-method',
+            key: 'labWalkthroughMethod',
+            label: 'Worked Example Format',
+            placeholder: '{{e.g. Problem statement -> Assumptions -> Governing equation -> Result -> Sensitivity check}}',
+            fieldType: 'textarea',
+            required: true,
+          },
+        ],
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'tpl-regulatory-compliance',
+    name: 'Regulatory & Compliance Programme Template',
+    category: 'Compliance & Governance',
+    description:
+      'Built for regulated South African sectors (FSCA, POPIA, FAIS, NCA, OHS). Enforces strict source verification, zero fabricated citations, and audit-ready assessment evidence.',
+    version: 'v2.0',
+    isSystemReference: false,
+    defaultAiMode: 'none',
+    qualityRules: [
+      'Every statutory or regulatory obligation must reference an uploaded or verified source.',
+      'Flag missing Act sections or threshold values as Requires SME/Stakeholder Validation.',
+      'Do not declare formal regulatory accreditation unless verified by the compliance owner.',
+    ],
+    sections: [
+      {
+        id: 'sec-reg-mandate',
+        title: '1. Statutory Mandate & Authoritative Sources',
+        description: 'Legislation, circulars, codes of conduct, and enforcement bodies.',
+        required: true,
+        order: 1,
+        fields: [
+          {
+            id: 'f-acts',
+            key: 'governingLegislation',
+            label: 'Governing Acts & Conduct Standards',
+            placeholder: '{{List exact Act numbers, sections, and regulatory notices}}',
+            fieldType: 'textarea',
+            required: true,
+          },
+        ],
+      },
+      {
+        id: 'sec-reg-scenarios',
+        title: '2. Breach Scenarios & Escalation Pathways',
+        description: 'Realistic consumer/client protection dilemmas and reporting rules.',
+        required: true,
+        order: 2,
+        fields: [
+          {
+            id: 'f-escalation',
+            key: 'escalationProtocol',
+            label: 'Required Escalation & Record-Keeping Rules',
+            placeholder: '{{Define compliance officer escalation and audit trail rules}}',
+            fieldType: 'textarea',
+            required: true,
+          },
+        ],
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'tpl-practical-workplace',
+    name: 'Practical Workplace Skills & Competency Template',
+    category: 'Workplace Skills / QCTO',
+    description:
+      'Structured for hands-on occupational competence requiring Knowledge, Practical Skill, and Work Experience modules, observation checklists, and workplace demonstration rubrics.',
+    version: 'v2.0',
+    isSystemReference: false,
+    defaultAiMode: 'none',
+    qualityRules: [
+      'Separate knowledge verification from observed practical workplace competence.',
+      'Every practical outcome must be assessed via a rubric or observation checklist, never MCQ alone.',
+    ],
+    sections: [
+      {
+        id: 'sec-workplace-equip',
+        title: '1. Workplace Equipment, Tools & Safety',
+        description: 'Physical tools, PPE, SOPs, and workplace environment conditions.',
+        required: true,
+        order: 1,
+        fields: [
+          {
+            id: 'f-tools',
+            key: 'workplaceToolsAndPpe',
+            label: 'Required Equipment, Tools & PPE',
+            placeholder: '{{Specify machinery, POS/CRM software, PPE, or workstation setup}}',
+            fieldType: 'textarea',
+            required: true,
+          },
+        ],
+      },
+      {
+        id: 'sec-workplace-obs',
+        title: '2. Workplace Observation & Sign-Off',
+        description: 'Logbook evidence and supervisor/assessor observation standards.',
+        required: true,
+        order: 2,
+        fields: [
+          {
+            id: 'f-assessor-req',
+            key: 'assessorObservationNotes',
+            label: 'Assessor / Supervisor Evidence Requirements',
+            placeholder: '{{Describe direct observation, portfolio of evidence, or role-play rules}}',
+            fieldType: 'textarea',
+            required: true,
+          },
+        ],
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+];

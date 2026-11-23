@@ -1,0 +1,8 @@
+{
+  "name": "eStudy Master Course Builder V2",
+  "description": "AI-assisted instructional design and course development platform for eStudy South Africa to create, validate, quality-assure, and publish outcomes-based learning programmes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

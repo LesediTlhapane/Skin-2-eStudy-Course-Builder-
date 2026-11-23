@@ -1,0 +1,100 @@
+import React, { useState } from 'react';
+import { History, RotateCcw, Save, X } from 'lucide-react';
+import type { CourseProject } from '../types';
+
+interface VersionHistoryModalProps {
+  isOpen: boolean;
+  project: CourseProject;
+  onClose: () => void;
+  onSaveSnapshot: (summary: string) => void;
+  onRestoreVersion: (snapshotId: string) => void;
+}
+
+export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
+  isOpen,
+  project,
+  onClose,
+  onSaveSnapshot,
+  onRestoreVersion,
+}) => {
+  const [note, setNote] = useState('');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl border border-slate-200 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-xl">
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-[#052B66]" />
+            <h2 className="text-base font-bold text-[#052B66]">
+              Version History & Stage Records
+            </h2>
+          </div>
+          <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-5">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="Snapshot note (e.g. 'Before SME curriculum review')..."
+              className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                onSaveSnapshot(note.trim() || 'Manual developer snapshot');
+                setNote('');
+              }}
+              className="px-3.5 py-2 rounded-lg bg-[#052B66] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5 text-[#45CC42]" />
+              <span>Save Snapshot</span>
+            </button>
+          </div>
+
+          {project.versions.length === 0 ? (
+            <p className="text-xs text-slate-500 text-center py-6">
+              Snapshots are created automatically upon stage approvals, AI generations, or manual saves.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {project.versions.map(ver => (
+                <div
+                  key={ver.id}
+                  className="p-3.5 border border-slate-200 rounded-lg flex items-center justify-between gap-3"
+                >
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="text-xs font-bold text-[#052B66]">
+                      v{ver.versionNumber} · {ver.summary}
+                    </div>
+                    <div className="text-[11px] text-slate-500 tabular-nums">
+                      Stage {ver.stage} · {ver.trigger.replace(/_/g, ' ')} ·{' '}
+                      {new Date(ver.createdAt).toLocaleString('en-ZA')}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onRestoreVersion(ver.id);
+                      onClose();
+                    }}
+                    className="px-3 py-1.5 text-xs font-bold border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Restore</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

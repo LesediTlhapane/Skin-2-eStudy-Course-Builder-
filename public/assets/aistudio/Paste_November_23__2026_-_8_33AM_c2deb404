@@ -1,0 +1,329 @@
+Evaluation of the eStudy Automatic Course Builder
+My recommendation is to develop the eStudy builder into more than an AI course generator. Its potential is to become an AI-assisted instructional design and course development platform that helps eStudy produce consistent, technically credible, outcomes-based and assessment-led learning programmes. This would give it a stronger identity than simply generating course outlines, lesson text and quizzes from a prompt.
+1. Where eStudy fits in the market
+There are several established products in this space. They do not all solve exactly the same problem.
+•	Easygenerator
+Strong at turning documents and subject-matter knowledge into structured e-learning. It guides users through course purpose, learner profile, goals, sections and content pages. It can generate questions and interactive blocks, and supports SCORM and xAPI publishing. 
+What eStudy can learn: Guided course development, document-to-course conversion, editable structures and content-level AI assistance.
+•	Mindsmith
+Strong at AI-assisted course and lesson creation, storyboard planning, branching scenarios, interactive learning elements, collaboration, translation and SCORM export. Its storyboard approach lets authors plan objectives, sections and interactions before generating the lesson. 
+What eStudy can learn: Design the learning experience before generating the full content, and provide richer practice and scenario-based learning.
+•	Articulate 360
+A mature authoring environment for professionally designed interactive courses. Its strength is not just generating text, but giving instructional designers control over the structure, interactions, visual presentation and learner experience.
+What eStudy can learn: Distinguish between generating a draft and producing a polished, publishable learning experience.
+•	Coursebox
+Focuses on rapid course creation from prompts and documents, with supporting features such as quizzes, AI-assisted grading, video and learner delivery.
+What eStudy can learn: Reduce the distance between course creation and learner-ready delivery, while ensuring that speed does not compromise quality.
+The comparison suggests that the market already offers fast content generation, document conversion, interactive elements and LMS publishing. Those features are useful, but they are not enough to make eStudy distinctive.
+2. My assessment of the current eStudy approach
+The earlier AI for Chemical Engineering example is particularly useful as a test case because it shows the difference between generating a substantial document and developing a coherent course.
+Area	What the earlier output demonstrated	Assessment
+Course metadata	Some details changed during generation, including course code and duration	Needs strict controls
+Subject relevance	Specific chemical engineering topics were replaced by generic operational modules	Critical weakness
+Curriculum structure	The nine-topic brief, three-module template and four-to-five-module output requirement conflicted	Needs architecture validation
+Learning outcomes	Outcomes were broad and not sufficiently tied to engineering competencies	Needs improvement
+Learning content	Large volume of material, but generic and repetitive in places	Needs stronger content controls
+Scenarios	Scenarios were not sufficiently specific to chemical engineering roles	Needs contextual design
+Assessment	Questions did not consistently test the intended technical knowledge or applied competence	Needs alignment
+Compliance	Regulatory and governance references were included, but needed more precise treatment	Needs source verification
+Quality assurance	The generated output did not reliably detect the problems above	Needs a formal QA process
+The most important finding is that the builder appears to place too much reliance on a general master prompt to control a complex course-development process.
+A master prompt can set rules and expectations. However, it is not a substitute for a structured development workflow, validation rules, subject-specific content controls and instructional-design checks.
+The earlier output was substantial, but its length did not demonstrate that it met the intended learning requirements.
+3. What would make eStudy genuinely different?
+I would build around six differentiators.
+A. A subject-specific curriculum engine
+This should be the highest priority.
+The builder must preserve the subject matter supplied by the course developer. It should not replace technical content with generic operational, compliance or procedural material simply because those structures are easier for an AI model to generate.
+The system should distinguish between:
+•	Course subject: What the programme is actually teaching.
+•	Curriculum architecture: How the subject matter is organised.
+•	Instructional design: How learners will learn the subject.
+•	Assessment design: How learners demonstrate that they have achieved the outcomes.
+•	Quality assurance: How the system checks that the course is fit for purpose.
+For example, an AI for Chemical Engineering course should retain its technical focus on modelling, process optimisation, digital twins, predictive maintenance and process safety. Instructional design should make those topics easier to learn; it should never replace them with generic workplace procedures.
+I recommend a mandatory curriculum-preservation rule:
+The supplied curriculum, technical scope and subject-specific requirements are authoritative. Preserve all specified topics, concepts, skills and intended outcomes. You may improve sequencing, consolidate overlapping topics or recommend changes, but must not silently remove, replace or generalise subject content. Where requirements conflict, flag the conflict and request a decision before generating the full course.
+Potential standout feature: a curriculum coverage checker that compares the original brief with the proposed course structure and shows exactly where each topic has been retained.
+B. A proper instructional-design process
+The builder should not move directly from a course description to a long generated manual.
+I recommend a staged process based on backward design and constructive alignment.
+Proposed eStudy development workflow
+1.	Define the learning need
+Identify the workplace problem, target learners, entry knowledge, performance gap and expected workplace application.
+2.	Define measurable learning outcomes
+Establish what learners should know, understand, demonstrate or perform by the end of the programme.
+3.	Design the curriculum
+Organise the subject matter into modules, units and lessons with a logical progression.
+4.	Map assessment to outcomes
+Decide how each outcome will be assessed, including knowledge, practical application and competency evidence.
+5.	Generate learning materials and activities
+Develop explanations, examples, case studies, scenarios, guided practice and learning resources.
+6.	Validate and quality assure
+Check subject accuracy, instructional alignment, assessment validity, accessibility, compliance and completeness.
+7.	Prepare for delivery
+Generate the learner and facilitator resources, LMS-ready content and implementation documentation.
+This approach reflects the principle of constructive alignment: outcomes, assessments, learning materials and activities must work together.
+The Quality Matters Higher Education Rubric, Seventh Edition, provides a useful reference. Its eight general standards cover course introduction, learning objectives, assessment, instructional materials, learning activities, technology, learner support, and accessibility and usability. It specifically emphasises alignment between these elements. 
+Quality Matters+1
+For eStudy's professional and workplace programmes, the Quality Matters Continuing and Professional Education rubric is also worth considering. It is designed for non-credit professional training and skills-based programmes. 
+Quality Matters
+C. A learning-outcome and assessment alignment engine
+This could become one of the most valuable features.
+Every course should have a traceable relationship between what learners are expected to achieve, what they are taught, what they practise and how their achievement is assessed.
+For example:
+Learning outcome	Learning activity	Assessment evidence
+Explain the difference between mechanistic and data-driven models	Interactive explanation and worked example	Knowledge check
+Evaluate the suitability of a regression model	Engineering case study	Model selection exercise
+Interpret an anomaly detection result	Simulated process data scenario	Scenario-based decision
+Recommend appropriate human verification controls	Process safety case study	Applied written response
+The builder should automatically generate this mapping and check it.
+It should flag:
+•	Outcomes that are not taught.
+•	Content that does not support an outcome.
+•	Assessments that test knowledge not covered in the course.
+•	Outcomes assessed only through recall when practical competence is expected.
+•	Assessments that do not produce sufficient evidence of competence.
+A particularly useful feature would be an alignment score with an explanation of the gaps. The score should be a quality indicator, not a claim of accreditation or certification.
+D. More sophisticated assessment generation
+Many AI course generators can create multiple-choice questions. That is not enough for professional development and competency-based learning.
+The eStudy builder should support different forms of assessment according to the intended learning outcome.
+Trusted by businesses and educators since 2006
+Knowledge and understanding
+Multiple-choice, multiple-response, matching, sequencing and short-answer questions.
+6 eLearning Branching Scenario Examples for Immersive Learning | Coursebox AI
+Applied decision-making
+Branching scenarios, case studies, problem-solving activities and workplace decision simulations.
+Rubric Practical Task | PDF | Observation | Laboratories
+Practical competence
+Tasks, demonstrations, projects, workplace evidence and performance checklists.
+Weekly Reflection Sheet by Naomi Brown | TPT
+Reflection and professional judgement
+Reflective activities, justification of decisions, risk analysis and improvement plans.
+The system should also generate:
+•	Model answers and explanations.
+•	Assessment rubrics and marking criteria.
+•	Feedback for correct and incorrect responses.
+•	Clear pass requirements and weighting.
+•	Assessment-to-outcome mapping.
+•	Guidance on whether the assessment is formative or summative.
+For competency-based programmes, it should distinguish between knowing how to do something and demonstrating that one can do it.
+E. Source-based and technically validated content
+This is particularly important for technical, regulatory, financial, health and safety-related courses.
+The builder should not present plausible AI-generated statements as verified facts.
+I would introduce a source management function that allows course developers to upload and identify:
+•	Legislation and regulations.
+•	Industry standards.
+•	Technical manuals.
+•	Organisational policies and procedures.
+•	Research papers and textbooks.
+•	Approved subject-matter expert material.
+Every important technical or regulatory claim should be traceable to its source where appropriate.
+The system should create a source register containing the document title, author or organisation, publication date, version, URL or document reference and the course sections it supports.
+It should also distinguish between:
+Source status
+Verified
+The statement is supported by an identified, reviewed source.
+Source status
+Needs review
+The statement is plausible but needs confirmation by a subject-matter expert or authoritative source.
+Source status
+Unsupported
+The system cannot identify adequate evidence. It must not present the claim as established fact.
+For example, in the Chemical Engineering course, an AI-generated model recommendation should not be treated as technically sound merely because the explanation reads convincingly. Equations, units, assumptions, operating constraints and safety implications need appropriate verification.
+F. South African relevance and accreditation readiness
+This is an opportunity for eStudy to differentiate itself from international course-generation tools.
+The builder could include a South African programme-design profile with configurable checks for:
+•	NQF level and level descriptors, where applicable.
+•	SAQA and relevant quality-assurance requirements.
+•	QCTO requirements where the programme falls within that framework.
+•	SETA requirements where relevant.
+•	Professional body CPD requirements.
+•	POPIA and information security considerations.
+•	Relevant South African legislation and industry-specific regulatory requirements.
+The important distinction is that the builder should support alignment and preparation for review, not automatically declare a programme accredited or compliant.
+It should ask which framework applies to the programme rather than assume that every course needs an NQF level or QCTO alignment.
+UNESCO's guidance on generative AI in education also provides a useful foundation for human-centred design, privacy, accountability and pedagogically appropriate use of AI. 
+UNESCO+1
+4. The features I would add
+Here is a practical product-development proposal.
+Feature	What it should do	Priority
+Curriculum preservation	Check that all supplied subject matter is retained	Critical
+Metadata lock	Prevent accidental changes to title, code, duration, credits and target audience	Critical
+Curriculum architecture	Propose, edit and approve modules before content generation	Critical
+Learning outcome builder	Generate measurable outcomes using appropriate action verbs and levels of complexity	Critical
+Alignment matrix	Map outcomes to content, activities and assessments	Critical
+Assessment engine	Generate varied assessments, rubrics, feedback and marking guides	Critical
+Source register	Link important claims to approved references	High
+Technical validation	Flag unsupported technical claims, calculations and assumptions	High
+South African compliance profile	Apply relevant accreditation and regulatory checks	High
+Content editor	Allow individual sections to be regenerated without rebuilding the entire course	High
+Accessibility checker	Check headings, reading level, alternative text, contrast and content structure	High
+Version control	Track revisions, reviewers, approvals and changes	High
+LMS output	Prepare structured content and assessments for supported LMS formats	Medium
+Course analytics	Identify learner performance and areas where learning outcomes are not being achieved	Medium
+5. The interface should guide the developer through decisions
+I would avoid making the interface a single long form that collects information and then produces one large prompt.
+Instead, I would use a guided development workspace with clear stages. The user should be able to review and approve each stage before proceeding.
+Proposed eStudy interface
+ILLUSTRATIVE WORKFLOW — NOT A SCREENSHOT OF THE CURRENT APP
+Course development
+Project draft
+AI for Chemical Engineering
+Course code: EST-2026-917 · Advanced · 7 hours
+1.	Course brief
+Approved
+Purpose, audience, duration, requirements and source documents
+2.	Curriculum architecture
+Approved
+Modules, topics, sequencing and coverage
+3.	Learning outcomes
+Review required
+Course and module-level measurable outcomes
+4.	Assessment design
+Not started
+Assessment strategy, questions, tasks and rubrics
+5.	Learning content
+Not started
+Lessons, activities, examples and scenarios
+6.	Quality assurance
+Not started
+Technical, instructional, compliance and accessibility checks
+7.	Publish and export
+Not started
+Learner manual, facilitator guide and LMS package
+The key design principle is that the developer can review, edit and approve each stage, rather than accepting an entire AI-generated course in one step.
+I would also introduce three generation modes:
+1.	Create from a brief: for new programmes where the developer provides the subject, learners, outcomes and requirements.
+2.	Create from source material: for programmes based on existing policies, manuals, technical documents or learning material.
+3.	Improve an existing course: for reviewing and upgrading an existing course without losing its approved content or structure.
+This would make the platform useful throughout the course lifecycle, rather than only at the beginning.
+6. A formal quality assurance framework
+This is where I think eStudy could develop a real competitive advantage.
+I would build a quality assurance engine into the platform, rather than relying on the developer to identify problems after the course has been generated.
+The system should assess the course against a defined set of quality dimensions.
+Proposed eStudy course quality framework
+Illustrative scoring model — weights should be validated through pilot reviews.
+Curriculum and subject coverage
+20%
+All specified topics and competencies are retained.
+Learning outcomes and alignment
+20%
+Outcomes, content, activities and assessments are aligned.
+Assessment quality
+20%
+Assessments validly measure the intended knowledge and skills.
+Content accuracy and sources
+15%
+Technical accuracy, source traceability and evidence.
+Learning experience
+10%
+Engagement, practice, feedback and logical progression.
+Compliance and accessibility
+10%
+Relevant regulatory, privacy and accessibility checks.
+Presentation and usability
+5%
+Consistency, readability, navigation and formatting.
+Suggested release rule
+A course should not pass simply because its average score is high. Critical failures in curriculum coverage, assessment validity, technical accuracy or mandatory compliance should prevent release until resolved.
+I would use four possible QA outcomes:
+•	Pass: Ready for final approval.
+•	Pass with recommendations: No critical issues; minor improvements remain.
+•	Revision required: Material instructional or content weaknesses.
+•	Fail: Critical errors, missing curriculum content, invalid assessments or unresolved compliance risks.
+A particularly important feature would be a review evidence report: the system should explain why it awarded a result and identify the specific course section that needs attention. It should never give a high score merely because the document is long or well formatted.
+7. What should be improved in the generation process itself?
+The earlier Chemical Engineering example points to a need for a different technical architecture.
+I would not ask the AI to generate the entire course in one operation. I would split generation into separate, controlled tasks.
+Generation stage	Output	Validation before next stage
+1. Analyse brief	Structured course specification	Required fields and metadata
+2. Analyse source material	Topic and evidence inventory	Source coverage and gaps
+3. Design curriculum	Module and lesson structure	Original curriculum coverage
+4. Develop outcomes	Course and module outcomes	Measurability and level
+5. Design assessments	Assessment plan and mapping	Outcome coverage and weighting
+6. Develop lessons	Lesson content and learning activities	Technical and instructional accuracy
+7. Develop assessment items	Questions, tasks and rubrics	Correct answers, feedback and alignment
+8. Conduct QA	Quality report and corrections	Critical checks passed
+9. Produce deliverables	Manuals, guides and LMS outputs	Formatting, completeness and export validation
+This would also help prevent one problem from affecting the entire course. If an assessment is weak, the assessment section can be regenerated without rewriting all the learning content.
+I would introduce a human approval gate after stages 1, 3, 5 and 8. A subject-matter expert should approve the technical scope and content; an instructional designer should review the educational design; and an authorised person should approve compliance and release.
+8. Recommended implementation roadmap
+I would not attempt to introduce every feature at once. The first priority should be to make the existing generation process reliable.
+Phase 1 · Immediate priorities
+Make course generation reliable
+•	Correct metadata mapping and locking.
+•	Preserve the original curriculum.
+•	Resolve conflicting course requirements before generation.
+•	Generate and approve the course architecture first.
+•	Improve learning outcomes and assessment alignment.
+•	Introduce mandatory quality checks.
+Success measure: the generated course accurately reflects the approved brief and does not omit or replace essential subject content.
+Phase 2 · Development improvements
+Build instructional-design intelligence
+•	Add the outcome-to-assessment alignment engine.
+•	Improve scenario and practical assessment generation.
+•	Introduce source documents and reference tracking.
+•	Add editable sections and selective regeneration.
+•	Introduce assessment rubrics and feedback.
+Success measure: instructional designers can produce a coherent, assessable course with less manual correction.
+Phase 3 · Competitive differentiation
+Develop the eStudy quality ecosystem
+•	South African accreditation and compliance profiles.
+•	Technical and regulatory validation workflows.
+•	Collaborative review, approval and version control.
+•	LMS export and integration.
+•	Accessibility checks and learner analytics.
+Success measure: eStudy can manage the quality and lifecycle of courses, not merely generate their initial content.
+9. How I would test whether the improvements work
+Before introducing a new version, I would establish a small benchmark set of five different course types:
+1.	A technical course — AI for Chemical Engineering.
+2.	A sales and customer service course — Sales Representative.
+3.	A compliance course — financial sector consumer education.
+4.	A professional learning programme — ICITP PLP.
+5.	A practical workplace skills programme — one involving demonstrated workplace competence.
+These are useful because they test different instructional requirements. A builder that can produce a reasonable generic course might still fail when it has to develop a technically demanding programme, a regulated course or a practical competency-based programme.
+For every test course, compare:
+•	Original brief versus generated course.
+•	Curriculum coverage.
+•	Accuracy of learning outcomes.
+•	Assessment alignment and validity.
+•	Quality and relevance of scenarios.
+•	Technical and regulatory accuracy.
+•	Repetition and unsupported statements.
+•	Time required for instructional designer corrections.
+•	Final quality assurance result.
+I would also measure the percentage of generated content accepted without substantive correction. This is more meaningful than measuring the number of pages or words generated.
+10. My overall recommendation
+I see three possible product directions:
+Direction	Product identity	My assessment
+Basic generator	Turns a prompt into a course document	Too easy to replicate
+Advanced AI authoring tool	Generates lessons, assessments and interactive content	Competitive, but crowded market
+AI instructional design and course quality platform	Develops, validates, improves and prepares complete learning programmes for delivery	Strongest opportunity
+The third option is where I would position eStudy.
+The proposed differentiator could be:
+eStudy Intelligent Course Development Platform
+An AI-assisted course development system that combines subject-specific curriculum design, instructional design, competency-based assessment, technical validation and quality assurance to produce learning programmes that are relevant, measurable and ready for review and delivery.
+It would be important not to market the system as automatically producing accredited courses. Rather, it should help course developers produce high-quality programmes that are better prepared for the relevant accreditation, professional and organisational review processes.
+What I would prioritise first
+If I were discussing this with the development team, I would put five requirements at the top of the agenda:
+1.	Stop losing the subject matter. Curriculum preservation must be non-negotiable.
+2.	Stop generating the entire course before its structure is approved. Introduce staged generation.
+3.	Make assessment alignment automatic. Every learning outcome must have appropriate learning and assessment evidence.
+4.	Build quality assurance into the application. The system must identify and explain weaknesses before the course is finalised.
+5.	Make the output editable and traceable. Developers must be able to revise individual sections, track changes and see where content originated.
+My view is that eStudy does not need to compete with Articulate on visual authoring or with every other platform on the number of AI features. It can compete through the quality of the instructional design, subject relevance, assessment integrity and South African professional learning context.
+That is a more defensible position.
+Suggested next step: formal product specification
+I would recommend turning this evaluation into an eStudy Automatic Course Builder – Functional and Instructional Design Improvement Specification.
+It could be used directly in a meeting with the developers and contain:
+•	A gap analysis of the current builder.
+•	A proposed revised user journey and application workflow.
+•	Functional requirements for each development stage.
+•	The revised master prompt architecture.
+•	The curriculum preservation and alignment rules.
+•	The QA framework with pass/fail criteria.
+•	Five benchmark test cases.
+•	A prioritised development backlog.
+That would turn the recommendations into something the development team can work from, rather than leaving them as general suggestions.
+
