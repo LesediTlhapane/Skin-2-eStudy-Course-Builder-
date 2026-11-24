@@ -233,6 +233,65 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     });
   };
 
+  const buildAiCompletedRoles = (
+    existingRoles: typeof roles,
+    verdict: string,
+    score: number,
+    now: string
+  ) => {
+    const aiName = 'AI QA Auto-Sign-Off (Provisional — Pending Human Review)';
+    const aiNote = `Auto-completed by Stage 6 AI QA (${verdict} · ${score}%) because governance fields were left blank; add named human reviewers before formal accreditation.`;
+    const resolveRole = (r: RoleSignOffRecord) =>
+      r.signedOff && r.reviewerName.trim()
+        ? r
+        : {
+            signedOff: true,
+            reviewerName: r.reviewerName.trim() || aiName,
+            signedOffAt: now,
+            notes: r.notes?.trim() || aiNote,
+          };
+    const updatedRoles = {
+      sme: resolveRole(existingRoles.sme),
+      instructionalDesigner: resolveRole(existingRoles.instructionalDesigner),
+      complianceAuthorizer: resolveRole(existingRoles.complianceAuthorizer),
+    };
+    const combinedNames = `SME: ${updatedRoles.sme.reviewerName} | ID: ${updatedRoles.instructionalDesigner.reviewerName} | Compliance: ${updatedRoles.complianceAuthorizer.reviewerName}`;
+    return { updatedRoles, combinedNames };
+  };
+
+  const handleAiAutoFillRoles = () => {
+    if (!qa) return;
+    const now = new Date().toISOString();
+    setReleaseFeedback(null);
+    onUpdateProject(prev => {
+      if (!prev.latestQA) return prev;
+      const currentRoles = prev.latestQA.humanSignOff.roles || {
+        sme: { signedOff: false, reviewerName: '' },
+        instructionalDesigner: { signedOff: false, reviewerName: '' },
+        complianceAuthorizer: { signedOff: false, reviewerName: '' },
+      };
+      const { updatedRoles, combinedNames } = buildAiCompletedRoles(
+        currentRoles,
+        prev.latestQA.verdict,
+        prev.latestQA.weightedScore,
+        now
+      );
+      return {
+        ...prev,
+        latestQA: {
+          ...prev.latestQA,
+          humanSignOff: {
+            ...prev.latestQA.humanSignOff,
+            signedOff: true,
+            reviewerName: combinedNames,
+            signedOffAt: now,
+            roles: updatedRoles,
+          },
+        },
+      };
+    });
+  };
+
   const handleRunQA = async () => {
     if (totalWeight !== 100) {
       setErrorMsg(`Dimension weights must sum to 100% (currently ${totalWeight}%).`);
@@ -363,12 +422,13 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     return 5;
   };
 
+  // Governance sign-off no longer blocks Stage 7 release when structural QA passes;
+  // unfilled governance fields are automatically filled provisionally by AI QA on release.
   const isReleaseBlocked =
     !qa ||
     isQaStale ||
     activeBlockingErrors.length > 0 ||
-    qa.verdict === 'FAIL' ||
-    !allThreeRolesApproved;
+    qa.verdict === 'FAIL';
 
   const getUnmetReleaseReasons = (): string[] => {
     const reasons: string[] = [];
@@ -384,36 +444,52 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     } else if (qa.verdict === 'FAIL') {
       reasons.push('QA Verdict is FAIL — address critical feedback and re-run Quality Assurance.');
     }
-    const unsigned: string[] = [];
-    if (!roles.sme.signedOff || !roles.sme.reviewerName.trim()) unsigned.push('SME');
-    if (!roles.instructionalDesigner.signedOff || !roles.instructionalDesigner.reviewerName.trim()) {
-      unsigned.push('Instructional Designer');
-    }
-    if (!roles.complianceAuthorizer.signedOff || !roles.complianceAuthorizer.reviewerName.trim()) {
-      unsigned.push('Compliance Authoriser');
-    }
-    if (unsigned.length > 0) {
-      reasons.push(`Missing name & "Sign Off Role" click for: ${unsigned.join(', ')}.`);
-    }
     return reasons;
   };
 
   const handleReleaseCourse = () => {
-    if (isReleaseBlocked) {
+    if (isReleaseBlocked || !qa) {
       const reasons = getUnmetReleaseReasons();
       setReleaseFeedback(`Cannot release to Stage 7 yet: ${reasons.join(' ')}`);
       return;
     }
     setReleaseFeedback(null);
+    const now = new Date().toISOString();
+    const { updatedRoles, combinedNames } = buildAiCompletedRoles(
+      roles,
+      qa.verdict,
+      qa.weightedScore,
+      now
+    );
+
     onUpdateProject(
-      prev => ({
-        ...prev,
-        currentStage: 7,
-        lifecycleStatus: 'completed',
-      }),
+      prev => {
+        const latest = prev.latestQA;
+        return {
+          ...prev,
+          currentStage: 7,
+          lifecycleStatus: 'completed',
+          ...(latest
+            ? {
+                latestQA: {
+                  ...latest,
+                  humanSignOff: {
+                    ...latest.humanSignOff,
+                    signedOff: true,
+                    reviewerName: combinedNames,
+                    signedOffAt: latest.humanSignOff.signedOffAt || now,
+                    roles: updatedRoles,
+                  },
+                },
+              }
+            : {}),
+        };
+      },
       {
         trigger: 'stage_approval',
-        summary: `Multi-role QA release approved (${roles.sme.reviewerName} / ${roles.instructionalDesigner.reviewerName} / ${roles.complianceAuthorizer.reviewerName})`,
+        summary: allThreeRolesApproved
+          ? `Multi-role QA release approved (${roles.sme.reviewerName} / ${roles.instructionalDesigner.reviewerName} / ${roles.complianceAuthorizer.reviewerName})`
+          : `Released to Stage 7 with AI QA provisional governance sign-off (${qa.verdict} · ${qa.weightedScore}%)`,
       }
     );
     onProceedToPublish();
@@ -943,7 +1019,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     type="text"
                     value={quickSignerName}
                     onChange={e => setQuickSignerName(e.target.value)}
-                    placeholder="Your full name (all 3 roles)..."
+                    placeholder="Your full name (optional)..."
                     className="px-2.5 py-1.5 text-xs bg-[#F5F7FA] border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
                   />
                   <button
@@ -952,6 +1028,13 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
                   >
                     Sign Off All 3 Roles
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAiAutoFillRoles}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 hover:bg-emerald-100 text-emerald-900 text-xs font-bold cursor-pointer"
+                  >
+                    Auto-Fill via AI QA
                   </button>
                 </div>
               )}
@@ -1100,8 +1183,8 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     : activeBlockingErrors.length > 0 || qa.verdict === 'FAIL'
                     ? 'Release is blocked until all blocking errors are fixed and QA re-runs.'
                     : allThreeRolesApproved
-                    ? 'All blocking checks passed and 3 governance roles signed off. Ready for Stage 7 release.'
-                    : 'Enter reviewer names and click "Sign Off Role" on all 3 roles above (or use "Sign Off All 3 Roles") to unlock Stage 7.'}
+                    ? 'All blocking checks passed and governance roles completed. Ready for Stage 7 release.'
+                    : 'All blocking checks passed. Click Release Course to proceed (unsigned governance fields will be auto-filled provisionally by AI QA).'}
                 </span>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   {activeBlockingErrors.length > 0 && (

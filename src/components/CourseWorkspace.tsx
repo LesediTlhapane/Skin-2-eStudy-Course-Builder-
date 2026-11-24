@@ -100,33 +100,24 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   const isQaStale = Boolean(
     qa?.evaluatedDataSignature && qa.evaluatedDataSignature !== computeCourseDataSignature(project)
   );
-  const roleRecords = qa?.humanSignOff?.roles
-    ? Object.values(qa.humanSignOff.roles)
-    : [];
   const isStage7Unlocked = Boolean(
     qa &&
       !isQaStale &&
       qa.verdict !== 'FAIL' &&
-      (!qa.blockingErrors || qa.blockingErrors.length === 0) &&
-      qa.humanSignOff?.signedOff &&
-      roleRecords.length === 3 &&
-      roleRecords.every(r => r.signedOff && r.reviewerName.trim().length > 0)
+      (!qa.blockingErrors || qa.blockingErrors.length === 0)
   );
 
   const getStage7BlockReason = (): string => {
     if (!qa) {
-      return 'Run Stage 6 Quality Assurance and complete the 3-role human sign-off before accessing Stage 7 Publish.';
+      return 'Run Stage 6 Quality Assurance before accessing Stage 7 Publish.';
     }
     if (isQaStale) {
-      return 'Course content changed since the last QA evaluation. Re-run Stage 6 QA and confirm sign-off before publishing.';
+      return 'Course content changed since the last QA evaluation. Re-run Stage 6 QA before publishing.';
     }
     if (qa.blockingErrors && qa.blockingErrors.length > 0) {
       return `${qa.blockingErrors.length} blocking error(s) in Stage 6 must be resolved before publishing.`;
     }
-    if (qa.verdict === 'FAIL') {
-      return 'QA Outcome is FAIL. Resolve critical issues and re-run Stage 6 QA before publishing.';
-    }
-    return 'All 3 human sign-off roles (Developer, SME, Academic QA) must be completed in Stage 6 before publishing.';
+    return 'QA Outcome is FAIL. Resolve critical issues and re-run Stage 6 QA before publishing.';
   };
 
   const setStage = (stage: WorkflowStage) => {

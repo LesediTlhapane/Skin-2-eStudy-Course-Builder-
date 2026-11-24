@@ -87,13 +87,12 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
     qa?.evaluatedDataSignature && qa.evaluatedDataSignature !== structuralAudit.dataSignature
   );
   const roles = qa?.humanSignOff?.roles;
+  const roleValues = roles ? [roles.sme, roles.instructionalDesigner, roles.complianceAuthorizer] : [];
   const allRolesSigned = Boolean(
-    roles?.sme.signedOff &&
-      roles.sme.reviewerName.trim() &&
-      roles?.instructionalDesigner.signedOff &&
-      roles.instructionalDesigner.reviewerName.trim() &&
-      roles?.complianceAuthorizer.signedOff &&
-      roles.complianceAuthorizer.reviewerName.trim()
+    roleValues.length === 3 && roleValues.every(r => r.signedOff && r.reviewerName.trim())
+  );
+  const hasProvisionalAiSignOff = roleValues.some(r =>
+    r.reviewerName.includes('AI QA Auto-Sign-Off')
   );
 
   const handleDocx = async (type: DeliverableType) => {
@@ -175,8 +174,20 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
           </div>
           <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200">
             <div className="text-[11px] text-slate-500">Multi-Role Sign-Off</div>
-            <div className={`font-bold mt-0.5 ${allRolesSigned ? 'text-emerald-700' : 'text-amber-700'}`}>
-              {allRolesSigned ? 'All 3 Roles Approved' : 'Pending Full Sign-Off'}
+            <div
+              className={`font-bold mt-0.5 ${
+                allRolesSigned && !hasProvisionalAiSignOff
+                  ? 'text-emerald-700'
+                  : allRolesSigned
+                  ? 'text-[#052B66]'
+                  : 'text-amber-700'
+              }`}
+            >
+              {allRolesSigned && !hasProvisionalAiSignOff
+                ? 'All 3 Human Roles Signed'
+                : allRolesSigned
+                ? 'AI QA Provisional Sign-Off'
+                : 'Provisional / Optional'}
             </div>
           </div>
           <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200">
