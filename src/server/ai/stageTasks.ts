@@ -974,11 +974,15 @@ export async function processCopilotChatWithAI(params: {
       | 'outcome'
       | 'lesson'
       | 'scenario'
+      | 'case_study'
+      | 'knowledge_check'
       | 'assessment_item'
       | 'curriculum_module'
       | 'brief_note';
     targetId?: string;
     moduleId?: string;
+    moduleNumber?: number;
+    stageHint?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
     title: string;
     rationale: string;
     beforePreview?: string;
@@ -998,25 +1002,74 @@ export async function processCopilotChatWithAI(params: {
       level: params.project.brief.experienceLevel,
       duration: params.project.brief.estimatedDuration,
       aiMode: params.project.brief.aiIntegrationMode,
+      metadataLocked: params.project.brief.metadataLocked,
     },
-    modules: params.project.curriculum.modules.map(m => ({
+    curriculumModules: params.project.curriculum.modules.map(m => ({
       id: m.id,
       order: m.order,
       title: m.title,
-      lessons: m.lessons.map(l => ({ id: l.id, title: l.title })),
+      lessons: m.lessons.map(l => ({
+        id: l.id,
+        title: l.title,
+        outcomeIds: l.outcomeIds || [],
+      })),
     })),
-    coverageGaps: params.project.curriculum.coverageChecks.filter(c => c.status !== 'mapped'),
+    coverageGaps: params.project.curriculum.coverageChecks
+      .filter(c => c.status !== 'mapped')
+      .slice(0, 15),
     outcomes: [
       ...params.project.outcomes.courseOutcomes,
       ...params.project.outcomes.moduleOutcomes,
-    ].slice(0, 20),
-    alignmentFlags: params.project.assessments.alignmentFlags,
+    ]
+      .slice(0, 40)
+      .map(o => ({
+        id: o.id,
+        code: o.code,
+        scope: o.scope,
+        moduleId: o.moduleId,
+        bloomLevel: o.bloomLevel,
+        statement: (o.statement || '').slice(0, 160),
+      })),
+    assessments: params.project.assessments.items.slice(0, 30).map(a => ({
+      id: a.id,
+      moduleId: a.moduleId,
+      title: a.title,
+      type: a.type,
+      outcomeIds: a.outcomeIds || [],
+    })),
+    contentModules: params.project.content.modules.map(cm => ({
+      moduleId: cm.moduleId,
+      moduleNumber: cm.moduleNumber,
+      title: cm.title,
+      lessons: cm.lessons.map(l => ({
+        id: l.id,
+        lessonPlanId: l.lessonPlanId,
+        title: l.title,
+        outcomeIds: l.outcomeIds || [],
+      })),
+      scenarios: cm.scenarios.map(s => ({ id: s.id, title: s.title })),
+      caseStudies: cm.workplaceCaseStudies.map(c => ({ id: c.id, title: c.title })),
+      knowledgeChecks: cm.knowledgeChecks.map(k => ({
+        id: k.id,
+        outcomeCode: k.outcomeCode,
+        question: (k.question || '').slice(0, 80),
+      })),
+    })),
+    alignmentFlags: params.project.assessments.alignmentFlags.slice(0, 20),
     latestQASummary: params.project.latestQA
       ? {
           verdict: params.project.latestQA.verdict,
           weightedScore: params.project.latestQA.weightedScore,
-          criticalFailures: params.project.latestQA.criticalFailures,
-          weaknesses: params.project.latestQA.dimensions.flatMap(d => d.weaknesses),
+          criticalFailures: params.project.latestQA.criticalFailures.slice(0, 10),
+          weaknesses: params.project.latestQA.dimensions
+            .flatMap(d => d.weaknesses)
+            .slice(0, 12),
+          accessibilityIssues: params.project.latestQA.accessibilityAudit?.checks
+            .filter(c => c.status !== 'pass')
+            .slice(0, 8),
+          technicalIssues: params.project.latestQA.technicalValidation?.checks
+            .filter(c => c.status !== 'pass')
+            .slice(0, 8),
         }
       : null,
     sources: params.project.sources.map(s => ({
@@ -1037,13 +1090,19 @@ export async function processCopilotChatWithAI(params: {
     responseFormat: 'json',
     systemInstruction: `You are the eStudy Course Copilot — a senior instructional design partner.
 CRITICAL RULES:
-1. You understand the active course, approved curriculum, outcomes, sources, QA findings, and current stage (${activeStage}/7).
+1. You understand the active course, approved curriculum, outcomes, assessments, generated Stage 5 lessons/scenarios/case studies, sources, QA findings, and current stage (${activeStage}/7).
 2. NEVER silently modify approved course metadata or content.
-3. When the developer asks you to improve an outcome, rewrite a lesson, refine a scenario, fix a rubric/assessment, address a QA finding, OR initialize/set a course title, scope, or module outline (for example creating a 6-module "GEN AI" course), provide clear step-by-step guidance in "reply" AND include structured proposals in "proposedChanges" so the developer can click Accept Change or Reject:
-   - For course title/purpose/topics/AI mode updates, use "targetType": "brief_note" with fields inside "patchPayload" (e.g. { "title": "GEN AI", "aiIntegrationMode": "core", "purpose": "...", "subjectTopicsInput": "..." }).
-   - For proposing a full list of modules, use "targetType": "curriculum_module" with "patchPayload": { "modules": [ { "title": "...", "purpose": "...", "objectives": ["..."], "competencies": ["..."], "topics": [{ "id": "top-1", "title": "...", "subtopics": [] }], "lessons": [{ "id": "les-1", "title": "...", "durationMinutes": 45, "purpose": "...", "keyTerms": [] }] } ] }.
-   - Remind them they can also set the module count in Stage 2 ("Modules (auto)") and click "Propose Curriculum" after approving Stage 1.
-4. Use plain, clear instructional-design language.
+3. ALWAYS return structured edits in "proposedChanges" using EXACT IDs copied from ACTIVE COURSE CONTEXT so "Accept Change" applies cleanly on first click:
+   - "outcome" (stageHint: 3): Copy exact outcome "id" into "targetId" (and "moduleId" if module outcome). Valid patchPayload keys: { "statement", "actionVerb", "bloomLevel", "workplacePerformance" }.
+   - "lesson" (stageHint: 5): Copy exact content lesson "id" (or curriculum lesson "id" if Stage 5 is not generated yet) into "targetId", exact "moduleId" into "moduleId", and numeric "moduleNumber". Valid patchPayload keys: { "title", "explanation", "outcomeIds", "practicalApplication", "guidedActivity", "workedExamples", "keyTerminology", "sourceClaims" }. Note: to link a lesson to outcomes, include "outcomeIds": ["exact-outcome-id", ...].
+   - "scenario" (stageHint: 5): Copy exact scenario "id" into "targetId", exact "moduleId", and numeric "moduleNumber". Valid patchPayload keys: { "title", "situation", "challenge", "decisionPrompt", "modelDebrief", "keyTakeaway" }.
+   - "case_study" (stageHint: 5): Copy exact case study "id" into "targetId", exact "moduleId", and numeric "moduleNumber". Valid patchPayload keys: { "title", "background", "analysisQuestions", "facilitatorNotes" }.
+   - "knowledge_check" (stageHint: 5): Copy exact knowledge check "id" into "targetId", exact "moduleId", and numeric "moduleNumber". Valid patchPayload keys: { "question", "options", "correctIndex", "explanation", "outcomeCode" }.
+   - "assessment_item" (stageHint: 4): Copy exact assessment "id" into "targetId". Valid patchPayload keys: { "title", "promptOrQuestion", "modelAnswer", "markingGuide", "outcomeIds", "rubric" }.
+   - "curriculum_module" (stageHint: 2): Update an existing module (exact "targetId"/"moduleId") or propose { "modules": [...] }.
+   - "brief_note" (stageHint: 1): Update brief fields { "title", "code", "industryDomain", "purpose", "workplaceProblem", "targetAudience", "estimatedDuration", "subjectTopicsInput", "aiIntegrationMode" }. If metadataLocked is true, explain if protected fields are locked.
+4. "patchPayload" MUST contain the real updated fields — NEVER leave patchPayload empty. Put clean readable text in "afterPreview".
+5. Mention the affected Stage and Module in "reply" so the user can either Accept Change OR jump directly to that section to regenerate.
 Return ONLY valid JSON.`,
     prompt: `ACTIVE COURSE CONTEXT:
 ${JSON.stringify(compactContext, null, 2)}
@@ -1056,18 +1115,20 @@ ${params.userMessage}
 
 Return JSON:
 {
-  "reply": "Clear, actionable instructional design advice or full rewritten text ready to copy",
+  "reply": "Clear, actionable instructional design advice referencing the exact Stage/Module",
   "proposedChanges": [
     {
       "id": "prop-${Date.now()}",
-      "targetType": "outcome | lesson | scenario | assessment_item | curriculum_module | brief_note",
-      "targetId": "matching id if applicable",
-      "moduleId": "matching moduleId if applicable",
+      "targetType": "outcome | lesson | scenario | case_study | knowledge_check | assessment_item | curriculum_module | brief_note",
+      "targetId": "exact id copied from ACTIVE COURSE CONTEXT",
+      "moduleId": "exact moduleId copied from ACTIVE COURSE CONTEXT (if applicable)",
+      "moduleNumber": 1,
+      "stageHint": 5,
       "title": "Short label describing this proposed change",
-      "rationale": "Why this improves alignment or quality",
+      "rationale": "Why this fixes the issue or improves alignment/QA",
       "beforePreview": "Optional current snippet",
       "afterPreview": "Proposed updated text",
-      "patchPayload": { "statement": "..." },
+      "patchPayload": { "explanation": "..." },
       "status": "pending"
     }
   ]
@@ -1075,12 +1136,26 @@ Return JSON:
   });
 
   const parsed = extractAndParseJSON<any>(res.text);
+  const stageFallbackByType: Record<string, 1 | 2 | 3 | 4 | 5 | 6 | 7> = {
+    brief_note: 1,
+    curriculum_module: 2,
+    outcome: 3,
+    assessment_item: 4,
+    lesson: 5,
+    scenario: 5,
+    case_study: 5,
+    knowledge_check: 5,
+  };
   return {
     reply: parsed.reply || 'Here are my instructional design recommendations.',
     proposedChanges: Array.isArray(parsed.proposedChanges)
       ? parsed.proposedChanges.map((p: any, idx: number) => ({
           ...p,
           id: p.id || `prop-${Date.now()}-${idx}`,
+          stageHint:
+            p.stageHint && p.stageHint >= 1 && p.stageHint <= 7
+              ? p.stageHint
+              : stageFallbackByType[p.targetType] || activeStage,
           status: 'pending' as const,
         }))
       : [],

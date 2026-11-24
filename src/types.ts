@@ -569,11 +569,15 @@ export interface CopilotProposedChange {
     | 'outcome'
     | 'lesson'
     | 'scenario'
+    | 'case_study'
+    | 'knowledge_check'
     | 'assessment_item'
     | 'curriculum_module'
     | 'brief_note';
   targetId?: string;
   moduleId?: string;
+  moduleNumber?: number;
+  stageHint?: WorkflowStage;
   title: string;
   rationale: string;
   beforePreview?: string;

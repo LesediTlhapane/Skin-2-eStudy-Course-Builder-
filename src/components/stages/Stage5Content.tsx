@@ -43,6 +43,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
   const [generatingStatus, setGeneratingStatus] = useState<string | null>(null);
   const [regenBusyKey, setRegenBusyKey] = useState<string | null>(null);
   const [regenPrompt, setRegenPrompt] = useState<string>('');
+  const [regenSuccessMsg, setRegenSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const plannedModules = project.curriculum.modules;
@@ -216,6 +217,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
 
   const handleGenerateMissingModules = async () => {
     setErrorMsg(null);
+    setRegenSuccessMsg(null);
     try {
       for (let i = 0; i < plannedModules.length; i++) {
         if (!isModuleComplete(plannedModules[i])) {
@@ -238,8 +240,12 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
   const handleRegenerateCurrentModule = async () => {
     if (!activePlan) return;
     setErrorMsg(null);
+    setRegenSuccessMsg(null);
     try {
       await generateSingleModule(activeModIdx, true);
+      setRegenSuccessMsg(
+        `Regenerated Module ${activePlan.order}: ${activePlan.title}. You can return to Stage 6 to re-run QA or continue editing.`
+      );
     } catch (err: any) {
       setErrorMsg(err?.message || 'Module regeneration failed.');
     } finally {
@@ -255,6 +261,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     const busyKey = `${targetType}-${targetId}`;
     setRegenBusyKey(busyKey);
     setErrorMsg(null);
+    setRegenSuccessMsg(null);
     try {
       const res = await fetch('/api/v2/content/regenerate', {
         method: 'POST',
@@ -321,6 +328,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         }
       );
       setRegenPrompt('');
+      setRegenSuccessMsg(
+        `Regenerated ${targetType.replace('_', ' ')} in Module ${activePlan.order}. Return to Stage 6 to re-run QA or continue editing.`
+      );
     } catch (err: any) {
       setErrorMsg(err?.message || 'Selective regeneration failed.');
     } finally {
@@ -393,6 +403,13 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         <div className="p-3 bg-[#052B66] text-white rounded-lg text-xs font-semibold flex items-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin text-[#45CC42]" />
           <span>{generatingStatus}</span>
+        </div>
+      )}
+
+      {regenSuccessMsg && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
+          <span>{regenSuccessMsg}</span>
         </div>
       )}
 

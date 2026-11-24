@@ -23,6 +23,10 @@ import { Stage7Publish } from './stages/Stage7Publish';
 import { SourceManagerModal } from './SourceManagerModal';
 import { VersionHistoryModal } from './VersionHistoryModal';
 import { CourseCopilotDrawer } from './CourseCopilotDrawer';
+import {
+  applyCopilotProposal,
+  type ApplyProposalResult,
+} from '../utils/copilotApply';
 
 interface CourseWorkspaceProps {
   project: CourseProject;
@@ -64,14 +68,15 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   const [isSourcesOpen, setIsSourcesOpen] = useState(false);
   const [isVersionsOpen, setIsVersionsOpen] = useState(false);
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
-  const [qaFixContext, setQaFixContext] = useState<{
+  const [sectionFocusContext, setSectionFocusContext] = useState<{
     stage: WorkflowStage;
     moduleNumber?: number;
     reason: string;
+    source: 'qa' | 'copilot';
   } | null>(null);
 
   const setStage = (stage: WorkflowStage) => {
-    if (stage === 6) setQaFixContext(null);
+    if (stage === 6) setSectionFocusContext(null);
     onUpdateProject(prev => ({ ...prev, currentStage: stage }));
   };
 
@@ -80,14 +85,33 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
     context?: { moduleNumber?: number; reason?: string }
   ) => {
     if (context?.reason || context?.moduleNumber) {
-      setQaFixContext({
+      setSectionFocusContext({
         stage,
         moduleNumber: context.moduleNumber,
         reason: context.reason || `Address Stage 6 QA issue in Stage ${stage}.`,
+        source: 'qa',
       });
     } else {
-      setQaFixContext(null);
+      setSectionFocusContext(null);
     }
+    onUpdateProject(prev => ({ ...prev, currentStage: stage }));
+  };
+
+  const handleNavigateFromCopilot = (
+    stage: WorkflowStage,
+    context?: { moduleNumber?: number; reason?: string }
+  ) => {
+    if (context?.reason || context?.moduleNumber) {
+      setSectionFocusContext({
+        stage,
+        moduleNumber: context.moduleNumber,
+        reason: context.reason || `Review or regenerate this section in Stage ${stage}.`,
+        source: 'copilot',
+      });
+    } else {
+      setSectionFocusContext(null);
+    }
+    setIsCopilotOpen(false);
     onUpdateProject(prev => ({ ...prev, currentStage: stage }));
   };
 
@@ -101,175 +125,67 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
     return project.lifecycleStatus === 'completed';
   };
 
-  const handleApplyCopilotProposal = (proposal: CopilotProposedChange) => {
+  const handleApplyCopilotProposal = (proposal: CopilotProposedChange): ApplyProposalResult => {
+    const check = applyCopilotProposal(project, proposal);
+    if (!check.applied) {
+      return check;
+    }
     onUpdateProject(
-      prev => {
-        if (proposal.targetType === 'outcome' && proposal.targetId) {
-          const patch = proposal.patchPayload || {};
-          return {
-            ...prev,
-            outcomes: {
-              ...prev.outcomes,
-              courseOutcomes: prev.outcomes.courseOutcomes.map(o =>
-                o.id === proposal.targetId ? { ...o, ...patch } : o
-              ),
-              moduleOutcomes: prev.outcomes.moduleOutcomes.map(o =>
-                o.id === proposal.targetId ? { ...o, ...patch } : o
-              ),
-            },
-          };
-        }
-        if (proposal.targetType === 'lesson' && proposal.moduleId && proposal.targetId) {
-          return {
-            ...prev,
-            content: {
-              ...prev.content,
-              modules: prev.content.modules.map(m =>
-                m.moduleId === proposal.moduleId
-                  ? {
-                      ...m,
-                      lessons: m.lessons.map(l =>
-                        l.id === proposal.targetId
-                          ? { ...l, ...proposal.patchPayload, editStatus: 'human_edited' }
-                          : l
-                      ),
-                    }
-                  : m
-              ),
-            },
-          };
-        }
-        if (proposal.targetType === 'scenario' && proposal.moduleId && proposal.targetId) {
-          return {
-            ...prev,
-            content: {
-              ...prev.content,
-              modules: prev.content.modules.map(m =>
-                m.moduleId === proposal.moduleId
-                  ? {
-                      ...m,
-                      scenarios: m.scenarios.map(s =>
-                        s.id === proposal.targetId ? { ...s, ...proposal.patchPayload } : s
-                      ),
-                    }
-                  : m
-              ),
-            },
-          };
-        }
-        if (proposal.targetType === 'assessment_item' && proposal.targetId) {
-          return {
-            ...prev,
-            assessments: {
-              ...prev.assessments,
-              items: prev.assessments.items.map(it =>
-                it.id === proposal.targetId ? { ...it, ...proposal.patchPayload } : it
-              ),
-            },
-          };
-        }
-        if (proposal.targetType === 'brief_note') {
-          const patch = proposal.patchPayload || {};
-          const allowedKeys = [
-            'title',
-            'code',
-            'industryDomain',
-            'purpose',
-            'workplaceProblem',
-            'targetAudience',
-            'targetJobRoles',
-            'experienceLevel',
-            'prerequisites',
-            'estimatedDuration',
-            'language',
-            'learningRequirements',
-            'subjectTopicsInput',
-            'aiIntegrationMode',
-            'aiIntegrationRequirements',
-          ] as const;
-          const nextBrief = {
-            ...prev.brief,
-            templateFieldValues: {
-              ...prev.brief.templateFieldValues,
-              ...(patch.templateFieldValues && typeof patch.templateFieldValues === 'object'
-                ? patch.templateFieldValues
-                : {}),
-            },
-            fieldStatuses: {
-              ...prev.brief.fieldStatuses,
-              ...(patch.fieldStatuses && typeof patch.fieldStatuses === 'object'
-                ? patch.fieldStatuses
-                : {}),
-            },
-          };
-          for (const key of allowedKeys) {
-            if (patch[key] !== undefined && !(prev.brief.metadataLocked && ['title', 'code', 'industryDomain', 'targetAudience', 'estimatedDuration'].includes(key))) {
-              (nextBrief as any)[key] = patch[key];
-            }
-          }
-          return {
-            ...prev,
-            brief: nextBrief,
-          };
-        }
-        if (proposal.targetType === 'curriculum_module') {
-          const patch = proposal.patchPayload || {};
-          const existing = prev.curriculum.modules;
-          if (Array.isArray(patch.modules)) {
-            const normalized = patch.modules.map((m: any, idx: number) => ({
-              id: m.id || `mod-${Date.now()}-${idx}`,
-              order: idx + 1,
-              title: m.title || `Module ${idx + 1}`,
-              qctoModuleType: m.qctoModuleType || 'Standard Module',
-              purpose: m.purpose || '',
-              objectives: Array.isArray(m.objectives) ? m.objectives : [],
-              competencies: Array.isArray(m.competencies) ? m.competencies : [],
-              topics: Array.isArray(m.topics) ? m.topics : [],
-              lessons: Array.isArray(m.lessons) ? m.lessons : [],
-            }));
-            return {
-              ...prev,
-              curriculum: {
-                ...prev.curriculum,
-                modules: normalized,
-                approval: { approved: false },
-              },
-            };
-          }
-          const targetModId = proposal.moduleId || proposal.targetId;
-          if (targetModId && existing.some(m => m.id === targetModId)) {
-            return {
-              ...prev,
-              curriculum: {
-                ...prev.curriculum,
-                modules: existing.map(m => (m.id === targetModId ? { ...m, ...patch } : m)),
-                approval: { approved: false },
-              },
-            };
-          }
-          const newMod = {
-            id: `mod-${Date.now()}`,
-            order: existing.length + 1,
-            title: patch.title || `Module ${existing.length + 1}`,
-            qctoModuleType: patch.qctoModuleType || 'Standard Module',
-            purpose: patch.purpose || '',
-            objectives: Array.isArray(patch.objectives) ? patch.objectives : [],
-            competencies: Array.isArray(patch.competencies) ? patch.competencies : [],
-            topics: Array.isArray(patch.topics) ? patch.topics : [],
-            lessons: Array.isArray(patch.lessons) ? patch.lessons : [],
-          };
-          return {
-            ...prev,
-            curriculum: {
-              ...prev.curriculum,
-              modules: [...existing, newMod],
-              approval: { approved: false },
-            },
-          };
-        }
-        return prev;
-      },
+      prev => applyCopilotProposal(prev, proposal).nextProject,
       { trigger: 'manual_snapshot', summary: `Applied Copilot proposal: ${proposal.title}` }
+    );
+    return check;
+  };
+
+  const handleApplyRegeneratedSection = (params: {
+    targetType: 'lesson' | 'scenario' | 'case_study' | 'knowledge_check';
+    moduleId: string;
+    targetId: string;
+    updatedItem: any;
+    title: string;
+  }) => {
+    onUpdateProject(
+      prev => ({
+        ...prev,
+        content: {
+          ...prev.content,
+          modules: prev.content.modules.map(m => {
+            if (m.moduleId !== params.moduleId) return m;
+            if (params.targetType === 'lesson') {
+              return {
+                ...m,
+                lessons: m.lessons.map(l =>
+                  l.id === params.targetId ? { ...l, ...params.updatedItem, editStatus: 'ai_draft' } : l
+                ),
+              };
+            }
+            if (params.targetType === 'scenario') {
+              return {
+                ...m,
+                scenarios: m.scenarios.map(s =>
+                  s.id === params.targetId ? { ...s, ...params.updatedItem } : s
+                ),
+              };
+            }
+            if (params.targetType === 'case_study') {
+              return {
+                ...m,
+                workplaceCaseStudies: m.workplaceCaseStudies.map(c =>
+                  c.id === params.targetId ? { ...c, ...params.updatedItem } : c
+                ),
+              };
+            }
+            return {
+              ...m,
+              knowledgeChecks: m.knowledgeChecks.map(k =>
+                k.id === params.targetId ? { ...k, ...params.updatedItem } : k
+              ),
+            };
+          }),
+          approval: { approved: false },
+        },
+      }),
+      { trigger: 'ai_generation', summary: `Regenerated ${params.targetType} via Copilot: ${params.title}` }
     );
   };
 
@@ -362,31 +278,47 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
       {/* Main Stage Content */}
       <main className="flex-1 p-5 sm:p-8 overflow-y-auto">
         <div className="max-w-5xl mx-auto">
-          {qaFixContext &&
-            qaFixContext.stage === project.currentStage &&
+          {sectionFocusContext &&
+            sectionFocusContext.stage === project.currentStage &&
             project.currentStage !== 6 && (
               <div className="mb-5 p-4 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="text-xs text-amber-950 space-y-0.5">
                   <div className="font-bold">
-                    Fixing Stage 6 QA Issue
-                    {qaFixContext.moduleNumber ? ` (Module ${qaFixContext.moduleNumber})` : ''}
+                    {sectionFocusContext.source === 'qa'
+                      ? 'Fixing Stage 6 QA Issue'
+                      : 'Course Copilot · Action in Target Section'}
+                    {sectionFocusContext.moduleNumber
+                      ? ` (Module ${sectionFocusContext.moduleNumber})`
+                      : ''}
                   </div>
-                  <p className="text-amber-900">{qaFixContext.reason}</p>
+                  <p className="text-amber-900">{sectionFocusContext.reason}</p>
                   <p className="text-[11px] text-amber-800">
-                    Edit directly below or use the AI regenerate button on this stage, then return to Stage 6 to re-run QA.
+                    {sectionFocusContext.source === 'qa'
+                      ? 'Edit directly below or use the AI regenerate button on this stage, then return to Stage 6 to re-run QA.'
+                      : 'Review your applied changes or click the AI regenerate button below, then proceed or re-run QA.'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  {sectionFocusContext.source === 'qa' ? (
+                    <button
+                      type="button"
+                      onClick={() => setStage(6)}
+                      className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
+                    >
+                      ← Back to Stage 6 QA
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsCopilotOpen(true)}
+                      className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
+                    >
+                      Open Copilot
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => setStage(6)}
-                    className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
-                  >
-                    ← Back to Stage 6 QA
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQaFixContext(null)}
+                    onClick={() => setSectionFocusContext(null)}
                     className="px-2 py-1.5 text-xs font-semibold text-amber-800 hover:text-amber-950 cursor-pointer"
                   >
                     Dismiss
@@ -439,10 +371,10 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               initialModuleNumber={
-                qaFixContext?.stage === 5 ? qaFixContext.moduleNumber : undefined
+                sectionFocusContext?.stage === 5 ? sectionFocusContext.moduleNumber : undefined
               }
               initialGuidance={
-                qaFixContext?.stage === 5 ? qaFixContext.reason : undefined
+                sectionFocusContext?.stage === 5 ? sectionFocusContext.reason : undefined
               }
               onUpdateProject={onUpdateProject}
               onApproveAndContinue={() => setStage(6)}
@@ -488,6 +420,8 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
         selectedModel={selectedModel}
         onClose={() => setIsCopilotOpen(false)}
         onApplyProposedChange={handleApplyCopilotProposal}
+        onApplyRegeneratedSection={handleApplyRegeneratedSection}
+        onNavigateToSection={handleNavigateFromCopilot}
       />
     </div>
   );

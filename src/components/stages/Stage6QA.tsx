@@ -275,7 +275,9 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     const id = String(item.id || '').toLowerCase();
     const combined = `${item.rule || ''} ${item.affectedSection || ''} ${item.description || ''}`;
     const lower = combined.toLowerCase();
-    const modMatch = combined.match(/\b(?:Module|M)\s*(\d+)\b/i);
+    const modMatch =
+      combined.match(/\b(?:Module|M)\s*(\d+)\b/i) ||
+      combined.match(/\bMLO-(\d+)\.\d+\b/i);
     const moduleNumber = modMatch ? Number(modMatch[1]) : undefined;
     const reason = `${item.rule || 'QA Failure'}: ${item.description || ''} ${
       item.recommendedFix ? `(${item.recommendedFix})` : ''
