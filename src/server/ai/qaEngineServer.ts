@@ -53,36 +53,48 @@ export async function evaluateCourseQAWithAI(params: {
     })
   );
 
+  const safeSources = Array.isArray(params.project?.sources) ? params.project.sources : [];
+  const safeCourseOutcomes = Array.isArray(params.project?.outcomes?.courseOutcomes)
+    ? params.project.outcomes.courseOutcomes
+    : [];
+  const safeModuleOutcomes = Array.isArray(params.project?.outcomes?.moduleOutcomes)
+    ? params.project.outcomes.moduleOutcomes
+    : [];
+  const safeAssessmentItems = Array.isArray(params.project?.assessments?.items)
+    ? params.project.assessments.items
+    : [];
+  const safeContentModules = Array.isArray(params.project?.content?.modules)
+    ? params.project.content.modules
+    : [];
+  const safeCurrModules = Array.isArray(params.project?.curriculum?.modules)
+    ? params.project.curriculum.modules
+    : [];
+
   // Build complete non-truncated structural summary so the AI auditor never
   // hallucinates missing outcomes/modules/assessments due to array slicing.
   const compactCourseForAudit = {
     brief: {
-      title: params.project.brief.title,
-      code: params.project.brief.code,
-      domain: params.project.brief.industryDomain,
-      audience: params.project.brief.targetAudience,
-      level: params.project.brief.experienceLevel,
-      duration: params.project.brief.estimatedDuration,
-      aiMode: params.project.brief.aiIntegrationMode,
-      saComplianceEnabled: Boolean(params.project.brief.saCompliance?.enabled),
-      nqfLevel: params.project.brief.saCompliance?.nqfLevel || 'Unspecified',
+      title: params.project?.brief?.title || '',
+      code: params.project?.brief?.code || '',
+      domain: params.project?.brief?.industryDomain || '',
+      audience: params.project?.brief?.targetAudience || '',
+      level: params.project?.brief?.experienceLevel || '',
+      duration: params.project?.brief?.estimatedDuration || '',
+      aiMode: params.project?.brief?.aiIntegrationMode || 'optional',
+      saComplianceEnabled: Boolean(params.project?.brief?.saCompliance?.enabled),
+      nqfLevel: params.project?.brief?.saCompliance?.nqfLevel || 'Unspecified',
     },
-    sourcesCount: params.project.sources.length,
-    sources: params.project.sources.map(s => ({
+    sourcesCount: safeSources.length,
+    sources: safeSources.map(s => ({
       title: s.title,
       status: s.verificationStatus,
       verifiedBy: s.verifiedBy || null,
     })),
-    coverageGaps: (params.project.curriculum.coverageChecks || [])
+    coverageGaps: (params.project?.curriculum?.coverageChecks || [])
       .filter(c => c.status !== 'mapped')
       .map(c => ({ topic: c.originalTopic, status: c.status })),
-    outcomesCount:
-      params.project.outcomes.courseOutcomes.length +
-      params.project.outcomes.moduleOutcomes.length,
-    outcomes: [
-      ...params.project.outcomes.courseOutcomes,
-      ...params.project.outcomes.moduleOutcomes,
-    ].map(o => ({
+    outcomesCount: safeCourseOutcomes.length + safeModuleOutcomes.length,
+    outcomes: [...safeCourseOutcomes, ...safeModuleOutcomes].map(o => ({
       code: o.code,
       scope: o.scope,
       verb: o.actionVerb,
@@ -90,19 +102,15 @@ export async function evaluateCourseQAWithAI(params: {
       statement: String(o.statement || '').slice(0, 90),
     })),
     assessmentsSummary: {
-      total: params.project.assessments.items.length,
-      passMark: params.project.assessments.passRequirementPercent,
-      knowledgeCount: params.project.assessments.items.filter(
-        a => a.assessmentDomain === 'knowledge'
-      ).length,
-      practicalCount: params.project.assessments.items.filter(
-        a => a.assessmentDomain === 'practical'
-      ).length,
-      items: params.project.assessments.items.map(a => ({
+      total: safeAssessmentItems.length,
+      passMark: params.project?.assessments?.passRequirementPercent ?? 70,
+      knowledgeCount: safeAssessmentItems.filter(a => a.assessmentDomain === 'knowledge').length,
+      practicalCount: safeAssessmentItems.filter(a => a.assessmentDomain === 'practical').length,
+      items: safeAssessmentItems.map(a => ({
         title: a.title,
         type: a.type,
         domain: a.assessmentDomain,
-        outcomeCount: a.outcomeIds.length,
+        outcomeCount: Array.isArray(a.outcomeIds) ? a.outcomeIds.length : 0,
         hasAnswer: Boolean(a.modelAnswer?.trim()),
         rubricCount: a.rubric?.length || 0,
       })),
@@ -129,13 +137,15 @@ export async function evaluateCourseQAWithAI(params: {
       needsReviewClaims: technicalValidation.needsReviewClaimsCount,
       unsupportedClaims: technicalValidation.unsupportedClaimsCount,
     },
-    contentModules: params.project.content.modules.map(m => ({
+    contentModulesCount: safeContentModules.length,
+    plannedModulesCount: safeCurrModules.length,
+    contentModules: safeContentModules.map(m => ({
       mod: m.moduleNumber,
       title: m.title,
       hasIntro: Boolean(m.introduction?.trim()),
       hasSummary: Boolean(m.summary?.trim()),
-      lessonsCount: m.lessons.length,
-      lessons: m.lessons.map(l => ({
+      lessonsCount: (m.lessons || []).length,
+      lessons: (m.lessons || []).map(l => ({
         title: l.title,
         words: l.explanation ? l.explanation.split(/\s+/).length : 0,
         excerpt: String(l.explanation || '').slice(0, 110),
@@ -143,9 +153,9 @@ export async function evaluateCourseQAWithAI(params: {
         keyTerms: l.keyTerminology?.length || 0,
         unsupportedClaims: (l.sourceClaims || []).filter(c => c.status === 'UNSUPPORTED').length,
       })),
-      scenarios: m.scenarios.map(s => s.title),
-      caseStudiesCount: m.workplaceCaseStudies.length,
-      knowledgeChecksCount: m.knowledgeChecks.length,
+      scenarios: (m.scenarios || []).map(s => s.title),
+      caseStudiesCount: (m.workplaceCaseStudies || []).length,
+      knowledgeChecksCount: (m.knowledgeChecks || []).length,
     })),
     deterministicBlockingErrors: structuralAudit.blockingErrors.map(e => ({
       rule: e.rule,

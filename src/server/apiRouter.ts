@@ -421,8 +421,8 @@ export function createApiRouter(options?: { rateLimitMaxPerMin?: number }): expr
   router.post('/v2/qa/evaluate', async (req, res) => {
     try {
       const { project, weights, provider, model } = req.body || {};
-      if (!project || !weights || typeof project !== 'object' || typeof weights !== 'object') {
-        return res.status(400).json({ success: false, error: 'Missing project or weights.' });
+      if (!project || typeof project !== 'object' || !Array.isArray(weights) || weights.length === 0) {
+        return res.status(400).json({ success: false, error: 'Missing project or weights array.' });
       }
       const report = await evaluateCourseQAWithAI({ project, weights, provider, model });
       return res.json({ success: true, report });

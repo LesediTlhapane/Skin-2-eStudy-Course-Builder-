@@ -5,7 +5,7 @@ import type {
   AssessmentItem,
   CourseProject,
   LearningOutcome,
-} from '../types';
+} from '../types.js';
 
 const VAGUE_VERBS_REGEX =
   /\b(understand|know about|learn about|be aware of|appreciate|familiarise with|familiarize with)\b/i;

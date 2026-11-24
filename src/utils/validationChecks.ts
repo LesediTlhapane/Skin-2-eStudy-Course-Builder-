@@ -3,7 +3,7 @@ import type {
   CourseProject,
   DeterministicCheckItem,
   TechnicalValidationSummary,
-} from '../types';
+} from '../types.js';
 
 function splitSentences(text: string): string[] {
   return text

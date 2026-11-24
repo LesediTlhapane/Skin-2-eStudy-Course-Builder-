@@ -2,12 +2,12 @@ import type {
   CourseProject,
   QAIssueItem,
   WorkflowStage,
-} from '../types';
-import { computeFullAlignmentReport, detectVagueOutcomeWarning } from './alignmentHelpers';
+} from '../types.js';
+import { computeFullAlignmentReport, detectVagueOutcomeWarning } from './alignmentHelpers.js';
 import {
   runAccessibilityChecks,
   runTechnicalValidationChecks,
-} from './validationChecks';
+} from './validationChecks.js';
 
 export interface PlaceholderOccurrence {
   stage: WorkflowStage;
