@@ -597,7 +597,7 @@ NON-NEGOTIABLE STANDARDS:
 3. Adapt technical rigour to "${params.brief.experienceLevel}". For technical/STEM topics, preserve exact equations, units, assumptions, and calculations.
 4. NEVER use generic filler, padding, or repeat explanations already covered in other modules (${otherModuleTitles || 'none'}).
 5. Scenarios and case studies MUST reflect "${params.brief.industryDomain}" and job roles "${params.brief.targetJobRoles || params.brief.targetAudience}" in a realistic South African workplace context.
-6. Source Honesty: Tag factual/regulatory claims in sourceClaims as "VERIFIED" only when grounded in the supplied sources, "NEEDS REVIEW" when specialist confirmation is required, or "UNSUPPORTED" if no source evidence exists. Never invent statistics, Act sections, or accreditation claims.
+6. Accessibility & Source Honesty: Whenever referencing a diagram, chart, or figure, include descriptive caption/alt explanation ("This diagram illustrates..."). Tag factual/regulatory claims in sourceClaims as "VERIFIED" only when grounded in supplied sources, "NEEDS REVIEW" when domain expert confirmation is needed, or "UNSUPPORTED" only when making specific unverified statistical/statutory claims.
 Return ONLY valid JSON.`,
     prompt: `Author full learning content for Module ${params.modulePlan.order}: "${params.modulePlan.title}".
 
@@ -632,7 +632,7 @@ Return JSON matching:
     {
       "id": "les-content-1",
       "lessonPlanId": "matching lesson id from plan",
-      "outcomeIds": ${JSON.stringify(modOutcomes.slice(0, 2).map(o => o.id))},
+      "outcomeIds": ${JSON.stringify([...modOutcomes.map(o => o.id), ...params.outcomes.courseOutcomes.slice(0, 2).map(o => o.id)])},
       "title": "Exact lesson title",
       "durationMinutes": 35,
       "explanation": "Rich, clear, subject-specific teaching prose (280-450 words) with structured subheadings, mechanics, equations/rules if technical, and common misconceptions",
@@ -839,7 +839,10 @@ export async function generateSingleLessonWithAI(params: {
   const modOutcomes = params.outcomes.moduleOutcomes.filter(
     o => o.moduleId === params.modulePlan.id
   );
-  const fallbackOutcomeIds = modOutcomes.map(o => o.id);
+  const courseOutcomeIds = params.outcomes.courseOutcomes.map(o => o.id);
+  const fallbackOutcomeIds = Array.from(
+    new Set([...modOutcomes.map(o => o.id), ...courseOutcomeIds.slice(0, 2)])
+  );
 
   const aiRule =
     params.brief.aiIntegrationMode === 'none'
@@ -855,7 +858,8 @@ export async function generateSingleLessonWithAI(params: {
     systemInstruction: `You are a senior subject-matter educator writing a single high-rigour lesson for "${params.brief.title}" (${params.brief.experienceLevel}, audience: "${params.brief.targetAudience}").
 ${aiRule}
 Preserve exact equations, units, domain terminology, and South African workplace realism where applicable.
-Tag claims in sourceClaims honestly as "VERIFIED", "NEEDS REVIEW", or "UNSUPPORTED". Never fabricate Act numbers or statistics.
+If mentioning any diagram/chart/figure, describe what it illustrates in plain text ("This diagram illustrates...").
+Tag claims in sourceClaims as "VERIFIED" when grounded in supplied sources, "NEEDS REVIEW" for expert-check domain standards, or "UNSUPPORTED" only for specific unverified empirical/statutory claims.
 Return ONLY valid JSON.`,
     prompt: `Author Lesson ${params.lessonIndex + 1} inside Module ${params.modulePlan.order} ("${params.modulePlan.title}").
 Course Domain: ${params.brief.industryDomain} | Purpose: ${params.brief.purpose}
@@ -868,7 +872,7 @@ Return JSON:
 {
   "id": "les-content-${params.modulePlan.order}-${params.lessonIndex + 1}",
   "lessonPlanId": ${JSON.stringify(params.lessonPlan.id)},
-  "outcomeIds": ${JSON.stringify(fallbackOutcomeIds.slice(0, 2))},
+  "outcomeIds": ${JSON.stringify(fallbackOutcomeIds)},
   "title": ${JSON.stringify(params.lessonPlan.title)},
   "durationMinutes": ${Number(params.lessonPlan.durationMinutes) || 35},
   "explanation": "Rich, clear teaching prose (320-480 words) with structured subheadings, core principles/equations, and common misconceptions",

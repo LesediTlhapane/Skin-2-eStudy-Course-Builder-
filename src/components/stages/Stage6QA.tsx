@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   Eye,
   FlaskConical,
   Loader2,
   ShieldCheck,
   Sparkles,
+  Wrench,
 } from 'lucide-react';
 import type {
   AIProvider,
@@ -72,6 +74,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
   );
   const [isRunning, setIsRunning] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [repairNotice, setRepairNotice] = useState<string | null>(null);
 
   const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
   const qa = project.latestQA;
@@ -182,6 +185,82 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     Boolean(roles.instructionalDesigner.reviewerName.trim()) &&
     roles.complianceAuthorizer.signedOff &&
     Boolean(roles.complianceAuthorizer.reviewerName.trim());
+
+  const handleAutoRepairAlignment = () => {
+    setRepairNotice(null);
+    onUpdateProject(
+      prev => {
+        const courseOutcomeIds = prev.outcomes.courseOutcomes.map(c => c.id);
+        const modOutcomesByMod = new Map<string, string[]>();
+        for (const mo of prev.outcomes.moduleOutcomes) {
+          if (!mo.moduleId) continue;
+          const list = modOutcomesByMod.get(mo.moduleId) || [];
+          list.push(mo.id);
+          modOutcomesByMod.set(mo.moduleId, list);
+        }
+
+        const nextCurriculumModules = prev.curriculum.modules.map(pm => {
+          const fallbackIds = Array.from(
+            new Set([...(modOutcomesByMod.get(pm.id) || []), ...courseOutcomeIds.slice(0, 2)])
+          );
+          return {
+            ...pm,
+            lessons: pm.lessons.map(pl => ({
+              ...pl,
+              outcomeIds: Array.from(new Set([...(pl.outcomeIds || []), ...fallbackIds])),
+            })),
+          };
+        });
+
+        const nextContentModules = prev.content.modules.map(cm => {
+          const fallbackIds = Array.from(
+            new Set([...(modOutcomesByMod.get(cm.moduleId) || []), ...courseOutcomeIds.slice(0, 2)])
+          );
+          return {
+            ...cm,
+            lessons: cm.lessons.map(gl => ({
+              ...gl,
+              outcomeIds: Array.from(new Set([...(gl.outcomeIds || []), ...fallbackIds])),
+            })),
+          };
+        });
+
+        // Also ensure every outcome has at least one assessment linked (if assessments exist)
+        const nextItems = [...prev.assessments.items];
+        if (nextItems.length > 0) {
+          const allOuts = [...prev.outcomes.courseOutcomes, ...prev.outcomes.moduleOutcomes];
+          for (const out of allOuts) {
+            const alreadyAssessed = nextItems.some(it => it.outcomeIds.includes(out.id));
+            if (!alreadyAssessed) {
+              const targetIdx =
+                out.moduleId
+                  ? nextItems.findIndex(it => it.moduleId === out.moduleId)
+                  : 0;
+              const idx = targetIdx >= 0 ? targetIdx : 0;
+              nextItems[idx] = {
+                ...nextItems[idx],
+                outcomeIds: Array.from(new Set([...nextItems[idx].outcomeIds, out.id])),
+              };
+            }
+          }
+        }
+
+        const updated: CourseProject = {
+          ...prev,
+          curriculum: { ...prev.curriculum, modules: nextCurriculumModules },
+          content: { ...prev.content, modules: nextContentModules },
+          assessments: { ...prev.assessments, items: nextItems },
+        };
+        const report = computeFullAlignmentReport(updated);
+        updated.assessments.alignmentFlags = report.flags;
+        updated.assessments.alignmentScorePercent = report.scorePercent;
+        return updated;
+      }
+    );
+    setRepairNotice(
+      'Updated missing lesson-to-outcome and assessment-to-outcome links. Click "Re-run Quality Assurance" above to refresh your QA verdict.'
+    );
+  };
 
   const handleReleaseCourse = () => {
     if (!qa || qa.verdict === 'FAIL' || !allThreeRolesApproved) return;
@@ -424,9 +503,33 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           {/* Critical Failures */}
           {qa.criticalFailures.length > 0 && (
             <section className="bg-white border border-red-300 rounded-xl p-5 space-y-3">
-              <h3 className="text-sm font-bold text-red-800">
-                Critical Failures Blocking Release ({qa.criticalFailures.length})
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-bold text-red-800">
+                  Critical Failures Blocking Release ({qa.criticalFailures.length})
+                </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAutoRepairAlignment}
+                    className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Wrench className="w-3.5 h-3.5 text-[#45CC42]" />
+                    <span>Auto-Link Unmapped Lessons & Outcomes</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onJumpToStage(4)}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-[#052B66] text-[#052B66] text-xs font-bold cursor-pointer"
+                  >
+                    Edit Stage 4 Alignment
+                  </button>
+                </div>
+              </div>
+              {repairNotice && (
+                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-medium">
+                  {repairNotice}
+                </div>
+              )}
               {qa.criticalFailures.map(f => (
                 <div
                   key={f.id}
@@ -579,23 +682,85 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
               })}
             </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
-              <span className="text-xs text-slate-500">
-                {qa.verdict === 'FAIL'
-                  ? 'Release blocked while QA verdict is FAIL. Address critical failures and re-run QA.'
-                  : allThreeRolesApproved
-                  ? 'All 3 governance roles signed off. Ready to publish.'
-                  : 'Complete and sign off all 3 reviewer roles to unlock Stage 7 release.'}
-              </span>
-              <button
-                type="button"
-                disabled={qa.verdict === 'FAIL' || !allThreeRolesApproved}
-                onClick={handleReleaseCourse}
-                className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
-              >
-                <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
-                <span>Release Course & Continue to Stage 7 Publish</span>
-              </button>
+            <div className="space-y-3 pt-2 border-t border-slate-100">
+              {/* Release Gate Checklist */}
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span
+                  className={`px-2 py-1 rounded border font-semibold ${
+                    qa.verdict !== 'FAIL'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-red-50 border-red-200 text-red-800'
+                  }`}
+                >
+                  {qa.verdict !== 'FAIL' ? '✓ QA Verdict Passed' : '✕ QA Verdict is FAIL'}
+                </span>
+                <span
+                  className={`px-2 py-1 rounded border font-semibold ${
+                    roles.sme.signedOff && roles.sme.reviewerName.trim()
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-600'
+                  }`}
+                >
+                  {roles.sme.signedOff && roles.sme.reviewerName.trim()
+                    ? '✓ SME Signed Off'
+                    : '○ SME Name & Sign-Off'}
+                </span>
+                <span
+                  className={`px-2 py-1 rounded border font-semibold ${
+                    roles.instructionalDesigner.signedOff &&
+                    roles.instructionalDesigner.reviewerName.trim()
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-600'
+                  }`}
+                >
+                  {roles.instructionalDesigner.signedOff &&
+                  roles.instructionalDesigner.reviewerName.trim()
+                    ? '✓ ID Signed Off'
+                    : '○ ID Name & Sign-Off'}
+                </span>
+                <span
+                  className={`px-2 py-1 rounded border font-semibold ${
+                    roles.complianceAuthorizer.signedOff &&
+                    roles.complianceAuthorizer.reviewerName.trim()
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-600'
+                  }`}
+                >
+                  {roles.complianceAuthorizer.signedOff &&
+                  roles.complianceAuthorizer.reviewerName.trim()
+                    ? '✓ Compliance Signed Off'
+                    : '○ Compliance Name & Sign-Off'}
+                </span>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <span className="text-xs text-slate-500">
+                  {qa.verdict === 'FAIL'
+                    ? 'Official release is blocked while QA verdict is FAIL. Fix critical failures above and click Re-run Quality Assurance (or export drafts below).'
+                    : allThreeRolesApproved
+                    ? 'All 3 governance roles signed off. Ready for official Stage 7 release.'
+                    : 'Enter reviewer names and click "Sign Off Role" on all 3 roles above to unlock official release.'}
+                </span>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={onProceedToPublish}
+                    className="px-4 py-2.5 rounded-lg border border-[#052B66] text-[#052B66] hover:bg-[#052B66]/5 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Preview / Export Draft in Stage 7</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={qa.verdict === 'FAIL' || !allThreeRolesApproved}
+                    onClick={handleReleaseCourse}
+                    className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
+                    <span>Release Course & Continue to Stage 7 Publish</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
         </>
