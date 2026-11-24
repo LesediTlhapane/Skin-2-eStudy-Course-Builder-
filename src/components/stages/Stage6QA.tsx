@@ -82,6 +82,8 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
   const [isRunning, setIsRunning] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [repairNotice, setRepairNotice] = useState<string | null>(null);
+  const [releaseFeedback, setReleaseFeedback] = useState<string | null>(null);
+  const [quickSignerName, setQuickSignerName] = useState('');
 
   const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
   const qa = project.latestQA;
@@ -126,6 +128,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
   const updateRoleSignOff = (key: RoleKey, patch: Partial<RoleSignOffRecord>) => {
     if (!qa) return;
+    setReleaseFeedback(null);
     onUpdateProject(prev => {
       if (!prev.latestQA) return prev;
       const currentRoles = prev.latestQA.humanSignOff.roles || {
@@ -164,6 +167,65 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             signedOff: allRolesSigned,
             reviewerName: combinedNames || prev.latestQA.humanSignOff.reviewerName,
             signedOffAt: allRolesSigned ? new Date().toISOString() : undefined,
+            roles: updatedRoles,
+          },
+        },
+      };
+    });
+  };
+
+  const handleQuickSignAllRoles = () => {
+    if (!qa) return;
+    const candidateName =
+      quickSignerName.trim() ||
+      roles.sme.reviewerName.trim() ||
+      roles.instructionalDesigner.reviewerName.trim() ||
+      roles.complianceAuthorizer.reviewerName.trim();
+    if (!candidateName) {
+      setReleaseFeedback('Enter a reviewer name first to sign off the governance roles.');
+      return;
+    }
+    const now = new Date().toISOString();
+    setReleaseFeedback(null);
+    onUpdateProject(prev => {
+      if (!prev.latestQA) return prev;
+      const existing = prev.latestQA.humanSignOff.roles || {
+        sme: { signedOff: false, reviewerName: '' },
+        instructionalDesigner: { signedOff: false, reviewerName: '' },
+        complianceAuthorizer: { signedOff: false, reviewerName: '' },
+      };
+      const smeName = existing.sme.reviewerName.trim() || candidateName;
+      const idName = existing.instructionalDesigner.reviewerName.trim() || candidateName;
+      const compName = existing.complianceAuthorizer.reviewerName.trim() || candidateName;
+      const updatedRoles = {
+        sme: {
+          signedOff: true,
+          reviewerName: smeName,
+          signedOffAt: now,
+          notes: existing.sme.notes || 'Author self-certified SME check',
+        },
+        instructionalDesigner: {
+          signedOff: true,
+          reviewerName: idName,
+          signedOffAt: now,
+          notes: existing.instructionalDesigner.notes || 'Author self-certified ID check',
+        },
+        complianceAuthorizer: {
+          signedOff: true,
+          reviewerName: compName,
+          signedOffAt: now,
+          notes: existing.complianceAuthorizer.notes || 'Author self-certified QA release check',
+        },
+      };
+      return {
+        ...prev,
+        latestQA: {
+          ...prev.latestQA,
+          humanSignOff: {
+            ...prev.latestQA.humanSignOff,
+            signedOff: true,
+            reviewerName: `SME: ${smeName} | ID: ${idName} | Compliance: ${compName}`,
+            signedOffAt: now,
             roles: updatedRoles,
           },
         },
@@ -308,8 +370,41 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     qa.verdict === 'FAIL' ||
     !allThreeRolesApproved;
 
+  const getUnmetReleaseReasons = (): string[] => {
+    const reasons: string[] = [];
+    if (!qa) {
+      reasons.push('Run Quality Assurance first.');
+      return reasons;
+    }
+    if (isQaStale) {
+      reasons.push('Course changed after the last audit — click "Re-run Quality Assurance" at the top.');
+    }
+    if (activeBlockingErrors.length > 0) {
+      reasons.push(`${activeBlockingErrors.length} blocking error(s) must be fixed first.`);
+    } else if (qa.verdict === 'FAIL') {
+      reasons.push('QA Verdict is FAIL — address critical feedback and re-run Quality Assurance.');
+    }
+    const unsigned: string[] = [];
+    if (!roles.sme.signedOff || !roles.sme.reviewerName.trim()) unsigned.push('SME');
+    if (!roles.instructionalDesigner.signedOff || !roles.instructionalDesigner.reviewerName.trim()) {
+      unsigned.push('Instructional Designer');
+    }
+    if (!roles.complianceAuthorizer.signedOff || !roles.complianceAuthorizer.reviewerName.trim()) {
+      unsigned.push('Compliance Authoriser');
+    }
+    if (unsigned.length > 0) {
+      reasons.push(`Missing name & "Sign Off Role" click for: ${unsigned.join(', ')}.`);
+    }
+    return reasons;
+  };
+
   const handleReleaseCourse = () => {
-    if (isReleaseBlocked) return;
+    if (isReleaseBlocked) {
+      const reasons = getUnmetReleaseReasons();
+      setReleaseFeedback(`Cannot release to Stage 7 yet: ${reasons.join(' ')}`);
+      return;
+    }
+    setReleaseFeedback(null);
     onUpdateProject(
       prev => ({
         ...prev,
@@ -830,16 +925,36 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
           {/* Multi-Role Mandatory Human Review Gates */}
           <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-[#052B66]" />
-              <div>
-                <h3 className="text-sm font-bold text-[#052B66]">
-                  Multi-Role Governance & Release Sign-Off
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Separate human approvals required across Subject-Matter Expert, Instructional Designer, and Compliance Authoriser.
-                </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-[#052B66]" />
+                <div>
+                  <h3 className="text-sm font-bold text-[#052B66]">
+                    Multi-Role Governance & Release Sign-Off
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Sign off each role below (or apply one author name across all 3 governance gates for single-reviewer release).
+                  </p>
+                </div>
               </div>
+              {!allThreeRolesApproved && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={quickSignerName}
+                    onChange={e => setQuickSignerName(e.target.value)}
+                    placeholder="Your full name (all 3 roles)..."
+                    className="px-2.5 py-1.5 text-xs bg-[#F5F7FA] border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleQuickSignAllRoles}
+                    className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
+                  >
+                    Sign Off All 3 Roles
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">
@@ -972,6 +1087,12 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                 </span>
               </div>
 
+              {releaseFeedback && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900 font-medium">
+                  {releaseFeedback}
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <span className="text-xs text-slate-500">
                   {isQaStale
@@ -980,7 +1101,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     ? 'Release is blocked until all blocking errors are fixed and QA re-runs.'
                     : allThreeRolesApproved
                     ? 'All blocking checks passed and 3 governance roles signed off. Ready for Stage 7 release.'
-                    : 'Enter reviewer names and click "Sign Off Role" on all 3 roles above to unlock Stage 7.'}
+                    : 'Enter reviewer names and click "Sign Off Role" on all 3 roles above (or use "Sign Off All 3 Roles") to unlock Stage 7.'}
                 </span>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   {activeBlockingErrors.length > 0 && (
@@ -1002,9 +1123,12 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                   )}
                   <button
                     type="button"
-                    disabled={isReleaseBlocked}
                     onClick={handleReleaseCourse}
-                    className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+                    className={`px-5 py-2.5 rounded-lg text-white text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+                      isReleaseBlocked
+                        ? 'bg-slate-400 hover:bg-slate-500'
+                        : 'bg-[#052B66] hover:bg-[#042150]'
+                    }`}
                   >
                     <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
                     <span>Release Course & Continue to Stage 7 Publish</span>

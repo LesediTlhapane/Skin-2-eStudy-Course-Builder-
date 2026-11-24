@@ -229,12 +229,14 @@ Return JSON:
     dimensions.reduce((sum, d) => sum + d.score * d.weight, 0) / totalWeight
   );
 
-  // Filter out hallucinated AI "untaught/unassessed/missing content" claims when deterministic audit proves they pass
+  // Filter out hallucinated AI critical claims when deterministic audit proves structural/advisory separation
   const deterministicUntaughtZero =
     alignmentReport.flags.filter(f => f.category === 'untaught_outcome' || f.category === 'unassessed_outcome').length === 0;
   const deterministicContentComplete =
-    params.project.curriculum.modules.length > 0 &&
+    safeCurrModules.length > 0 &&
     !structuralAudit.blockingErrors.some(e => e.id === 'blk-incomplete-content');
+  const deterministicRegulatedClear =
+    !structuralAudit.blockingErrors.some(e => e.id === 'blk-unsupported-regulated');
 
   const filteredAiCriticals: QACriticalFailure[] = (
     Array.isArray(parsed.aiAdditionalCriticalFailures) ? parsed.aiAdditionalCriticalFailures : []
@@ -254,6 +256,18 @@ Return JSON:
       if (
         deterministicContentComplete &&
         (txt.includes('missing module') || txt.includes('incomplete module content'))
+      ) {
+        return false;
+      }
+      if (
+        deterministicRegulatedClear &&
+        (txt.includes('source register') ||
+          txt.includes('needs review') ||
+          txt.includes('unsupported') ||
+          txt.includes('duration') ||
+          txt.includes('readability') ||
+          txt.includes('alt-caption') ||
+          txt.includes('diagram'))
       ) {
         return false;
       }

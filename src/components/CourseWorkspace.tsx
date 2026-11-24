@@ -570,7 +570,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
               selectedModel={selectedModel}
               onUpdateProject={onUpdateProject}
               onJumpToStage={handleJumpFromQA}
-              onProceedToPublish={() => setStage(7)}
+              onProceedToPublish={() => setSectionFocusContext(null)}
             />
           )}
           {project.currentStage === 7 && (
