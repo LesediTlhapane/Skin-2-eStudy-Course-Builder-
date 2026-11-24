@@ -200,6 +200,10 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
   >({});
   const [regenProposalId, setRegenProposalId] = useState<string | null>(null);
   const [lastHandledNonce, setLastHandledNonce] = useState<number>(0);
+  const [lastFailedRequest, setLastFailedRequest] = useState<{
+    text: string;
+    ctx: SelectedTextContext | null | undefined;
+  } | null>(null);
 
   const sendMessage = async (
     textOverride?: string,
@@ -286,8 +290,10 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
         timestamp: new Date().toISOString(),
         proposedChanges: processedProposals,
       };
+      setLastFailedRequest(null);
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err: any) {
+      setLastFailedRequest({ text, ctx: activeSelectionCtx });
       setMessages(prev => [
         ...prev,
         {
@@ -550,6 +556,19 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                 }`}
               >
                 <div className="whitespace-pre-wrap select-text">{msg.content}</div>
+                {msg.id.startsWith('err-') && lastFailedRequest && (
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      disabled={isSending}
+                      onClick={() => void sendMessage(lastFailedRequest.text, lastFailedRequest.ctx)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#052B66] text-white text-[11px] font-semibold hover:bg-[#042150] disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Retry Request</span>
+                    </button>
+                  </div>
+                )}
                 {msg.role === 'assistant' && (
                   <div className="mt-2 pt-1.5 border-t border-slate-200/70 flex items-center justify-between gap-2">
                     {textHint ? (

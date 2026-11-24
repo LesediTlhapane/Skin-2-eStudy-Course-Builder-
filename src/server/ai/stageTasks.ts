@@ -998,133 +998,199 @@ export async function processCopilotChatWithAI(params: {
 }> {
   const activeStage = params.project.currentStage;
   const activeModId = params.activeModuleId || params.selectedTextContext?.moduleId;
-  const compactContext = {
-    stage: activeStage,
-    brief: {
-      title: params.project.brief.title,
-      code: params.project.brief.code,
-      domain: params.project.brief.industryDomain,
-      purpose: (params.project.brief.purpose || '').slice(0, 350),
-      audience: params.project.brief.targetAudience,
-      level: params.project.brief.experienceLevel,
-      duration: params.project.brief.estimatedDuration,
-      aiMode: params.project.brief.aiIntegrationMode,
-      metadataLocked: params.project.brief.metadataLocked,
-      learningRequirements: (params.project.brief.learningRequirements || '').slice(0, 400),
-      subjectTopics: (params.project.brief.subjectTopicsInput || '').slice(0, 400),
-    },
-    curriculumModules: params.project.curriculum.modules.map(m => ({
-      id: m.id,
-      order: m.order,
-      title: m.title,
-      purpose: (m.purpose || '').slice(0, 180),
-      lessons: m.lessons.map(l => ({
-        id: l.id,
-        title: l.title,
-        outcomeIds: l.outcomeIds || [],
-      })),
-    })),
-    coverageGaps: params.project.curriculum.coverageChecks
-      .filter(c => c.status !== 'mapped')
-      .slice(0, 15),
-    outcomes: [
-      ...params.project.outcomes.courseOutcomes,
-      ...params.project.outcomes.moduleOutcomes,
-    ]
-      .slice(0, 40)
-      .map(o => ({
-        id: o.id,
-        code: o.code,
-        scope: o.scope,
-        moduleId: o.moduleId,
-        bloomLevel: o.bloomLevel,
-        statement: (o.statement || '').slice(0, 180),
-      })),
-    assessments: params.project.assessments.items.slice(0, 30).map(a => ({
-      id: a.id,
-      moduleId: a.moduleId,
-      title: a.title,
-      type: a.type,
-      outcomeIds: a.outcomeIds || [],
-      instructions: (a.instructions || '').slice(0, 120),
-    })),
-    contentModules: params.project.content.modules.map(cm => {
-      const isFocused = !activeModId || cm.moduleId === activeModId;
-      return {
-        id: cm.id,
-        moduleId: cm.moduleId,
-        moduleNumber: cm.moduleNumber,
-        title: cm.title,
-        introduction: isFocused ? (cm.introduction || '').slice(0, 400) : (cm.introduction || '').slice(0, 120),
-        summary: isFocused ? (cm.summary || '').slice(0, 300) : '',
-        lessons: cm.lessons.map(l => ({
-          id: l.id,
-          lessonPlanId: l.lessonPlanId,
-          title: l.title,
-          outcomeIds: l.outcomeIds || [],
-          explanationExcerpt: isFocused
-            ? (l.explanation || '').slice(0, 420)
-            : (l.explanation || '').slice(0, 140),
-        })),
-        scenarios: cm.scenarios.map(s => ({
+  const isSelectionFocused = Boolean(params.selectedTextContext?.text?.trim());
+  const targetStage = params.selectedTextContext?.stage || activeStage;
+
+  const compactContext = isSelectionFocused
+    ? {
+        stage: targetStage,
+        brief: {
+          title: params.project.brief.title,
+          code: params.project.brief.code,
+          domain: params.project.brief.industryDomain,
+          audience: params.project.brief.targetAudience,
+          metadataLocked: params.project.brief.metadataLocked,
+        },
+        ...(targetStage === 2
+          ? {
+              curriculumModules: params.project.curriculum.modules.map(m => ({
+                id: m.id,
+                order: m.order,
+                title: m.title,
+              })),
+            }
+          : {}),
+        ...(targetStage === 3
+          ? {
+              outcomes: [
+                ...params.project.outcomes.courseOutcomes,
+                ...params.project.outcomes.moduleOutcomes,
+              ]
+                .slice(0, 25)
+                .map(o => ({
+                  id: o.id,
+                  code: o.code,
+                  scope: o.scope,
+                  moduleId: o.moduleId,
+                  statement: (o.statement || '').slice(0, 140),
+                })),
+            }
+          : {}),
+        ...(targetStage === 4
+          ? {
+              assessments: params.project.assessments.items.slice(0, 20).map(a => ({
+                id: a.id,
+                moduleId: a.moduleId,
+                title: a.title,
+                type: a.type,
+              })),
+            }
+          : {}),
+        ...(targetStage === 5
+          ? {
+              contentModules: params.project.content.modules
+                .filter(cm => !activeModId || cm.moduleId === activeModId)
+                .slice(0, 2)
+                .map(cm => ({
+                  id: cm.id,
+                  moduleId: cm.moduleId,
+                  moduleNumber: cm.moduleNumber,
+                  title: cm.title,
+                  lessons: cm.lessons.map(l => ({ id: l.id, title: l.title })),
+                  scenarios: cm.scenarios.map(s => ({ id: s.id, title: s.title })),
+                  caseStudies: cm.workplaceCaseStudies.map(c => ({ id: c.id, title: c.title })),
+                  knowledgeChecks: cm.knowledgeChecks.map(k => ({ id: k.id, outcomeCode: k.outcomeCode })),
+                })),
+            }
+          : {}),
+        ...(targetStage >= 6 && params.project.latestQA
+          ? {
+              latestQASummary: {
+                verdict: params.project.latestQA.verdict,
+                weightedScore: params.project.latestQA.weightedScore,
+                blockingErrors: (params.project.latestQA.blockingErrors || []).slice(0, 5),
+                warnings: (params.project.latestQA.warnings || []).slice(0, 5),
+              },
+            }
+          : {}),
+        sources: (params.project.sources || []).slice(0, 2).map(s => ({
           id: s.id,
           title: s.title,
-          situation: isFocused ? (s.situation || '').slice(0, 200) : undefined,
+          status: s.verificationStatus,
+          excerpt: (s.summary || s.extractedText || '').slice(0, 280),
         })),
-        caseStudies: cm.workplaceCaseStudies.map(c => ({ id: c.id, title: c.title })),
-        knowledgeChecks: cm.knowledgeChecks.map(k => ({
-          id: k.id,
-          outcomeCode: k.outcomeCode,
-          question: (k.question || '').slice(0, 100),
+      }
+    : {
+        stage: activeStage,
+        brief: {
+          title: params.project.brief.title,
+          code: params.project.brief.code,
+          domain: params.project.brief.industryDomain,
+          purpose: (params.project.brief.purpose || '').slice(0, 280),
+          audience: params.project.brief.targetAudience,
+          level: params.project.brief.experienceLevel,
+          duration: params.project.brief.estimatedDuration,
+          aiMode: params.project.brief.aiIntegrationMode,
+          metadataLocked: params.project.brief.metadataLocked,
+          learningRequirements: (params.project.brief.learningRequirements || '').slice(0, 260),
+          subjectTopics: (params.project.brief.subjectTopicsInput || '').slice(0, 260),
+        },
+        curriculumModules: params.project.curriculum.modules.map(m => ({
+          id: m.id,
+          order: m.order,
+          title: m.title,
+          purpose: (m.purpose || '').slice(0, 120),
+          lessons: m.lessons.map(l => ({
+            id: l.id,
+            title: l.title,
+            outcomeIds: l.outcomeIds || [],
+          })),
+        })),
+        coverageGaps: params.project.curriculum.coverageChecks
+          .filter(c => c.status !== 'mapped')
+          .slice(0, 10),
+        outcomes: [
+          ...params.project.outcomes.courseOutcomes,
+          ...params.project.outcomes.moduleOutcomes,
+        ]
+          .slice(0, 30)
+          .map(o => ({
+            id: o.id,
+            code: o.code,
+            scope: o.scope,
+            moduleId: o.moduleId,
+            bloomLevel: o.bloomLevel,
+            statement: (o.statement || '').slice(0, 140),
+          })),
+        assessments: params.project.assessments.items.slice(0, 20).map(a => ({
+          id: a.id,
+          moduleId: a.moduleId,
+          title: a.title,
+          type: a.type,
+          outcomeIds: a.outcomeIds || [],
+        })),
+        contentModules: params.project.content.modules.map(cm => {
+          const isFocused = !activeModId || cm.moduleId === activeModId;
+          return {
+            id: cm.id,
+            moduleId: cm.moduleId,
+            moduleNumber: cm.moduleNumber,
+            title: cm.title,
+            introduction: isFocused ? (cm.introduction || '').slice(0, 240) : undefined,
+            lessons: cm.lessons.map(l => ({
+              id: l.id,
+              lessonPlanId: l.lessonPlanId,
+              title: l.title,
+              outcomeIds: l.outcomeIds || [],
+              explanationExcerpt: isFocused ? (l.explanation || '').slice(0, 280) : undefined,
+            })),
+            scenarios: cm.scenarios.map(s => ({ id: s.id, title: s.title })),
+            caseStudies: cm.workplaceCaseStudies.map(c => ({ id: c.id, title: c.title })),
+            knowledgeChecks: cm.knowledgeChecks.map(k => ({
+              id: k.id,
+              outcomeCode: k.outcomeCode,
+            })),
+          };
+        }),
+        alignmentFlags: params.project.assessments.alignmentFlags.slice(0, 12),
+        latestQASummary: params.project.latestQA
+          ? {
+              verdict: params.project.latestQA.verdict,
+              weightedScore: params.project.latestQA.weightedScore,
+              blockingErrors: (params.project.latestQA.blockingErrors || []).slice(0, 6),
+              warnings: (params.project.latestQA.warnings || []).slice(0, 6),
+              criticalFailures: params.project.latestQA.criticalFailures.slice(0, 6),
+            }
+          : null,
+        sources: (params.project.sources || []).slice(0, 4).map(s => ({
+          id: s.id,
+          title: s.title,
+          authorOrOrganisation: s.authorOrOrganisation,
+          status: s.verificationStatus,
+          verifiedBy: s.verifiedBy,
+          keyTopics: (s.keyTopics || []).slice(0, 6),
+          excerpt: (s.summary || s.extractedText || '').slice(0, 400),
         })),
       };
-    }),
-    alignmentFlags: params.project.assessments.alignmentFlags.slice(0, 20),
-    latestQASummary: params.project.latestQA
-      ? {
-          verdict: params.project.latestQA.verdict,
-          weightedScore: params.project.latestQA.weightedScore,
-          blockingErrors: (params.project.latestQA.blockingErrors || []).slice(0, 10),
-          warnings: (params.project.latestQA.warnings || []).slice(0, 10),
-          criticalFailures: params.project.latestQA.criticalFailures.slice(0, 10),
-          weaknesses: params.project.latestQA.dimensions
-            .flatMap(d => d.weaknesses)
-            .slice(0, 12),
-          accessibilityIssues: params.project.latestQA.accessibilityAudit?.checks
-            .filter(c => c.status !== 'pass')
-            .slice(0, 8),
-          technicalIssues: params.project.latestQA.technicalValidation?.checks
-            .filter(c => c.status !== 'pass')
-            .slice(0, 8),
-        }
-      : null,
-    sources: (params.project.sources || []).slice(0, 6).map(s => ({
-      id: s.id,
-      title: s.title,
-      authorOrOrganisation: s.authorOrOrganisation,
-      status: s.verificationStatus,
-      verifiedBy: s.verifiedBy,
-      keyTopics: (s.keyTopics || []).slice(0, 8),
-      excerpt: (s.summary || s.extractedText || '').slice(0, 750),
-    })),
-  };
 
   const historyText = params.messages
-    .slice(-8)
-    .map(m => `[${m.role.toUpperCase()}]: ${m.content}`)
+    .slice(-6)
+    .map(m => `[${m.role.toUpperCase()}]: ${String(m.content || '').slice(0, 500)}`)
     .join('\n');
 
   const selectedBlock = params.selectedTextContext?.text
-    ? `\nSELECTED TEXT CONTEXT FROM WORKSPACE:\n- Stage: ${params.selectedTextContext.stage}${params.selectedTextContext.moduleNumber ? ` (Module ${params.selectedTextContext.moduleNumber})` : ''}\n- Section: ${params.selectedTextContext.sectionLabel || 'Active Stage'}\n- Action Requested: ${params.selectedTextContext.action || 'custom'}\n- Selected Excerpt:\n"""\n${params.selectedTextContext.text.slice(0, 1800)}\n"""\n`
+    ? `\nSELECTED TEXT CONTEXT FROM WORKSPACE:\n- Stage: ${params.selectedTextContext.stage}${params.selectedTextContext.moduleNumber ? ` (Module ${params.selectedTextContext.moduleNumber})` : ''}\n- Section: ${params.selectedTextContext.sectionLabel || 'Active Stage'}\n- Action Requested: ${params.selectedTextContext.action || 'custom'}\n- Selected Excerpt:\n"""\n${params.selectedTextContext.text.slice(0, 1200)}\n"""\n`
     : '';
 
   const res = await aiRouter.execute({
     provider: params.provider,
     model: params.model,
     responseFormat: 'json',
+    maxTokens: isSelectionFocused ? 1400 : 2200,
+    timeoutMs: 32000,
     systemInstruction: `You are the eStudy Course Copilot — a senior instructional design partner.
 CRITICAL RULES:
-1. You have full read context of the active course: brief, curriculum modules, outcomes, assessments, Stage 5 lessons/scenarios/case studies, QA findings (blocking errors & warnings), AND uploaded reference source excerpts in "sources".
+1. You have read context of the active course: brief, curriculum modules, outcomes, assessments, Stage 5 lessons/scenarios/case studies, QA findings (blocking errors & warnings), and uploaded reference source excerpts in "sources".
 2. NEVER claim you cannot read uploaded reference sources if excerpts are present in "sources" — cite them directly by title! If "sources" is empty or lacks excerpts, say so honestly.
 3. NEVER silently modify approved course metadata or content. Always propose structured edits in "proposedChanges" with exact IDs copied from ACTIVE COURSE CONTEXT so "Accept & Apply" executes cleanly on click:
    - "outcome" (stageHint: 3): exact outcome "id" in "targetId" (and "moduleId" if module outcome). patchPayload: { "statement", "actionVerb", "bloomLevel", "workplacePerformance" }.
@@ -1137,10 +1203,11 @@ CRITICAL RULES:
    - "curriculum_module" (stageHint: 2): exact module "id" in "targetId"/"moduleId" or { "modules": [...] }.
    - "brief_note" (stageHint: 1): brief fields { "title", "code", "industryDomain", "purpose", "workplaceProblem", "targetAudience", "estimatedDuration", "subjectTopicsInput", "aiIntegrationMode" }. If metadataLocked is true, preserve protected metadata and tell the user clearly.
 4. "patchPayload" MUST contain real updated fields — NEVER empty. Mark "executionMode": "direct" for minor scoped phrasing/explanation improvements, or "confirm" for major structural/module/assessment/outcome changes.
-5. MULTI-REQUIREMENT HANDLING: If the user asks for multiple changes in one message (e.g., simplify intro + verify alignment + preserve technical accuracy), address EVERY part explicitly in "reply" (stating what you changed, what was preserved, and any part needing manual confirmation/regeneration), and create separate "proposedChanges" entries for each distinct section.
+5. MULTI-REQUIREMENT HANDLING: If the user asks for multiple changes in one message (e.g., simplify intro + verify alignment + preserve technical accuracy), address EVERY part explicitly in "reply" and create separate "proposedChanges" entries for each distinct section.
+6. READ-ONLY UI COPY: If the selected excerpt is Stage 6/7 interface instructions (e.g., QA sign-off/publish UI prompts) rather than course content, explain clearly what action is needed in the app and return "proposedChanges": [].
 Return ONLY valid JSON.`,
     prompt: `ACTIVE COURSE CONTEXT:
-${JSON.stringify(compactContext, null, 2)}
+${JSON.stringify(compactContext)}
 ${selectedBlock}
 RECENT CONVERSATION:
 ${historyText}

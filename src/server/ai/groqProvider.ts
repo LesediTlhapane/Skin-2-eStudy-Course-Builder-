@@ -242,9 +242,9 @@ export class GroqProvider implements AIProviderAdapter {
     const liveKeys = apiKeys.filter(k => !deadKeys.has(k));
     if (sawRateLimit && lastError && liveKeys.length > 0) {
       const suggestedWait = parseRetryDelayMs(lastError);
-      const waitMs = suggestedWait > 0 ? Math.min(suggestedWait + 300, 4000) : 2200;
+      const waitMs = suggestedWait > 0 ? Math.min(suggestedWait + 350, 7500) : 2500;
       const remaining = deadline - Date.now();
-      if (remaining > waitMs + 5000) {
+      if (remaining > waitMs + 4500) {
         await new Promise(resolve => setTimeout(resolve, waitMs));
         for (const fallbackModel of ['qwen/qwen3.8-27b', 'openai/gpt-oss-20b']) {
           for (const key of liveKeys) {

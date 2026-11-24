@@ -583,17 +583,25 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
           <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 max-w-[94vw] bg-[#052B66] text-white px-3 py-2 rounded-xl shadow-2xl border border-white/15 flex flex-wrap items-center gap-1.5 text-xs">
             <span className="inline-flex items-center gap-1 font-bold text-[#45CC42] pr-1.5 border-r border-white/20">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>AI Selection ({pendingSelectionText.length} chars):</span>
+              <span>
+                {project.currentStage >= 6
+                  ? `Ask Copilot (${pendingSelectionText.length} chars):`
+                  : `AI Selection (${pendingSelectionText.length} chars):`}
+              </span>
             </span>
-            {(
-              [
-                ['rewrite', 'Rewrite', 'Rewrite the selected text so it is sharper, clearer, and instructionally engaging while preserving factual accuracy.'],
-                ['simplify', 'Simplify', 'Simplify the selected text for plain-language clarity without losing essential technical accuracy.'],
-                ['expand', 'Expand', 'Expand the selected text with concrete workplace examples and deeper practical explanation.'],
-                ['fix_clarity', 'Fix Clarity', 'Fix clarity, sentence flow, and structure in the selected text while keeping approved metadata intact.'],
-                ['change_tone', 'Change Tone', 'Adjust the tone of the selected text to an authoritative, practical professional coaching style.'],
-                ['explain', 'Explain', 'Explain what this selected text means pedagogically or point out any improvements needed without altering data.'],
-              ] as const
+            {(project.currentStage >= 6
+              ? ([
+                  ['explain', 'Explain', 'Explain what this selected QA/publish item or guidance means and what action I should take next.'],
+                  ['fix_clarity', 'Suggest Course Fix', 'Based on this selected QA/publish item, suggest concrete fixes in the relevant authoring stage (Stages 1–5) without modifying UI labels.'],
+                ] as const)
+              : ([
+                  ['rewrite', 'Rewrite', 'Rewrite the selected text so it is sharper, clearer, and instructionally engaging while preserving factual accuracy.'],
+                  ['simplify', 'Simplify', 'Simplify the selected text for plain-language clarity without losing essential technical accuracy.'],
+                  ['expand', 'Expand', 'Expand the selected text with concrete workplace examples and deeper practical explanation.'],
+                  ['fix_clarity', 'Fix Clarity', 'Fix clarity, sentence flow, and structure in the selected text while keeping approved metadata intact.'],
+                  ['change_tone', 'Change Tone', 'Adjust the tone of the selected text to an authoritative, practical professional coaching style.'],
+                  ['explain', 'Explain', 'Explain what this selected text means pedagogically or point out any improvements needed without altering data.'],
+                ] as const)
             ).map(([action, label, promptInstruction]) => (
               <button
                 key={action}
