@@ -57,13 +57,109 @@ async function idbPutAll<T extends { id: string }>(storeName: string, items: T[]
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
-    store.clear();
-    for (const item of items) {
-      store.put(item);
-    }
+    const desiredIds = new Set(items.map(it => it.id));
+    const keysReq = store.getAllKeys();
+    keysReq.onsuccess = () => {
+      const existingKeys = (keysReq.result || []) as IDBValidKey[];
+      for (const k of existingKeys) {
+        if (!desiredIds.has(String(k))) {
+          store.delete(k);
+        }
+      }
+      for (const item of items) {
+        store.put(item);
+      }
+    };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+export function normalizeProjectSchema(raw: any): CourseProject {
+  const base = createEmptyCourseProject({
+    templateId: raw?.templateId || 'tpl-technical-engineering',
+    templateName: raw?.templateName || 'eStudy Master Course Generation Template',
+    creationMode: raw?.creationMode || 'brief',
+  });
+  const now = new Date().toISOString();
+  const sources = Array.isArray(raw?.sources)
+    ? raw.sources.map((s: any) => ({
+        ...s,
+        verificationStatus: s?.verificationStatus || 'NEEDS REVIEW',
+        keyTopics: Array.isArray(s?.keyTopics) ? s.keyTopics : [],
+        relevantSections: Array.isArray(s?.relevantSections) ? s.relevantSections : [],
+      }))
+    : [];
+
+  return {
+    ...base,
+    ...raw,
+    id: String(raw?.id || base.id),
+    createdAt: raw?.createdAt || now,
+    updatedAt: raw?.updatedAt || now,
+    currentStage:
+      typeof raw?.currentStage === 'number' && raw.currentStage >= 1 && raw.currentStage <= 7
+        ? raw.currentStage
+        : 1,
+    lifecycleStatus: raw?.lifecycleStatus || 'draft',
+    sources,
+    versions: Array.isArray(raw?.versions) ? raw.versions : [],
+    qaHistory: Array.isArray(raw?.qaHistory) ? raw.qaHistory : [],
+    brief: {
+      ...base.brief,
+      ...(raw?.brief || {}),
+      saCompliance: {
+        ...base.brief.saCompliance,
+        ...(raw?.brief?.saCompliance || {}),
+      },
+      templateFieldValues: {
+        ...(raw?.brief?.templateFieldValues || {}),
+      },
+      fieldStatuses: {
+        ...(raw?.brief?.fieldStatuses || {}),
+      },
+      approval: raw?.brief?.approval || { approved: false },
+    },
+    curriculum: {
+      ...base.curriculum,
+      ...(raw?.curriculum || {}),
+      modules: Array.isArray(raw?.curriculum?.modules) ? raw.curriculum.modules : [],
+      coverageChecks: Array.isArray(raw?.curriculum?.coverageChecks)
+        ? raw.curriculum.coverageChecks
+        : [],
+      conflicts: Array.isArray(raw?.curriculum?.conflicts) ? raw.curriculum.conflicts : [],
+      approval: raw?.curriculum?.approval || { approved: false },
+    },
+    outcomes: {
+      ...base.outcomes,
+      ...(raw?.outcomes || {}),
+      courseOutcomes: Array.isArray(raw?.outcomes?.courseOutcomes)
+        ? raw.outcomes.courseOutcomes
+        : [],
+      moduleOutcomes: Array.isArray(raw?.outcomes?.moduleOutcomes)
+        ? raw.outcomes.moduleOutcomes
+        : [],
+      approval: raw?.outcomes?.approval || { approved: false },
+    },
+    assessments: {
+      ...base.assessments,
+      ...(raw?.assessments || {}),
+      items: Array.isArray(raw?.assessments?.items) ? raw.assessments.items : [],
+      alignmentFlags: Array.isArray(raw?.assessments?.alignmentFlags)
+        ? raw.assessments.alignmentFlags
+        : [],
+      approval: raw?.assessments?.approval || { approved: false },
+    },
+    content: {
+      ...base.content,
+      ...(raw?.content || {}),
+      modules: Array.isArray(raw?.content?.modules) ? raw.content.modules : [],
+      generationHistory: Array.isArray(raw?.content?.generationHistory)
+        ? raw.content.generationHistory
+        : [],
+      approval: raw?.content?.approval || { approved: false },
+    },
+  };
 }
 
 export type AppRoute = 'dashboard' | 'templates' | 'workspace';
@@ -75,6 +171,8 @@ export function useV2Store() {
   const [route, setRoute] = useState<AppRoute>('dashboard');
   const [isLoaded, setIsLoaded] = useState(false);
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved');
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [selectedProvider, setSelectedProviderState] = useState<AIProvider>('groq');
 
@@ -122,7 +220,10 @@ export function useV2Store() {
         ]);
 
         if (loadedProjects.length > 0) {
-          setProjects(loadedProjects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+          const normalized = loadedProjects
+            .map(normalizeProjectSchema)
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+          setProjects(normalized);
         } else {
           // Seed one ready-to-explore starter project from Benchmark 1 (draft brief)
           const starter = createEmptyCourseProject({
@@ -134,11 +235,15 @@ export function useV2Store() {
           setProjects([starter]);
         }
         setCustomTemplates(loadedTemplates);
+        setLastSavedAt(new Date().toISOString());
       } catch {
         try {
           const pRaw = localStorage.getItem(FALLBACK_PROJECTS_KEY);
           const tRaw = localStorage.getItem(FALLBACK_TEMPLATES_KEY);
-          if (pRaw) setProjects(JSON.parse(pRaw));
+          if (pRaw) {
+            const parsed = JSON.parse(pRaw);
+            if (Array.isArray(parsed)) setProjects(parsed.map(normalizeProjectSchema));
+          }
           if (tRaw) setCustomTemplates(JSON.parse(tRaw));
         } catch {}
       } finally {
@@ -147,31 +252,60 @@ export function useV2Store() {
     })();
   }, []);
 
-  // Persist projects
+  const persistNow = useCallback(
+    async (projList: CourseProject[], tplList: CourseTemplate[]) => {
+      setSaveState('saving');
+      setSaveError(null);
+      try {
+        await Promise.all([
+          idbPutAll(STORE_PROJECTS, projList),
+          idbPutAll(STORE_TEMPLATES, tplList),
+        ]);
+        setLastSavedAt(new Date().toISOString());
+      } catch (idbErr: any) {
+        try {
+          localStorage.setItem(FALLBACK_PROJECTS_KEY, JSON.stringify(projList));
+          localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(tplList));
+          setLastSavedAt(new Date().toISOString());
+        } catch (lsErr: any) {
+          setSaveError(
+            lsErr?.message ||
+              idbErr?.message ||
+              'Browser storage quota exceeded. Export a backup JSON file from the Dashboard.'
+          );
+        }
+      } finally {
+        setSaveState('saved');
+      }
+    },
+    []
+  );
+
+  // Persist projects cleanly with debounce
   useEffect(() => {
     if (!isLoaded) return;
     setSaveState('saving');
     const timer = setTimeout(() => {
-      idbPutAll(STORE_PROJECTS, projects)
-        .catch(() => {
-          try {
-            localStorage.setItem(FALLBACK_PROJECTS_KEY, JSON.stringify(projects));
-          } catch {}
-        })
-        .finally(() => setSaveState('saved'));
+      void persistNow(projects, customTemplates);
     }, 250);
     return () => clearTimeout(timer);
-  }, [projects, isLoaded]);
+  }, [projects, customTemplates, isLoaded, persistNow]);
 
-  // Persist custom templates
+  // Warn before closing tab while save is in flight
   useEffect(() => {
-    if (!isLoaded) return;
-    idbPutAll(STORE_TEMPLATES, customTemplates).catch(() => {
-      try {
-        localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(customTemplates));
-      } catch {}
-    });
-  }, [customTemplates, isLoaded]);
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (saveState === 'saving') {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saveState]);
+
+  const flushSaveNow = useCallback(async () => {
+    await persistNow(projects, customTemplates);
+  }, [persistNow, projects, customTemplates]);
 
   const allTemplates = [...SYSTEM_TEMPLATES, ...customTemplates];
   const activeProject = projects.find(p => p.id === activeProjectId) || null;
@@ -362,7 +496,9 @@ export function useV2Store() {
     if (Array.isArray(parsed?.projects)) {
       setProjects(prev => {
         const ids = new Set(prev.map(p => p.id));
-        const incoming = parsed.projects.filter((p: CourseProject) => p.id && !ids.has(p.id));
+        const incoming = parsed.projects
+          .filter((p: any) => p && p.id && !ids.has(p.id))
+          .map(normalizeProjectSchema);
         return [...incoming, ...prev];
       });
     }
@@ -384,6 +520,9 @@ export function useV2Store() {
     setRoute,
     isLoaded,
     saveState,
+    lastSavedAt,
+    saveError,
+    flushSaveNow,
     selectedProvider,
     selectedModel,
     availableModels,

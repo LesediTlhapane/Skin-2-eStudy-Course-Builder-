@@ -12,6 +12,7 @@ import {
 } from 'docx';
 import type { CourseProject } from '../types';
 import { computeFullAlignmentReport } from './alignmentHelpers';
+import { buildScorm12ZipBytes } from './scormExport';
 
 export type DeliverableType =
   | 'learner_manual'
@@ -297,10 +298,24 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
           ])
         )
       );
-      if (qa.criticalFailures.length > 0) {
-        children.push(h2('Critical Failures Blocking Release'));
+      if (qa.accessibilityAudit?.limitationsNote) {
+        children.push(para(qa.accessibilityAudit.limitationsNote, 'Accessibility Audit Scope'));
+      }
+      if (qa.blockingErrors && qa.blockingErrors.length > 0) {
+        children.push(h2('Blocking Errors Preventing Release'));
+        for (const err of qa.blockingErrors) {
+          children.push(para(`${err.rule} (${err.affectedSection}): ${err.description} [Fix: ${err.recommendedFix}]`));
+        }
+      } else if (qa.criticalFailures.length > 0) {
+        children.push(h2('Blocking Critical Failures'));
         for (const f of qa.criticalFailures) {
           children.push(para(`${f.rule}: ${f.description} (Fix: ${f.recommendedFix})`));
+        }
+      }
+      if (qa.warnings && qa.warnings.length > 0) {
+        children.push(h2('Advisory Warnings (Non-Blocking)'));
+        for (const w of qa.warnings) {
+          children.push(para(`${w.rule} (${w.affectedSection}): ${w.description}`));
         }
       }
       if (qa.humanSignOff.roles) {
@@ -516,9 +531,18 @@ export function exportDeliverableHtmlOrPrint(
   }
 }
 
+export function exportScorm12PackageZip(project: CourseProject): void {
+  const bytes = buildScorm12ZipBytes(project);
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const blob = new Blob([copy.buffer], { type: 'application/zip' });
+  downloadBlob(blob, `${slugify(project.brief.title)}-scorm-1.2.zip`);
+}
+
 export function exportLmsPackageJson(project: CourseProject): void {
-  const scormManifest = {
-    schema: 'eStudy-LMS-Package-v2',
+  const structuredManifest = {
+    schema: 'eStudy-LMS-Structured-Data-v2',
+    note: 'Structured JSON data export for custom LMS/CMS API ingestion (not a SCORM ZIP package).',
     exportedAt: new Date().toISOString(),
     metadata: {
       title: project.brief.title,
@@ -538,10 +562,12 @@ export function exportLmsPackageJson(project: CourseProject): void {
       authorOrOrganisation: s.authorOrOrganisation,
       referenceOrUrl: s.referenceOrUrl,
       verificationStatus: s.verificationStatus,
+      verifiedBy: s.verifiedBy,
+      verifiedAt: s.verifiedAt,
     })),
   };
-  const blob = new Blob([JSON.stringify(scormManifest, null, 2)], { type: 'application/json' });
-  downloadBlob(blob, `${slugify(project.brief.title)}-lms-package.json`);
+  const blob = new Blob([JSON.stringify(structuredManifest, null, 2)], { type: 'application/json' });
+  downloadBlob(blob, `${slugify(project.brief.title)}-lms-data.json`);
 }
 
 function escapeHtml(text: string | undefined): string {

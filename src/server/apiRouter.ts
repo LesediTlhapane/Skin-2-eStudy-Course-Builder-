@@ -20,17 +20,112 @@ import {
   evaluateCourseQAWithAI,
 } from './ai/index.js';
 
+const ALLOWED_UPLOAD_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md', '.csv', '.json'];
+
+export function sanitizeErrorMessage(err: any, fallback = 'Request processing failed.'): string {
+  const raw = String(err?.message || err || '').trim();
+  if (!raw) return fallback;
+  return raw
+    .replace(/gsk_[A-Za-z0-9_-]{8,}/g, '[redacted-key]')
+    .replace(/AIza[A-Za-z0-9_-]{8,}/g, '[redacted-key]')
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
+    .replace(/\s+at\s+[^\n]+/g, '')
+    .replace(/\n+/g, ' ')
+    .slice(0, 280)
+    .trim() || fallback;
+}
+
 function resolveErrorStatus(err: any): number {
   const msg = String(err?.message || '').toLowerCase();
-  if (msg.includes('missing') || msg.includes('invalid request')) return 400;
+  if (msg.includes('exceeds the 4.5 mb') || msg.includes('payload too large')) return 413;
+  if (msg.includes('missing') || msg.includes('invalid request') || msg.includes('unsupported file')) return 400;
   if (msg.includes('401') || msg.includes('403') || msg.includes('authentication') || msg.includes('api key')) return 401;
   if (msg.includes('429') || msg.includes('rate limit') || msg.includes('quota') || msg.includes('tpm')) return 429;
   if (msg.includes('timed out') || msg.includes('timeout')) return 504;
   return 502;
 }
 
-export function createApiRouter(): express.Router {
+function validateUploadPayload(body: any): { error?: string } {
+  const { fileName, base64Data, rawText } = body || {};
+  if (fileName && typeof fileName !== 'string') {
+    return { error: 'Invalid request: fileName must be a string.' };
+  }
+  if (base64Data !== undefined) {
+    if (typeof base64Data !== 'string') {
+      return { error: 'Invalid request: base64Data must be a base64 string.' };
+    }
+    if (fileName) {
+      const lower = String(fileName).toLowerCase();
+      const dotIdx = lower.lastIndexOf('.');
+      const ext = dotIdx >= 0 ? lower.slice(dotIdx) : '';
+      if (ext && !ALLOWED_UPLOAD_EXTENSIONS.includes(ext)) {
+        return {
+          error: `Unsupported file type (${ext}). Allowed formats: ${ALLOWED_UPLOAD_EXTENSIONS.join(', ')}.`,
+        };
+      }
+    }
+    const compact = base64Data.replace(/\s+/g, '');
+    if (compact.length > 6_200_000) {
+      return { error: 'Uploaded file exceeds the 4.5 MB limit.' };
+    }
+    if (compact.length > 0 && !/^[A-Za-z0-9+/=]+$/.test(compact)) {
+      return { error: 'Invalid request: base64Data contains invalid characters.' };
+    }
+  }
+  if (rawText !== undefined && typeof rawText === 'string' && rawText.length > 250_000) {
+    return { error: 'Invalid request: Pasted text exceeds 250,000 character limit.' };
+  }
+  return {};
+}
+
+export function createRateLimiter(options?: { maxRequests?: number; windowMs?: number }) {
+  const maxRequests =
+    options?.maxRequests || Math.max(5, Number(process.env.RATE_LIMIT_MAX_PER_MIN) || 45);
+  const windowMs = options?.windowMs || 60_000;
+  const buckets = new Map<string, number[]>();
+
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const fwd = req.headers['x-forwarded-for'];
+    const rawIp =
+      (Array.isArray(fwd) ? fwd[0] : String(fwd || '').split(',')[0].trim()) ||
+      req.ip ||
+      'local';
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const timestamps = (buckets.get(rawIp) || []).filter(t => t > cutoff);
+
+    if (timestamps.length >= maxRequests) {
+      const oldest = timestamps[0];
+      const retryAfterSeconds = Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({
+        success: false,
+        error: `Too many requests (${maxRequests}/min limit). Please wait ${retryAfterSeconds}s and retry.`,
+        retryAfterSeconds,
+      });
+    }
+
+    timestamps.push(now);
+    buckets.set(rawIp, timestamps);
+    if (buckets.size > 500) {
+      for (const [key, list] of buckets.entries()) {
+        if (list.every(t => t <= cutoff)) buckets.delete(key);
+      }
+    }
+    return next();
+  };
+}
+
+export function createApiRouter(options?: { rateLimitMaxPerMin?: number }): express.Router {
   const router = express.Router();
+
+  router.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
 
   router.get('/health', (_req, res) => {
     const keys = checkKeysConfigured();
@@ -55,11 +150,22 @@ export function createApiRouter(): express.Router {
     });
   });
 
+  router.use(
+    '/v2',
+    createRateLimiter(
+      options?.rateLimitMaxPerMin ? { maxRequests: options.rateLimitMaxPerMin } : undefined
+    )
+  );
+
   router.post('/v2/sources/analyse', async (req, res) => {
     try {
       const { fileName, mimeType, base64Data, rawText, existingSources, provider, model } = req.body || {};
-      if (!fileName && !rawText) {
+      if (!fileName && !rawText && !base64Data) {
         return res.status(400).json({ success: false, error: 'Missing document file or text.' });
+      }
+      const uploadCheck = validateUploadPayload(req.body);
+      if (uploadCheck.error) {
+        return res.status(400).json({ success: false, error: uploadCheck.error });
       }
       const extractedText = extractUploadedDocumentText({
         fileName: fileName || 'document.txt',
@@ -82,13 +188,19 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, extractedText, ...analysis });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Source analysis failed.' });
+      return res
+        .status(resolveErrorStatus(err))
+        .json({ success: false, error: sanitizeErrorMessage(err, 'Source analysis failed.') });
     }
   });
 
   router.post('/v2/improve/diagnose', async (req, res) => {
     try {
       const { fileName, mimeType, base64Data, rawText, provider, model } = req.body || {};
+      const uploadCheck = validateUploadPayload(req.body);
+      if (uploadCheck.error) {
+        return res.status(400).json({ success: false, error: uploadCheck.error });
+      }
       const extractedText = extractUploadedDocumentText({
         fileName: fileName || 'existing-course.txt',
         mimeType,
@@ -109,13 +221,19 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, extractedText, ...result });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Course diagnosis failed.' });
+      return res
+        .status(resolveErrorStatus(err))
+        .json({ success: false, error: sanitizeErrorMessage(err, 'Course diagnosis failed.') });
     }
   });
 
   router.post('/v2/templates/extract', async (req, res) => {
     try {
       const { fileName, mimeType, base64Data, rawText, provider, model } = req.body || {};
+      const uploadCheck = validateUploadPayload(req.body);
+      if (uploadCheck.error) {
+        return res.status(400).json({ success: false, error: uploadCheck.error });
+      }
       const extractedText = extractUploadedDocumentText({
         fileName: fileName || 'template.txt',
         mimeType,
@@ -133,28 +251,34 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, template });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Template extraction failed.' });
+      return res
+        .status(resolveErrorStatus(err))
+        .json({ success: false, error: sanitizeErrorMessage(err, 'Template extraction failed.') });
     }
   });
 
   router.post('/v2/brief/analyse', async (req, res) => {
     try {
       const { brief, sources, provider, model } = req.body || {};
-      if (!brief) return res.status(400).json({ success: false, error: 'Missing course brief.' });
-      const analysis = await analyseCourseBriefWithAI({ brief, sources: sources || [], provider, model });
+      if (!brief || typeof brief !== 'object') {
+        return res.status(400).json({ success: false, error: 'Missing course brief.' });
+      }
+      const analysis = await analyseCourseBriefWithAI({ brief, sources: Array.isArray(sources) ? sources : [], provider, model });
       return res.json({ success: true, analysis });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Brief analysis failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Brief analysis failed.') });
     }
   });
 
   router.post('/v2/curriculum/propose', async (req, res) => {
     try {
       const { brief, sources, desiredModuleCount, existingModules, provider, model } = req.body || {};
-      if (!brief) return res.status(400).json({ success: false, error: 'Missing course brief.' });
+      if (!brief || typeof brief !== 'object') {
+        return res.status(400).json({ success: false, error: 'Missing course brief.' });
+      }
       const curriculum = await proposeCurriculumWithAI({
         brief,
-        sources: sources || [],
+        sources: Array.isArray(sources) ? sources : [],
         desiredModuleCount,
         existingModules,
         provider,
@@ -162,7 +286,7 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, curriculum });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Curriculum proposal failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Curriculum proposal failed.') });
     }
   });
 
@@ -172,14 +296,14 @@ export function createApiRouter(): express.Router {
       if (!brief || !curriculum) return res.status(400).json({ success: false, error: 'Missing brief or curriculum.' });
       const result = await auditCurriculumCoverageWithAI({
         brief,
-        sources: sources || [],
+        sources: Array.isArray(sources) ? sources : [],
         curriculum,
         provider,
         model,
       });
       return res.json({ success: true, ...result });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Coverage check failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Coverage check failed.') });
     }
   });
 
@@ -190,7 +314,7 @@ export function createApiRouter(): express.Router {
       const outcomes = await generateOutcomesWithAI({ brief, curriculum, provider, model });
       return res.json({ success: true, outcomes });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Outcome generation failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Outcome generation failed.') });
     }
   });
 
@@ -203,7 +327,7 @@ export function createApiRouter(): express.Router {
       const design = await designAssessmentsWithAI({ brief, curriculum, outcomes, provider, model });
       return res.json({ success: true, ...design });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Assessment design failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Assessment design failed.') });
     }
   });
 
@@ -225,7 +349,7 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, moduleContent });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Module content generation failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Module content generation failed.') });
     }
   });
 
@@ -247,7 +371,7 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, moduleContent });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Module overview generation failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Module overview generation failed.') });
     }
   });
 
@@ -269,7 +393,7 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, lesson });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Lesson generation failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Lesson generation failed.') });
     }
   });
 
@@ -290,39 +414,41 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, ...result });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Selective regeneration failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Selective regeneration failed.') });
     }
   });
 
   router.post('/v2/qa/evaluate', async (req, res) => {
     try {
       const { project, weights, provider, model } = req.body || {};
-      if (!project || !weights) {
+      if (!project || !weights || typeof project !== 'object' || typeof weights !== 'object') {
         return res.status(400).json({ success: false, error: 'Missing project or weights.' });
       }
       const report = await evaluateCourseQAWithAI({ project, weights, provider, model });
       return res.json({ success: true, report });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'QA evaluation failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'QA evaluation failed.') });
     }
   });
 
   router.post('/v2/copilot/chat', async (req, res) => {
     try {
-      const { project, messages, userMessage, provider, model } = req.body || {};
-      if (!project || !userMessage) {
+      const { project, messages, userMessage, selectedTextContext, activeModuleId, provider, model } = req.body || {};
+      if (!project || typeof project !== 'object' || !userMessage || !String(userMessage).trim()) {
         return res.status(400).json({ success: false, error: 'Missing project or userMessage.' });
       }
       const result = await processCopilotChatWithAI({
         project,
-        messages: messages || [],
-        userMessage,
+        messages: Array.isArray(messages) ? messages : [],
+        userMessage: String(userMessage).slice(0, 8000),
+        selectedTextContext,
+        activeModuleId,
         provider,
         model,
       });
       return res.json({ success: true, ...result });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Copilot chat failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Copilot chat failed.') });
     }
   });
 
@@ -333,7 +459,7 @@ export function createApiRouter(): express.Router {
         return res.status(400).json({ success: false, error: 'Missing prompt describing the course.' });
       }
       const result = await draftCourseFromCopilotPromptWithAI({
-        prompt: String(prompt).trim(),
+        prompt: String(prompt).trim().slice(0, 8000),
         template,
         currentBrief,
         currentModules,
@@ -343,7 +469,7 @@ export function createApiRouter(): express.Router {
       });
       return res.json({ success: true, ...result });
     } catch (err: any) {
-      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Copilot draft failed.' });
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Copilot draft failed.') });
     }
   });
 

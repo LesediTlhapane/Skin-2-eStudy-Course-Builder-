@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
   Check,
   CheckCircle2,
   Copy,
+  FileText,
   Loader2,
   RefreshCw,
   Send,
@@ -16,6 +17,7 @@ import type {
   CopilotMessage,
   CopilotProposedChange,
   CourseProject,
+  SelectedTextContext,
   WorkflowStage,
 } from '../types';
 import { compactProjectForApi, parseApiJson } from '../utils/apiClient';
@@ -29,8 +31,19 @@ interface CourseCopilotDrawerProps {
   project: CourseProject;
   selectedProvider: AIProvider;
   selectedModel: string;
+  selectedTextContext?: SelectedTextContext | null;
+  queuedSelectionPrompt?: {
+    ctx: SelectedTextContext;
+    prompt: string;
+    nonce: number;
+  } | null;
+  onClearSelectedTextContext?: () => void;
   onClose: () => void;
   onApplyProposedChange: (proposal: CopilotProposedChange) => ApplyProposalResult;
+  onApplySelectedTextReplacement?: (
+    ctx: SelectedTextContext,
+    replacementText: string
+  ) => { applied: boolean; detail: string };
   onApplyRegeneratedSection: (params: {
     targetType: 'lesson' | 'scenario' | 'case_study' | 'knowledge_check';
     moduleId: string;
@@ -160,8 +173,12 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
   project,
   selectedProvider,
   selectedModel,
+  selectedTextContext,
+  queuedSelectionPrompt,
+  onClearSelectedTextContext,
   onClose,
   onApplyProposedChange,
+  onApplySelectedTextReplacement,
   onApplyRegeneratedSection,
   onNavigateToSection,
 }) => {
@@ -171,26 +188,32 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
       role: 'assistant',
       timestamp: new Date().toISOString(),
       content:
-        'I am your Course Copilot. I can help refine learning outcomes, strengthen scenarios, improve rubrics, spot missing curriculum coverage, or explain QA findings. Suggested edits appear as Accept & Apply proposals with direct links to jump to or regenerate the affected section.',
+        'I am your Course Copilot. I can read your Course Brief, curriculum, outcomes, assessments, Stage 5 lessons, QA findings, and uploaded reference source excerpts. Highlight any text in the workspace for instant Rewrite / Simplify / Expand / Fix Clarity / Explain actions, or ask below.',
     },
   ]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [autoApplyMinorEdits, setAutoApplyMinorEdits] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [proposalFeedback, setProposalFeedback] = useState<
     Record<string, { ok: boolean; message: string }>
   >({});
   const [regenProposalId, setRegenProposalId] = useState<string | null>(null);
+  const [lastHandledNonce, setLastHandledNonce] = useState<number>(0);
 
-  if (!isOpen) return null;
-
-  const sendMessage = async (textOverride?: string) => {
+  const sendMessage = async (
+    textOverride?: string,
+    ctxOverride?: SelectedTextContext | null
+  ) => {
     const text = (textOverride ?? input).trim();
+    const activeSelectionCtx = ctxOverride !== undefined ? ctxOverride : selectedTextContext;
     if (!text || isSending) return;
     const userMsg: CopilotMessage = {
       id: `u-${Date.now()}`,
       role: 'user',
-      content: text,
+      content: activeSelectionCtx?.text
+        ? `${text}\n\n[Selected excerpt (${activeSelectionCtx.sectionLabel || `Stage ${activeSelectionCtx.stage}`}): "${activeSelectionCtx.text.slice(0, 140)}${activeSelectionCtx.text.length > 140 ? '...' : ''}"]`
+        : text,
       timestamp: new Date().toISOString(),
     };
     const nextHistory = [...messages, userMsg];
@@ -199,13 +222,20 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
     setIsSending(true);
 
     try {
+      const focusModuleId =
+        activeSelectionCtx?.moduleId || project.content.modules[0]?.moduleId;
       const res = await fetch('/api/v2/copilot/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project: compactProjectForApi(project, { includeLessonText: false }),
+          project: compactProjectForApi(project, {
+            focusModuleId,
+            includeLessonText: false,
+          }),
           messages: nextHistory.map(m => ({ role: m.role, content: m.content })),
           userMessage: text,
+          selectedTextContext: activeSelectionCtx || undefined,
+          activeModuleId: focusModuleId,
           provider: selectedProvider,
           model: selectedModel,
         }),
@@ -214,12 +244,47 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Copilot request failed.');
       }
+
+      const incomingProposals: CopilotProposedChange[] = Array.isArray(data.proposedChanges)
+        ? data.proposedChanges
+        : [];
+      const feedbackAdditions: Record<string, { ok: boolean; message: string }> = {};
+
+      // Controlled execution: if user explicitly enabled minor scoped auto-apply, apply only direct proposals (or selection replacement if direct)
+      const processedProposals: CopilotProposedChange[] = incomingProposals.map(prop => {
+        if (autoApplyMinorEdits && prop.executionMode === 'direct') {
+          const appliedRes = onApplyProposedChange(prop);
+          if (appliedRes.applied) {
+            feedbackAdditions[prop.id] = {
+              ok: true,
+              message: `Auto-applied scoped edit: ${appliedRes.detail}`,
+            };
+            return { ...prop, status: 'accepted' };
+          }
+          if (activeSelectionCtx && onApplySelectedTextReplacement && prop.afterPreview) {
+            const selRes = onApplySelectedTextReplacement(activeSelectionCtx, prop.afterPreview);
+            if (selRes.applied) {
+              feedbackAdditions[prop.id] = {
+                ok: true,
+                message: `Auto-applied to selection: ${selRes.detail}`,
+              };
+              return { ...prop, status: 'accepted' };
+            }
+          }
+        }
+        return prop;
+      });
+
+      if (Object.keys(feedbackAdditions).length > 0) {
+        setProposalFeedback(prev => ({ ...prev, ...feedbackAdditions }));
+      }
+
       const assistantMsg: CopilotMessage = {
         id: `a-${Date.now()}`,
         role: 'assistant',
         content: data.reply,
         timestamp: new Date().toISOString(),
-        proposedChanges: data.proposedChanges || [],
+        proposedChanges: processedProposals,
       };
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err: any) {
@@ -236,6 +301,20 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
       setIsSending(false);
     }
   };
+
+  useEffect(() => {
+    if (
+      isOpen &&
+      queuedSelectionPrompt &&
+      queuedSelectionPrompt.nonce !== lastHandledNonce &&
+      !isSending
+    ) {
+      setLastHandledNonce(queuedSelectionPrompt.nonce);
+      void sendMessage(queuedSelectionPrompt.prompt, queuedSelectionPrompt.ctx);
+    }
+  }, [isOpen, queuedSelectionPrompt, lastHandledNonce, isSending]);
+
+  if (!isOpen) return null;
 
   const updateProposalStatus = (
     msgId: string,
@@ -277,12 +356,32 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
         ...prev,
         [prop.id]: { ok: true, message: result.detail },
       }));
+    } else if (selectedTextContext && onApplySelectedTextReplacement && prop.afterPreview) {
+      const selResult = onApplySelectedTextReplacement(selectedTextContext, prop.afterPreview);
+      if (selResult.applied) {
+        updateProposalStatus(msgId, prop.id, 'accepted');
+        setProposalFeedback(prev => ({
+          ...prev,
+          [prop.id]: { ok: true, message: selResult.detail },
+        }));
+      } else {
+        setProposalFeedback(prev => ({
+          ...prev,
+          [prop.id]: { ok: false, message: result.detail },
+        }));
+      }
     } else {
-      // Do NOT falsely mark accepted if nothing matched
       setProposalFeedback(prev => ({
         ...prev,
         [prop.id]: { ok: false, message: result.detail },
       }));
+    }
+  };
+
+  const handleBatchAcceptPending = (msg: CopilotMessage) => {
+    const pending = (msg.proposedChanges || []).filter(p => p.status === 'pending');
+    for (const prop of pending) {
+      handleProposalDecision(msg.id, prop, 'accepted');
     }
   };
 
@@ -350,6 +449,10 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
     setTimeout(() => setCopiedId(null), 1800);
   };
 
+  const readableSourcesCount = project.sources.filter(
+    s => (s.extractedText || s.summary || '').trim().length > 20
+  ).length;
+
   return (
     <aside className="fixed right-0 top-16 bottom-0 z-40 w-full sm:w-[440px] bg-white border-l border-slate-200 shadow-2xl flex flex-col">
       <div className="px-4 py-3 bg-[#052B66] text-white flex items-center justify-between">
@@ -357,7 +460,13 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
           <Sparkles className="w-4 h-4 text-[#45CC42]" />
           <div>
             <div className="text-xs font-bold">Course Copilot</div>
-            <div className="text-[11px] text-slate-300">Stage {project.currentStage} Assistant</div>
+            <div className="text-[11px] text-slate-300 flex items-center gap-2">
+              <span>Stage {project.currentStage} Assistant</span>
+              <span className="inline-flex items-center gap-1 text-slate-200">
+                <FileText className="w-3 h-3 text-[#45CC42]" />
+                <span>{readableSourcesCount} source doc(s) indexed</span>
+              </span>
+            </div>
           </div>
         </div>
         <button type="button" onClick={onClose} className="p-1 text-slate-300 hover:text-white cursor-pointer">
@@ -365,24 +474,59 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
         </button>
       </div>
 
-      {/* Quick Prompts */}
-      <div className="px-3 py-2 border-b border-slate-200 bg-[#F5F7FA] flex items-center gap-1.5 overflow-x-auto">
-        {[
-          'Fix failing QA issues',
-          'Improve weakest learning outcome',
-          'Check missing curriculum coverage',
-          'Suggest better workplace scenario',
-        ].map(q => (
-          <button
-            key={q}
-            type="button"
-            onClick={() => sendMessage(q)}
-            className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-slate-200 rounded-md hover:border-[#052B66] text-[#052B66] whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            {q}
-          </button>
-        ))}
+      {/* Execution Mode Toggle + Quick Prompts */}
+      <div className="px-3 py-2 border-b border-slate-200 bg-[#F5F7FA] space-y-2">
+        <label className="flex items-center justify-between text-[11px] text-slate-700 cursor-pointer">
+          <span className="font-semibold">
+            Auto-apply minor scoped text edits (major changes still confirm)
+          </span>
+          <input
+            type="checkbox"
+            checked={autoApplyMinorEdits}
+            onChange={e => setAutoApplyMinorEdits(e.target.checked)}
+          />
+        </label>
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+          {[
+            'Fix failing QA issues',
+            'Verify against reference sources',
+            'Improve weakest learning outcome',
+            'Suggest better workplace scenario',
+          ].map(q => (
+            <button
+              key={q}
+              type="button"
+              onClick={() => void sendMessage(q)}
+              className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-slate-200 rounded-md hover:border-[#052B66] text-[#052B66] whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {/* Pinned Selected Text Context */}
+      {selectedTextContext?.text && (
+        <div className="px-3 py-2 bg-amber-50 border-b border-amber-200 text-xs space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold text-amber-950">
+              Selected Text Context ({selectedTextContext.sectionLabel || `Stage ${selectedTextContext.stage}`})
+            </span>
+            {onClearSelectedTextContext && (
+              <button
+                type="button"
+                onClick={onClearSelectedTextContext}
+                className="text-[11px] text-amber-800 hover:text-amber-950 font-semibold cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <p className="text-[11px] text-amber-900 line-clamp-2 italic">
+            "{selectedTextContext.text}"
+          </p>
+        </div>
+      )}
 
       {/* Messages (select-text enabled!) */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 select-text">
@@ -391,6 +535,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
             msg.role === 'assistant' && (!msg.proposedChanges || msg.proposedChanges.length === 0)
               ? detectStageHintInText(msg.content)
               : null;
+          const pendingProps = (msg.proposedChanges || []).filter(p => p.status === 'pending');
 
           return (
             <div
@@ -442,6 +587,18 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
 
               {msg.proposedChanges && msg.proposedChanges.length > 0 && (
                 <div className="space-y-2.5 text-left">
+                  {pendingProps.length > 1 && (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleBatchAcceptPending(msg)}
+                        className="px-2.5 py-1 rounded bg-[#45CC42] hover:bg-[#3ab837] text-[#052B66] text-[11px] font-bold cursor-pointer"
+                      >
+                        Accept & Apply All Pending ({pendingProps.length})
+                      </button>
+                    </div>
+                  )}
+
                   {msg.proposedChanges.map(prop => {
                     const loc = resolveProposalTargetLocation(project, prop);
                     const stage5Target = findStage5Target(project, prop);
@@ -515,6 +672,31 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                             </>
                           )}
 
+                          {selectedTextContext?.text &&
+                            prop.afterPreview &&
+                            onApplySelectedTextReplacement &&
+                            prop.status === 'pending' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const res = onApplySelectedTextReplacement(
+                                    selectedTextContext,
+                                    prop.afterPreview
+                                  );
+                                  if (res.applied) {
+                                    updateProposalStatus(msg.id, prop.id, 'accepted');
+                                  }
+                                  setProposalFeedback(prev => ({
+                                    ...prev,
+                                    [prop.id]: { ok: res.applied, message: res.detail },
+                                  }));
+                                }}
+                                className="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-950 font-semibold rounded cursor-pointer"
+                              >
+                                Replace Selection
+                              </button>
+                            )}
+
                           {stage5Target && prop.status !== 'rejected' && (
                             <button
                               type="button"
@@ -565,7 +747,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
       <form
         onSubmit={e => {
           e.preventDefault();
-          sendMessage();
+          void sendMessage();
         }}
         className="p-3 border-t border-slate-200 bg-white flex items-center gap-2"
       >
@@ -573,7 +755,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder="Ask Copilot to fix QA, outcomes, lessons..."
+          placeholder="Ask Copilot to fix QA, outcomes, sources, or selection..."
           className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
         />
         <button

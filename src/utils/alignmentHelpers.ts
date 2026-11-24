@@ -236,29 +236,21 @@ export function computeFullAlignmentReport(project: CourseProject): AlignmentRep
 
   const rows: AlignmentMatrixRow[] = [];
   let outcomeScoreTotal = 0;
-  const courseOutcomeIdSet = new Set(courseOutcomes.map(c => c.id));
-  const anyCourseOutcomeExplicitlyMappedToLessons = lessonNodes.some(n =>
-    (lessonMappedOutcomes.get(n.id) || []).some(id => courseOutcomeIdSet.has(id))
-  );
 
   for (const out of allOutcomes) {
     let teachingLessons = lessonNodes.filter(node =>
       (lessonMappedOutcomes.get(node.id) || []).includes(out.id)
     );
 
-    // Course-level outcomes synthesize across the course's modules/lessons:
-    // Unless the developer has started explicitly pinning CLOs to individual lessons,
-    // treat active taught lessons across the course as supporting course-level outcomes.
+    // Course-level outcomes synthesize across the course's taught modules & lessons.
+    // Even if AI generation or manual editing pinned only CLO-1/CLO-2 to individual lessons,
+    // remaining course-level outcomes are still taught when active module lessons exist across the programme.
     if (out.scope === 'course' && teachingLessons.length === 0) {
-      if (!anyCourseOutcomeExplicitlyMappedToLessons) {
-        teachingLessons = lessonNodes.filter(
-          n =>
-            (lessonMappedOutcomes.get(n.id)?.length || 0) > 0 ||
-            n.explicitOutcomeIds === undefined
-        );
-      } else if (lessonNodes.some(n => n.explicitOutcomeIds === undefined)) {
-        teachingLessons = lessonNodes.filter(n => n.explicitOutcomeIds === undefined);
-      }
+      teachingLessons = lessonNodes.filter(
+        n =>
+          (lessonMappedOutcomes.get(n.id)?.length || 0) > 0 ||
+          n.explicitOutcomeIds === undefined
+      );
     }
 
     const mappedAssessments = items.filter(it => it.outcomeIds.includes(out.id));

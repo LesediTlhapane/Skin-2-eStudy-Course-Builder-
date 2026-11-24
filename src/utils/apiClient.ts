@@ -3,13 +3,13 @@ import type { CourseProject, SourceDocument } from '../types';
 export function compactSourcesForApi(sources: SourceDocument[] = []): SourceDocument[] {
   return sources.slice(0, 6).map(s => ({
     ...s,
-    extractedText: (s.extractedText || s.summary || '').slice(0, 1500),
+    extractedText: (s.extractedText || s.summary || '').slice(0, 2000),
   }));
 }
 
 export function compactProjectForApi(
   project: CourseProject,
-  options?: { onlyModuleId?: string; includeLessonText?: boolean }
+  options?: { onlyModuleId?: string; focusModuleId?: string; includeLessonText?: boolean }
 ): CourseProject {
   const includeLessonText = options?.includeLessonText ?? true;
   const filteredContentModules = options?.onlyModuleId
@@ -24,15 +24,18 @@ export function compactProjectForApi(
     content: {
       ...project.content,
       generationHistory: [],
-      modules: filteredContentModules.map(m => ({
-        ...m,
-        lessons: includeLessonText
-          ? m.lessons
-          : m.lessons.map(l => ({
-              ...l,
-              explanation: l.explanation.slice(0, 300),
-            })),
-      })),
+      modules: filteredContentModules.map(m => {
+        const keepFull = includeLessonText || options?.focusModuleId === m.moduleId;
+        return {
+          ...m,
+          lessons: keepFull
+            ? m.lessons
+            : m.lessons.map(l => ({
+                ...l,
+                explanation: l.explanation.slice(0, 420),
+              })),
+        };
+      }),
     },
   };
 }

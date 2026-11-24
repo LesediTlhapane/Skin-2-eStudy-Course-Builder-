@@ -19,6 +19,9 @@ function countWords(text: string): number {
     .filter(Boolean).length;
 }
 
+export const ACCESSIBILITY_LIMITATIONS_NOTE =
+  'Automated checks verify structural readability (sentence length, heading chunking, terminology support, diagram alt-captions, table header formatting, module orientation, and assessment instruction clarity). They do NOT audit visual colour contrast, keyboard focus order, PDF/LMS screen-reader ARIA tagging, or full WCAG 2.1 AA compliance — human assistive-technology testing is required.';
+
 export function runAccessibilityChecks(project: CourseProject): AccessibilityAuditSummary {
   const modules = project.content.modules || [];
   const lessons = modules.flatMap(m =>
@@ -30,6 +33,7 @@ export function runAccessibilityChecks(project: CourseProject): AccessibilityAud
       scorePercent: 0,
       averageSentenceWords: 0,
       readabilityBand: 'No content generated yet',
+      limitationsNote: ACCESSIBILITY_LIMITATIONS_NOTE,
       checks: [
         {
           id: 'acc-no-content',
@@ -48,6 +52,7 @@ export function runAccessibilityChecks(project: CourseProject): AccessibilityAud
   const missingTerminologyLessons: string[] = [];
   const missingVisualAltCues: string[] = [];
   const missingStructureLessons: string[] = [];
+  const malformedTableLessons: string[] = [];
 
   for (const item of lessons) {
     const text = item.lesson.explanation || '';
@@ -58,7 +63,7 @@ export function runAccessibilityChecks(project: CourseProject): AccessibilityAud
 
     const label = `M${item.moduleNumber}: ${item.lesson.title}`;
 
-    // Check paragraph density & heading breaks
+    // Check paragraph density & heading hierarchy
     const paragraphs = text.split(/\n{2,}/).filter(p => p.trim().length > 0);
     const hasHeadingMarkers = /^#{1,4}\s+|^\*\*[^*]+\*\*/m.test(text) || paragraphs.length >= 2;
     if (!hasHeadingMarkers && words > 180) {
@@ -77,9 +82,18 @@ export function runAccessibilityChecks(project: CourseProject): AccessibilityAud
     // Check references to figures/diagrams/charts/images without descriptive text/caption cues
     if (
       /\b(diagram|figure|chart|graph|screenshot|image)\b/i.test(text) &&
-      !/\b(alt|caption|shows|depicts|illustrates|table|step)\b/i.test(text)
+      !/\b(alt|caption|shows|depicts|illustrates|table|step|describes)\b/i.test(text)
     ) {
       missingVisualAltCues.push(label);
+    }
+
+    // Check markdown/HTML tables for structural header rows & readable cell width
+    if (/\|[^\n]+\|/.test(text)) {
+      const tableLines = text.split('\n').filter(ln => ln.trim().startsWith('|'));
+      const hasSeparator = tableLines.some(ln => /\|\s*:?-{2,}:?\s*\|/.test(ln));
+      if (tableLines.length >= 2 && !hasSeparator) {
+        malformedTableLessons.push(label);
+      }
     }
   }
 
@@ -88,17 +102,21 @@ export function runAccessibilityChecks(project: CourseProject): AccessibilityAud
 
   let readabilityBand = 'Clear & Accessible';
   let readabilityStatus: 'pass' | 'warning' | 'fail' = 'pass';
-  if (avgSentenceWords > 28) {
-    readabilityBand = 'Dense / Complex (simplify long sentences)';
-    readabilityStatus = 'warning';
-  } else if (avgSentenceWords > 35) {
+  if (avgSentenceWords > 35) {
     readabilityBand = 'Very Dense (high cognitive load)';
     readabilityStatus = 'fail';
+  } else if (avgSentenceWords > 28) {
+    readabilityBand = 'Dense / Complex (simplify long sentences)';
+    readabilityStatus = 'warning';
   }
 
   const missingModuleSummaries = modules
     .filter(m => !m.summary?.trim() || !m.introduction?.trim())
     .map(m => `Module ${m.moduleNumber}: ${m.title}`);
+
+  const unclearAssessments = (project.assessments?.items || [])
+    .filter(it => !it.instructions?.trim() || !it.promptOrQuestion?.trim())
+    .map(it => it.title || it.id);
 
   const checks: DeterministicCheckItem[] = [
     {
@@ -110,7 +128,7 @@ export function runAccessibilityChecks(project: CourseProject): AccessibilityAud
     },
     {
       id: 'acc-headings',
-      label: 'Heading Structure & Scannable Chunking',
+      label: 'Heading Hierarchy & Scannable Chunking',
       status:
         missingStructureLessons.length === 0 && denseLessons.length === 0
           ? 'pass'
@@ -142,6 +160,26 @@ export function runAccessibilityChecks(project: CourseProject): AccessibilityAud
       affectedSections: missingVisualAltCues,
     },
     {
+      id: 'acc-tables',
+      label: 'Table Header Structure & Readability',
+      status: malformedTableLessons.length === 0 ? 'pass' : 'warning',
+      details:
+        malformedTableLessons.length === 0
+          ? 'No malformed or headerless content tables detected.'
+          : `${malformedTableLessons.length} lesson(s) include pipe tables without a Markdown header separator row.`,
+      affectedSections: malformedTableLessons,
+    },
+    {
+      id: 'acc-instructions',
+      label: 'Learner Instruction Clarity',
+      status: unclearAssessments.length === 0 ? 'pass' : 'warning',
+      details:
+        unclearAssessments.length === 0
+          ? 'All Stage 4 assessments include explicit learner instructions and task prompts.'
+          : `${unclearAssessments.length} assessment item(s) are missing clear learner instructions.`,
+      affectedSections: unclearAssessments,
+    },
+    {
       id: 'acc-navigation',
       label: 'Module Orientation & Summaries',
       status: missingModuleSummaries.length === 0 ? 'pass' : 'fail',
@@ -161,6 +199,7 @@ export function runAccessibilityChecks(project: CourseProject): AccessibilityAud
     scorePercent,
     averageSentenceWords: avgSentenceWords,
     readabilityBand,
+    limitationsNote: ACCESSIBILITY_LIMITATIONS_NOTE,
     checks,
   };
 }
@@ -202,6 +241,10 @@ export function runTechnicalValidationChecks(project: CourseProject): TechnicalV
     technicalIndicatorsDetected.push('Operating constraints, assumptions, or safety implications');
   }
 
+  const verifiedSourcesCount = (project.sources || []).filter(
+    s => s.verificationStatus === 'VERIFIED'
+  ).length;
+
   const checks: DeterministicCheckItem[] = [
     {
       id: 'tech-unsupported-claims',
@@ -227,15 +270,15 @@ export function runTechnicalValidationChecks(project: CourseProject): TechnicalV
       id: 'tech-source-grounding',
       label: 'Authoritative Source Grounding for Technical / Regulated Content',
       status:
-        technicalIndicatorsDetected.length > 0 && project.sources.length === 0
+        technicalIndicatorsDetected.length > 0 && verifiedSourcesCount === 0
           ? 'warning'
           : 'pass',
       details:
-        technicalIndicatorsDetected.length > 0 && project.sources.length === 0
-          ? `Technical or regulatory indicators detected (${technicalIndicatorsDetected.join('; ')}), but Source Register is empty. Upload authoritative references or obtain SME validation.`
-          : `${project.sources.length} source(s) registered and ${verifiedClaims.length} claim(s) verified.`,
+        technicalIndicatorsDetected.length > 0 && verifiedSourcesCount === 0
+          ? `Technical or regulatory indicators detected (${technicalIndicatorsDetected.join('; ')}), with ${project.sources.length} source(s) registered and ${verifiedSourcesCount} human-verified. Upload or confirm authoritative references in Source Register.`
+          : `${project.sources.length} source(s) registered (${verifiedSourcesCount} human-verified) and ${verifiedClaims.length} claim(s) verified.`,
       affectedSections:
-        technicalIndicatorsDetected.length > 0 && project.sources.length === 0
+        technicalIndicatorsDetected.length > 0 && verifiedSourcesCount === 0
           ? ['Source Register', 'Stage 5 · Lessons']
           : [],
     },

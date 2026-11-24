@@ -41,6 +41,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
 }) => {
   const [activeModIdx, setActiveModIdx] = useState(0);
   const [generatingStatus, setGeneratingStatus] = useState<string | null>(null);
+  const [confirmModuleOverwrite, setConfirmModuleOverwrite] = useState(false);
   const [regenBusyKey, setRegenBusyKey] = useState<string | null>(null);
   const [regenPrompt, setRegenPrompt] = useState<string>('');
   const [regenSuccessMsg, setRegenSuccessMsg] = useState<string | null>(null);
@@ -237,8 +238,13 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     }
   };
 
-  const handleRegenerateCurrentModule = async () => {
+  const handleRegenerateCurrentModule = async (confirmed = false) => {
     if (!activePlan) return;
+    if (activeGenerated && !confirmed) {
+      setConfirmModuleOverwrite(true);
+      return;
+    }
+    setConfirmModuleOverwrite(false);
     setErrorMsg(null);
     setRegenSuccessMsg(null);
     try {
@@ -454,7 +460,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           <button
             type="button"
             disabled={Boolean(generatingStatus)}
-            onClick={handleRegenerateCurrentModule}
+            onClick={() => handleRegenerateCurrentModule(true)}
             className="px-4 py-2 rounded-lg bg-[#052B66] text-white text-xs font-bold cursor-pointer"
           >
             Generate Module {activePlan.order}
@@ -463,23 +469,48 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       ) : activePlan && activeGenerated ? (
         <div className="space-y-5">
           {/* Selective Regeneration Guidance Bar */}
-          <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-            <input
-              type="text"
-              value={regenPrompt}
-              onChange={e => setRegenPrompt(e.target.value)}
-              placeholder="Optional guidance before clicking Regenerate on any lesson, scenario, case study, or quiz..."
-              className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg"
-            />
-            <button
-              type="button"
-              disabled={Boolean(generatingStatus)}
-              onClick={handleRegenerateCurrentModule}
-              className="px-3.5 py-1.5 text-xs font-bold border border-[#052B66] text-[#052B66] hover:bg-[#052B66]/5 rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Regenerate Full Module</span>
-            </button>
+          <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <input
+                type="text"
+                value={regenPrompt}
+                onChange={e => setRegenPrompt(e.target.value)}
+                placeholder="Optional guidance before clicking Regenerate on any lesson, scenario, case study, or quiz..."
+                className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg"
+              />
+              <button
+                type="button"
+                disabled={Boolean(generatingStatus)}
+                onClick={() => handleRegenerateCurrentModule(false)}
+                className="px-3.5 py-1.5 text-xs font-bold border border-[#052B66] text-[#052B66] hover:bg-[#052B66]/5 rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Regenerate Full Module</span>
+              </button>
+            </div>
+            {confirmModuleOverwrite && (
+              <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-amber-950">
+                <span>
+                  <strong>Confirm Full Module Overwrite:</strong> Regenerating Module {activePlan.order} will replace all {activeGenerated.lessons.length} lessons, scenarios, and knowledge checks in this module.
+                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleRegenerateCurrentModule(true)}
+                    className="px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-800 text-white font-bold cursor-pointer"
+                  >
+                    Confirm Overwrite
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmModuleOverwrite(false)}
+                    className="px-3 py-1.5 rounded bg-white border border-amber-300 text-amber-900 font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Module Intro & Objectives */}

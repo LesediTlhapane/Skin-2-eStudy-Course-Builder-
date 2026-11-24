@@ -51,6 +51,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
   onApproveAndContinue,
 }) => {
   const [isDesigning, setIsDesigning] = useState(false);
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   const [showLessonLinker, setShowLessonLinker] = useState(false);
@@ -133,7 +134,12 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
     });
   };
 
-  const handleDesignWithAI = async () => {
+  const handleDesignWithAI = async (confirmed = false) => {
+    if (assessments.items.length > 0 && !confirmed) {
+      setConfirmOverwrite(true);
+      return;
+    }
+    setConfirmOverwrite(false);
     setIsDesigning(true);
     setErrorMsg(null);
     try {
@@ -250,7 +256,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
           <button
             type="button"
             disabled={isDesigning || allOutcomes.length === 0}
-            onClick={handleDesignWithAI}
+            onClick={() => handleDesignWithAI(false)}
             className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
             {isDesigning ? (
@@ -266,6 +272,30 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
           </button>
         </div>
       </div>
+
+      {confirmOverwrite && (
+        <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-950">
+          <div>
+            <strong>Confirm Assessment Regeneration:</strong> Regenerating will replace your existing {assessments.items.length} assessment item(s) and rubrics. A version snapshot is created automatically.
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleDesignWithAI(true)}
+              className="px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white font-bold cursor-pointer"
+            >
+              Confirm Regenerate
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmOverwrite(false)}
+              className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-900 font-semibold cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">

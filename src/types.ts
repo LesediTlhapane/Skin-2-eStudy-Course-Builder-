@@ -91,6 +91,9 @@ export interface SourceDocument {
   extractedText: string;
   relevantSections: string[];
   verificationStatus: SourceVerificationStatus;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  verificationNotes?: string;
   summary?: string;
   keyTopics?: string[];
   addedAt: string;
@@ -489,6 +492,7 @@ export interface AccessibilityAuditSummary {
   scorePercent: number;
   averageSentenceWords: number;
   readabilityBand: string;
+  limitationsNote?: string;
   checks: DeterministicCheckItem[];
 }
 
@@ -508,13 +512,29 @@ export interface RoleSignOffRecord {
   notes?: string;
 }
 
+export interface QAIssueItem {
+  id: string;
+  severity: 'blocking' | 'warning' | 'info';
+  rule: string;
+  description: string;
+  stage: WorkflowStage;
+  affectedSection: string;
+  moduleNumber?: number;
+  field?: string;
+  recommendedFix: string;
+}
+
 export interface QAEvaluationReport {
   id: string;
   evaluatedAt: string;
+  evaluatedDataSignature?: string;
   weights: QADimensionWeight[];
   dimensions: QADimensionResult[];
   weightedScore: number;
   criticalFailures: QACriticalFailure[];
+  blockingErrors?: QAIssueItem[];
+  warnings?: QAIssueItem[];
+  informationalFeedback?: QAIssueItem[];
   verdict: QAVerdict;
   verdictExplanation: string;
   accessibilityAudit?: AccessibilityAuditSummary;
@@ -571,9 +591,11 @@ export interface CopilotProposedChange {
     | 'scenario'
     | 'case_study'
     | 'knowledge_check'
+    | 'module_content'
     | 'assessment_item'
     | 'curriculum_module'
     | 'brief_note';
+  executionMode?: 'direct' | 'confirm';
   targetId?: string;
   moduleId?: string;
   moduleNumber?: number;
@@ -584,6 +606,18 @@ export interface CopilotProposedChange {
   afterPreview: string;
   patchPayload: Record<string, any>;
   status: 'pending' | 'accepted' | 'rejected';
+}
+
+export interface SelectedTextContext {
+  text: string;
+  stage: WorkflowStage;
+  sectionLabel: string;
+  action?: 'rewrite' | 'simplify' | 'expand' | 'fix_clarity' | 'change_tone' | 'explain' | 'custom';
+  moduleNumber?: number;
+  moduleId?: string;
+  targetType?: CopilotProposedChange['targetType'];
+  targetId?: string;
+  field?: string;
 }
 
 export interface CopilotMessage {

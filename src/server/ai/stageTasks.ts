@@ -11,6 +11,7 @@ import type {
   GeneratedModuleContent,
   ImproveCourseDiagnosis,
   LearningOutcomesPlan,
+  SelectedTextContext,
   SourceConflict,
   SourceDocument,
 } from '../../types.js';
@@ -93,7 +94,7 @@ Return JSON with this exact shape:
     "summary": "Concise 2-4 sentence factual summary",
     "keyTopics": ["Topic 1", "Topic 2"],
     "relevantSections": ["Course Brief", "Module Topics"],
-    "verificationStatus": "VERIFIED"
+    "verificationStatus": "NEEDS REVIEW"
   },
   "briefSuggestions": {
     "title": "Course title ONLY if explicitly a course specification, else empty string",
@@ -632,7 +633,7 @@ Return JSON matching:
     {
       "id": "les-content-1",
       "lessonPlanId": "matching lesson id from plan",
-      "outcomeIds": ${JSON.stringify([...modOutcomes.map(o => o.id), ...params.outcomes.courseOutcomes.slice(0, 2).map(o => o.id)])},
+      "outcomeIds": ${JSON.stringify([...modOutcomes.map(o => o.id), ...params.outcomes.courseOutcomes.map(o => o.id)])},
       "title": "Exact lesson title",
       "durationMinutes": 35,
       "explanation": "Rich, clear, subject-specific teaching prose (280-450 words) with structured subheadings, mechanics, equations/rules if technical, and common misconceptions",
@@ -641,7 +642,7 @@ Return JSON matching:
       "practicalApplication": "Concrete workplace application for target roles",
       "guidedActivity": "Structured hands-on learner activity",
       "sourceClaims": [
-        { "id": "clm-1", "claim": "Key technical or regulatory statement made in this lesson", "sourceTitle": "Source name or None", "status": "VERIFIED" }
+        { "id": "clm-1", "claim": "Key technical or regulatory statement made in this lesson", "sourceTitle": "Source name or General Practice", "status": "NEEDS REVIEW" }
       ],
       "editStatus": "ai_draft"
     }
@@ -841,7 +842,7 @@ export async function generateSingleLessonWithAI(params: {
   );
   const courseOutcomeIds = params.outcomes.courseOutcomes.map(o => o.id);
   const fallbackOutcomeIds = Array.from(
-    new Set([...modOutcomes.map(o => o.id), ...courseOutcomeIds.slice(0, 2)])
+    new Set([...modOutcomes.map(o => o.id), ...courseOutcomeIds])
   );
 
   const aiRule =
@@ -964,6 +965,8 @@ export async function processCopilotChatWithAI(params: {
   project: CourseProject;
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   userMessage: string;
+  selectedTextContext?: SelectedTextContext;
+  activeModuleId?: string;
   provider?: AIProvider;
   model?: string;
 }): Promise<{
@@ -978,11 +981,13 @@ export async function processCopilotChatWithAI(params: {
       | 'knowledge_check'
       | 'assessment_item'
       | 'curriculum_module'
+      | 'module_content'
       | 'brief_note';
     targetId?: string;
     moduleId?: string;
     moduleNumber?: number;
     stageHint?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+    executionMode?: 'direct' | 'confirm';
     title: string;
     rationale: string;
     beforePreview?: string;
@@ -992,22 +997,27 @@ export async function processCopilotChatWithAI(params: {
   }>;
 }> {
   const activeStage = params.project.currentStage;
+  const activeModId = params.activeModuleId || params.selectedTextContext?.moduleId;
   const compactContext = {
     stage: activeStage,
     brief: {
       title: params.project.brief.title,
       code: params.project.brief.code,
       domain: params.project.brief.industryDomain,
+      purpose: (params.project.brief.purpose || '').slice(0, 350),
       audience: params.project.brief.targetAudience,
       level: params.project.brief.experienceLevel,
       duration: params.project.brief.estimatedDuration,
       aiMode: params.project.brief.aiIntegrationMode,
       metadataLocked: params.project.brief.metadataLocked,
+      learningRequirements: (params.project.brief.learningRequirements || '').slice(0, 400),
+      subjectTopics: (params.project.brief.subjectTopicsInput || '').slice(0, 400),
     },
     curriculumModules: params.project.curriculum.modules.map(m => ({
       id: m.id,
       order: m.order,
       title: m.title,
+      purpose: (m.purpose || '').slice(0, 180),
       lessons: m.lessons.map(l => ({
         id: l.id,
         title: l.title,
@@ -1028,7 +1038,7 @@ export async function processCopilotChatWithAI(params: {
         scope: o.scope,
         moduleId: o.moduleId,
         bloomLevel: o.bloomLevel,
-        statement: (o.statement || '').slice(0, 160),
+        statement: (o.statement || '').slice(0, 180),
       })),
     assessments: params.project.assessments.items.slice(0, 30).map(a => ({
       id: a.id,
@@ -1036,30 +1046,46 @@ export async function processCopilotChatWithAI(params: {
       title: a.title,
       type: a.type,
       outcomeIds: a.outcomeIds || [],
+      instructions: (a.instructions || '').slice(0, 120),
     })),
-    contentModules: params.project.content.modules.map(cm => ({
-      moduleId: cm.moduleId,
-      moduleNumber: cm.moduleNumber,
-      title: cm.title,
-      lessons: cm.lessons.map(l => ({
-        id: l.id,
-        lessonPlanId: l.lessonPlanId,
-        title: l.title,
-        outcomeIds: l.outcomeIds || [],
-      })),
-      scenarios: cm.scenarios.map(s => ({ id: s.id, title: s.title })),
-      caseStudies: cm.workplaceCaseStudies.map(c => ({ id: c.id, title: c.title })),
-      knowledgeChecks: cm.knowledgeChecks.map(k => ({
-        id: k.id,
-        outcomeCode: k.outcomeCode,
-        question: (k.question || '').slice(0, 80),
-      })),
-    })),
+    contentModules: params.project.content.modules.map(cm => {
+      const isFocused = !activeModId || cm.moduleId === activeModId;
+      return {
+        id: cm.id,
+        moduleId: cm.moduleId,
+        moduleNumber: cm.moduleNumber,
+        title: cm.title,
+        introduction: isFocused ? (cm.introduction || '').slice(0, 400) : (cm.introduction || '').slice(0, 120),
+        summary: isFocused ? (cm.summary || '').slice(0, 300) : '',
+        lessons: cm.lessons.map(l => ({
+          id: l.id,
+          lessonPlanId: l.lessonPlanId,
+          title: l.title,
+          outcomeIds: l.outcomeIds || [],
+          explanationExcerpt: isFocused
+            ? (l.explanation || '').slice(0, 420)
+            : (l.explanation || '').slice(0, 140),
+        })),
+        scenarios: cm.scenarios.map(s => ({
+          id: s.id,
+          title: s.title,
+          situation: isFocused ? (s.situation || '').slice(0, 200) : undefined,
+        })),
+        caseStudies: cm.workplaceCaseStudies.map(c => ({ id: c.id, title: c.title })),
+        knowledgeChecks: cm.knowledgeChecks.map(k => ({
+          id: k.id,
+          outcomeCode: k.outcomeCode,
+          question: (k.question || '').slice(0, 100),
+        })),
+      };
+    }),
     alignmentFlags: params.project.assessments.alignmentFlags.slice(0, 20),
     latestQASummary: params.project.latestQA
       ? {
           verdict: params.project.latestQA.verdict,
           weightedScore: params.project.latestQA.weightedScore,
+          blockingErrors: (params.project.latestQA.blockingErrors || []).slice(0, 10),
+          warnings: (params.project.latestQA.warnings || []).slice(0, 10),
           criticalFailures: params.project.latestQA.criticalFailures.slice(0, 10),
           weaknesses: params.project.latestQA.dimensions
             .flatMap(d => d.weaknesses)
@@ -1072,10 +1098,14 @@ export async function processCopilotChatWithAI(params: {
             .slice(0, 8),
         }
       : null,
-    sources: params.project.sources.map(s => ({
+    sources: (params.project.sources || []).slice(0, 6).map(s => ({
       id: s.id,
       title: s.title,
+      authorOrOrganisation: s.authorOrOrganisation,
       status: s.verificationStatus,
+      verifiedBy: s.verifiedBy,
+      keyTopics: (s.keyTopics || []).slice(0, 8),
+      excerpt: (s.summary || s.extractedText || '').slice(0, 750),
     })),
   };
 
@@ -1084,29 +1114,34 @@ export async function processCopilotChatWithAI(params: {
     .map(m => `[${m.role.toUpperCase()}]: ${m.content}`)
     .join('\n');
 
+  const selectedBlock = params.selectedTextContext?.text
+    ? `\nSELECTED TEXT CONTEXT FROM WORKSPACE:\n- Stage: ${params.selectedTextContext.stage}${params.selectedTextContext.moduleNumber ? ` (Module ${params.selectedTextContext.moduleNumber})` : ''}\n- Section: ${params.selectedTextContext.sectionLabel || 'Active Stage'}\n- Action Requested: ${params.selectedTextContext.action || 'custom'}\n- Selected Excerpt:\n"""\n${params.selectedTextContext.text.slice(0, 1800)}\n"""\n`
+    : '';
+
   const res = await aiRouter.execute({
     provider: params.provider,
     model: params.model,
     responseFormat: 'json',
     systemInstruction: `You are the eStudy Course Copilot — a senior instructional design partner.
 CRITICAL RULES:
-1. You understand the active course, approved curriculum, outcomes, assessments, generated Stage 5 lessons/scenarios/case studies, sources, QA findings, and current stage (${activeStage}/7).
-2. NEVER silently modify approved course metadata or content.
-3. ALWAYS return structured edits in "proposedChanges" using EXACT IDs copied from ACTIVE COURSE CONTEXT so "Accept Change" applies cleanly on first click:
-   - "outcome" (stageHint: 3): Copy exact outcome "id" into "targetId" (and "moduleId" if module outcome). Valid patchPayload keys: { "statement", "actionVerb", "bloomLevel", "workplacePerformance" }.
-   - "lesson" (stageHint: 5): Copy exact content lesson "id" (or curriculum lesson "id" if Stage 5 is not generated yet) into "targetId", exact "moduleId" into "moduleId", and numeric "moduleNumber". Valid patchPayload keys: { "title", "explanation", "outcomeIds", "practicalApplication", "guidedActivity", "workedExamples", "keyTerminology", "sourceClaims" }. Note: to link a lesson to outcomes, include "outcomeIds": ["exact-outcome-id", ...].
-   - "scenario" (stageHint: 5): Copy exact scenario "id" into "targetId", exact "moduleId", and numeric "moduleNumber". Valid patchPayload keys: { "title", "situation", "challenge", "decisionPrompt", "modelDebrief", "keyTakeaway" }.
-   - "case_study" (stageHint: 5): Copy exact case study "id" into "targetId", exact "moduleId", and numeric "moduleNumber". Valid patchPayload keys: { "title", "background", "analysisQuestions", "facilitatorNotes" }.
-   - "knowledge_check" (stageHint: 5): Copy exact knowledge check "id" into "targetId", exact "moduleId", and numeric "moduleNumber". Valid patchPayload keys: { "question", "options", "correctIndex", "explanation", "outcomeCode" }.
-   - "assessment_item" (stageHint: 4): Copy exact assessment "id" into "targetId". Valid patchPayload keys: { "title", "promptOrQuestion", "modelAnswer", "markingGuide", "outcomeIds", "rubric" }.
-   - "curriculum_module" (stageHint: 2): Update an existing module (exact "targetId"/"moduleId") or propose { "modules": [...] }.
-   - "brief_note" (stageHint: 1): Update brief fields { "title", "code", "industryDomain", "purpose", "workplaceProblem", "targetAudience", "estimatedDuration", "subjectTopicsInput", "aiIntegrationMode" }. If metadataLocked is true, explain if protected fields are locked.
-4. "patchPayload" MUST contain the real updated fields — NEVER leave patchPayload empty. Put clean readable text in "afterPreview".
-5. Mention the affected Stage and Module in "reply" so the user can either Accept Change OR jump directly to that section to regenerate.
+1. You have full read context of the active course: brief, curriculum modules, outcomes, assessments, Stage 5 lessons/scenarios/case studies, QA findings (blocking errors & warnings), AND uploaded reference source excerpts in "sources".
+2. NEVER claim you cannot read uploaded reference sources if excerpts are present in "sources" — cite them directly by title! If "sources" is empty or lacks excerpts, say so honestly.
+3. NEVER silently modify approved course metadata or content. Always propose structured edits in "proposedChanges" with exact IDs copied from ACTIVE COURSE CONTEXT so "Accept & Apply" executes cleanly on click:
+   - "outcome" (stageHint: 3): exact outcome "id" in "targetId" (and "moduleId" if module outcome). patchPayload: { "statement", "actionVerb", "bloomLevel", "workplacePerformance" }.
+   - "lesson" (stageHint: 5): exact content lesson "id" (or curriculum lesson "id") in "targetId", exact "moduleId", numeric "moduleNumber". patchPayload: { "title", "explanation", "outcomeIds", "practicalApplication", "guidedActivity", "workedExamples", "keyTerminology", "sourceClaims" }.
+   - "module_content" (stageHint: 5): exact "moduleId" and numeric "moduleNumber" for updating module-level text. patchPayload: { "introduction", "summary", "learningObjectives", "furtherLearningResources" }.
+   - "scenario" (stageHint: 5): exact scenario "id" in "targetId", exact "moduleId", numeric "moduleNumber". patchPayload: { "title", "situation", "challenge", "decisionPrompt", "modelDebrief", "keyTakeaway" }.
+   - "case_study" (stageHint: 5): exact case study "id" in "targetId", exact "moduleId", numeric "moduleNumber". patchPayload: { "title", "background", "analysisQuestions", "facilitatorNotes" }.
+   - "knowledge_check" (stageHint: 5): exact knowledge check "id" in "targetId", exact "moduleId", numeric "moduleNumber". patchPayload: { "question", "options", "correctIndex", "explanation", "outcomeCode" }.
+   - "assessment_item" (stageHint: 4): exact assessment "id" in "targetId". patchPayload: { "title", "instructions", "promptOrQuestion", "modelAnswer", "markingGuide", "outcomeIds", "rubric" }.
+   - "curriculum_module" (stageHint: 2): exact module "id" in "targetId"/"moduleId" or { "modules": [...] }.
+   - "brief_note" (stageHint: 1): brief fields { "title", "code", "industryDomain", "purpose", "workplaceProblem", "targetAudience", "estimatedDuration", "subjectTopicsInput", "aiIntegrationMode" }. If metadataLocked is true, preserve protected metadata and tell the user clearly.
+4. "patchPayload" MUST contain real updated fields — NEVER empty. Mark "executionMode": "direct" for minor scoped phrasing/explanation improvements, or "confirm" for major structural/module/assessment/outcome changes.
+5. MULTI-REQUIREMENT HANDLING: If the user asks for multiple changes in one message (e.g., simplify intro + verify alignment + preserve technical accuracy), address EVERY part explicitly in "reply" (stating what you changed, what was preserved, and any part needing manual confirmation/regeneration), and create separate "proposedChanges" entries for each distinct section.
 Return ONLY valid JSON.`,
     prompt: `ACTIVE COURSE CONTEXT:
 ${JSON.stringify(compactContext, null, 2)}
-
+${selectedBlock}
 RECENT CONVERSATION:
 ${historyText}
 
@@ -1115,17 +1150,18 @@ ${params.userMessage}
 
 Return JSON:
 {
-  "reply": "Clear, actionable instructional design advice referencing the exact Stage/Module",
+  "reply": "Clear, actionable instructional design response addressing every part of the user's request and referencing exact Stages/Modules/Sources",
   "proposedChanges": [
     {
       "id": "prop-${Date.now()}",
-      "targetType": "outcome | lesson | scenario | case_study | knowledge_check | assessment_item | curriculum_module | brief_note",
-      "targetId": "exact id copied from ACTIVE COURSE CONTEXT",
+      "targetType": "outcome | lesson | module_content | scenario | case_study | knowledge_check | assessment_item | curriculum_module | brief_note",
+      "targetId": "exact id copied from ACTIVE COURSE CONTEXT (or omitted for brief_note)",
       "moduleId": "exact moduleId copied from ACTIVE COURSE CONTEXT (if applicable)",
       "moduleNumber": 1,
       "stageHint": 5,
+      "executionMode": "confirm",
       "title": "Short label describing this proposed change",
-      "rationale": "Why this fixes the issue or improves alignment/QA",
+      "rationale": "Why this fixes the issue or satisfies the request",
       "beforePreview": "Optional current snippet",
       "afterPreview": "Proposed updated text",
       "patchPayload": { "explanation": "..." },
@@ -1142,6 +1178,7 @@ Return JSON:
     outcome: 3,
     assessment_item: 4,
     lesson: 5,
+    module_content: 5,
     scenario: 5,
     case_study: 5,
     knowledge_check: 5,
@@ -1152,6 +1189,7 @@ Return JSON:
       ? parsed.proposedChanges.map((p: any, idx: number) => ({
           ...p,
           id: p.id || `prop-${Date.now()}-${idx}`,
+          executionMode: p.executionMode === 'direct' ? 'direct' : 'confirm',
           stageHint:
             p.stageHint && p.stageHint >= 1 && p.stageHint <= 7
               ? p.stageHint

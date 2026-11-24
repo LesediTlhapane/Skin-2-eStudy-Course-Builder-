@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   AlertTriangle,
+  CheckCircle2,
   FileUp,
   Loader2,
   Plus,
@@ -37,6 +38,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
   const [manualTitle, setManualTitle] = useState('');
   const [manualRef, setManualRef] = useState('');
   const [manualText, setManualText] = useState('');
+  const [verifierPrompts, setVerifierPrompts] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
@@ -82,6 +84,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
         throw new Error(data.error || 'Failed to analyse source.');
       }
 
+      // All uploaded / AI-parsed sources MUST start as NEEDS REVIEW until human verification.
       const newSource: SourceDocument = {
         id: `src-${Date.now()}`,
         title: data.metadata?.title || file.name,
@@ -93,7 +96,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
         mimeType: file.type,
         extractedText: data.extractedText || rawText || '',
         relevantSections: data.metadata?.relevantSections || [],
-        verificationStatus: data.metadata?.verificationStatus || 'VERIFIED',
+        verificationStatus: 'NEEDS REVIEW',
         summary: data.metadata?.summary,
         keyTopics: data.metadata?.keyTopics || [],
         addedAt: new Date().toISOString(),
@@ -135,7 +138,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
       referenceOrUrl: manualRef.trim() || 'Manual entry',
       extractedText: manualText.trim(),
       relevantSections: [],
-      verificationStatus: manualText.trim() ? 'VERIFIED' : 'NEEDS REVIEW',
+      verificationStatus: 'NEEDS REVIEW',
       addedAt: new Date().toISOString(),
     };
     onUpdateProject(prev => ({
@@ -154,6 +157,30 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
     }));
   };
 
+  const handleStatusChange = (src: SourceDocument, nextStatus: SourceVerificationStatus) => {
+    setErrorMsg(null);
+    if (nextStatus === 'VERIFIED') {
+      const verifier = (src.verifiedBy || verifierPrompts[src.id] || '').trim();
+      if (!verifier) {
+        setErrorMsg(
+          `Enter a human reviewer/verifier name on "${src.title}" before marking it VERIFIED.`
+        );
+        return;
+      }
+      updateSource(src.id, {
+        verificationStatus: 'VERIFIED',
+        verifiedBy: verifier,
+        verifiedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    updateSource(src.id, {
+      verificationStatus: nextStatus,
+      verifiedAt: undefined,
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col shadow-xl">
@@ -161,7 +188,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
           <div>
             <h2 className="text-lg font-bold text-[#052B66]">Source Register & Document Analysis</h2>
             <p className="text-xs text-slate-500">
-              Upload PDF, DOCX, or TXT references. AI checks metadata and flags inter-source contradictions.
+              All newly added sources default to NEEDS REVIEW until a human reviewer verifies authority and dates.
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 cursor-pointer">
@@ -180,7 +207,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
               className="hidden"
             />
             <div className="text-xs text-slate-600">
-              Upload technical manuals, legislation, policies, or approved reference materials.
+              Upload technical manuals, legislation, policies, or approved reference materials (max 4 MB).
             </div>
             <button
               type="button"
@@ -266,79 +293,117 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
             <h3 className="text-sm font-bold text-[#052B66]">
               Registered Sources ({project.sources.length})
             </h3>
-            {project.sources.map(src => (
-              <div key={src.id} className="border border-slate-200 rounded-lg p-4 space-y-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="text"
-                    value={src.title}
-                    onChange={e => updateSource(src.id, { title: e.target.value })}
-                    className="flex-1 min-w-[200px] px-2.5 py-1 text-sm font-bold text-[#052B66] border border-slate-200 rounded"
-                  />
-                  <select
-                    value={src.verificationStatus}
-                    onChange={e =>
-                      updateSource(src.id, { verificationStatus: e.target.value as SourceVerificationStatus })
-                    }
-                    className={`px-2.5 py-1 text-xs font-bold border rounded ${
-                      src.verificationStatus === 'VERIFIED'
-                        ? 'text-emerald-700 border-emerald-300 bg-emerald-50'
-                        : src.verificationStatus === 'NEEDS REVIEW'
-                        ? 'text-amber-700 border-amber-300 bg-amber-50'
-                        : 'text-red-700 border-red-300 bg-red-50'
-                    }`}
-                  >
-                    <option value="VERIFIED">VERIFIED</option>
-                    <option value="NEEDS REVIEW">NEEDS REVIEW</option>
-                    <option value="UNSUPPORTED">UNSUPPORTED</option>
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onUpdateProject(prev => ({
-                        ...prev,
-                        sources: prev.sources.filter(s => s.id !== src.id),
-                      }))
-                    }
-                    className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+            {project.sources.map(src => {
+              const verifierVal = src.verifiedBy ?? verifierPrompts[src.id] ?? '';
+              return (
+                <div key={src.id} className="border border-slate-200 rounded-lg p-4 space-y-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={src.title}
+                      onChange={e => updateSource(src.id, { title: e.target.value })}
+                      className="flex-1 min-w-[200px] px-2.5 py-1 text-sm font-bold text-[#052B66] border border-slate-200 rounded"
+                    />
+                    <select
+                      aria-label={`Verification status for ${src.title}`}
+                      value={src.verificationStatus}
+                      onChange={e =>
+                        handleStatusChange(src, e.target.value as SourceVerificationStatus)
+                      }
+                      className={`px-2.5 py-1 text-xs font-bold border rounded ${
+                        src.verificationStatus === 'VERIFIED'
+                          ? 'text-emerald-700 border-emerald-300 bg-emerald-50'
+                          : src.verificationStatus === 'NEEDS REVIEW'
+                          ? 'text-amber-700 border-amber-300 bg-amber-50'
+                          : 'text-red-700 border-red-300 bg-red-50'
+                      }`}
+                    >
+                      <option value="NEEDS REVIEW">NEEDS REVIEW</option>
+                      <option value="VERIFIED">VERIFIED</option>
+                      <option value="UNSUPPORTED">UNSUPPORTED</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateProject(prev => ({
+                          ...prev,
+                          sources: prev.sources.filter(s => s.id !== src.id),
+                        }))
+                      }
+                      className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
-                  <input
-                    type="text"
-                    value={src.authorOrOrganisation}
-                    onChange={e => updateSource(src.id, { authorOrOrganisation: e.target.value })}
-                    placeholder="Author / Organisation"
-                    className="px-2 py-1 border border-slate-200 rounded"
-                  />
-                  <input
-                    type="text"
-                    value={src.publicationDate}
-                    onChange={e => updateSource(src.id, { publicationDate: e.target.value })}
-                    placeholder="Publication Date"
-                    className="px-2 py-1 border border-slate-200 rounded"
-                  />
-                  <input
-                    type="text"
-                    value={src.version}
-                    onChange={e => updateSource(src.id, { version: e.target.value })}
-                    placeholder="Version"
-                    className="px-2 py-1 border border-slate-200 rounded"
-                  />
-                  <input
-                    type="text"
-                    value={src.referenceOrUrl}
-                    onChange={e => updateSource(src.id, { referenceOrUrl: e.target.value })}
-                    placeholder="URL / Document Reference"
-                    className="px-2 py-1 border border-slate-200 rounded"
-                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
+                    <input
+                      type="text"
+                      value={src.authorOrOrganisation}
+                      onChange={e => updateSource(src.id, { authorOrOrganisation: e.target.value })}
+                      placeholder="Author / Organisation"
+                      className="px-2 py-1 border border-slate-200 rounded"
+                    />
+                    <input
+                      type="text"
+                      value={src.publicationDate}
+                      onChange={e => updateSource(src.id, { publicationDate: e.target.value })}
+                      placeholder="Publication Date"
+                      className="px-2 py-1 border border-slate-200 rounded"
+                    />
+                    <input
+                      type="text"
+                      value={src.version}
+                      onChange={e => updateSource(src.id, { version: e.target.value })}
+                      placeholder="Version"
+                      className="px-2 py-1 border border-slate-200 rounded"
+                    />
+                    <input
+                      type="text"
+                      value={src.referenceOrUrl}
+                      onChange={e => updateSource(src.id, { referenceOrUrl: e.target.value })}
+                      placeholder="URL / Document Reference"
+                      className="px-2 py-1 border border-slate-200 rounded"
+                    />
+                  </div>
+
+                  {/* Human Verifier Gate Row */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1 bg-[#F5F7FA] px-2.5 py-2 rounded border border-slate-200 text-xs">
+                    <input
+                      type="text"
+                      value={verifierVal}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setVerifierPrompts(prev => ({ ...prev, [src.id]: val }));
+                        updateSource(src.id, { verifiedBy: val });
+                      }}
+                      placeholder="Human verifier full name (required for VERIFIED)..."
+                      className="flex-1 min-w-[200px] px-2 py-1 text-xs bg-white border border-slate-200 rounded"
+                    />
+                    {src.verificationStatus !== 'VERIFIED' ? (
+                      <button
+                        type="button"
+                        disabled={!verifierVal.trim()}
+                        onClick={() => handleStatusChange(src, 'VERIFIED')}
+                        className="px-2.5 py-1 rounded bg-[#052B66] disabled:opacity-40 text-white font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#45CC42]" />
+                        <span>Verify Source</span>
+                      </button>
+                    ) : (
+                      <span className="text-[11px] font-semibold text-emerald-700">
+                        Verified by {src.verifiedBy || 'Reviewer'}
+                        {src.verifiedAt
+                          ? ` on ${new Date(src.verifiedAt).toLocaleDateString('en-ZA')}`
+                          : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  {src.summary && <p className="text-xs text-slate-600">{src.summary}</p>}
                 </div>
-                {src.summary && <p className="text-xs text-slate-600">{src.summary}</p>}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Add Manual Reference */}
@@ -364,7 +429,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
               rows={2}
               value={manualText}
               onChange={e => setManualText(e.target.value)}
-              placeholder="Paste relevant verified excerpt (optional)..."
+              placeholder="Paste relevant excerpt (starts as NEEDS REVIEW until verified)..."
               className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded"
             />
             <button

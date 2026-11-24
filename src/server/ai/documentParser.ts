@@ -1,8 +1,17 @@
 import zlib from 'zlib';
 
+export const MAX_UPLOAD_BYTES = 4_500_000;
+export const MAX_INFLATE_BYTES = 4 * 1024 * 1024;
+export const MAX_ZIP_ENTRIES = 250;
+export const MAX_EXTRACTED_CHARS = 200_000;
+
 export function extractTextFromDocxBuffer(buffer: Buffer): string {
   try {
+    if (buffer.length > MAX_UPLOAD_BYTES) {
+      throw new Error('Uploaded DOCX exceeds the 4.5 MB size limit.');
+    }
     let offset = 0;
+    let entryCount = 0;
     const textParts: string[] = [];
 
     while (offset + 30 <= buffer.length) {
@@ -12,12 +21,21 @@ export function extractTextFromDocxBuffer(buffer: Buffer): string {
         continue;
       }
 
+      entryCount++;
+      if (entryCount > MAX_ZIP_ENTRIES) {
+        throw new Error('Invalid request: ZIP/DOCX archive contains too many entries.');
+      }
+
       const compressionMethod = buffer.readUInt16LE(offset + 8);
       const compressedSize = buffer.readUInt32LE(offset + 18);
+      const uncompressedSize = buffer.readUInt32LE(offset + 22);
       const fileNameLength = buffer.readUInt16LE(offset + 26);
       const extraFieldLength = buffer.readUInt16LE(offset + 28);
       const dataStart = offset + 30 + fileNameLength + extraFieldLength;
       if (dataStart > buffer.length) break;
+      if (uncompressedSize > MAX_INFLATE_BYTES) {
+        throw new Error('Invalid request: archive entry exceeds safe uncompressed size limit.');
+      }
 
       const entryName = buffer
         .subarray(offset + 30, offset + 30 + fileNameLength)
@@ -41,17 +59,27 @@ export function extractTextFromDocxBuffer(buffer: Buffer): string {
 
         let xmlContent = '';
         if (compressionMethod === 0) {
+          if (compressedSlice.length > MAX_INFLATE_BYTES) {
+            throw new Error('Invalid request: uncompressed XML entry exceeds safe limit.');
+          }
           xmlContent = compressedSlice.toString('utf8');
         } else if (compressionMethod === 8) {
           try {
-            xmlContent = zlib.inflateRawSync(compressedSlice).toString('utf8');
-          } catch {
+            xmlContent = zlib
+              .inflateRawSync(compressedSlice, { maxOutputLength: MAX_INFLATE_BYTES })
+              .toString('utf8');
+          } catch (inflateErr: any) {
+            if (String(inflateErr?.code) === 'ERR_BUFFER_TOO_LARGE') {
+              throw new Error('Invalid request: DOCX content exceeds safe decompression limit.');
+            }
             const nextHeader = buffer.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]), dataStart);
             const endIdx = nextHeader > dataStart ? nextHeader : buffer.length;
             for (let trim = 0; trim <= 24 && endIdx - trim > dataStart; trim++) {
               try {
                 xmlContent = zlib
-                  .inflateRawSync(buffer.subarray(dataStart, endIdx - trim))
+                  .inflateRawSync(buffer.subarray(dataStart, endIdx - trim), {
+                    maxOutputLength: MAX_INFLATE_BYTES,
+                  })
                   .toString('utf8');
                 break;
               } catch {
@@ -81,15 +109,21 @@ export function extractTextFromDocxBuffer(buffer: Buffer): string {
       offset = dataStart + Math.max(1, compressedSize);
     }
 
-    return textParts.join('\n\n').trim();
-  } catch (err) {
-    console.warn('DOCX extraction warning:', err);
+    return textParts.join('\n\n').trim().slice(0, MAX_EXTRACTED_CHARS);
+  } catch (err: any) {
+    if (String(err?.message || '').includes('Invalid request')) {
+      throw err;
+    }
+    console.warn('DOCX extraction warning:', err?.message || err);
     return '';
   }
 }
 
 export function extractTextFromPdfBuffer(buffer: Buffer): string {
   try {
+    if (buffer.length > MAX_UPLOAD_BYTES) {
+      throw new Error('Invalid request: PDF exceeds the 4.5 MB size limit.');
+    }
     const rawStr = buffer.toString('latin1');
     const chunks: string[] = [];
 
@@ -128,12 +162,16 @@ export function extractTextFromPdfBuffer(buffer: Buffer): string {
 
     const streamRegex = /stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g;
     let match: RegExpExecArray | null;
-    while ((match = streamRegex.exec(rawStr)) !== null) {
+    let streamCount = 0;
+    while ((match = streamRegex.exec(rawStr)) !== null && streamCount < 400) {
+      streamCount++;
       const streamContent = match[1];
       const streamBuf = Buffer.from(streamContent, 'latin1');
       let decompressed = '';
       try {
-        decompressed = zlib.inflateSync(streamBuf).toString('latin1');
+        decompressed = zlib
+          .inflateSync(streamBuf, { maxOutputLength: MAX_INFLATE_BYTES })
+          .toString('latin1');
       } catch {
         decompressed = streamContent;
       }
@@ -149,7 +187,7 @@ export function extractTextFromPdfBuffer(buffer: Buffer): string {
       .trim();
 
     if (joined.length >= 60) {
-      return joined;
+      return joined.slice(0, MAX_EXTRACTED_CHARS);
     }
 
     // Fallback: extract printable ASCII sequences if PDF uses simple literal streams
@@ -158,8 +196,11 @@ export function extractTextFromPdfBuffer(buffer: Buffer): string {
       s => !/^(obj|endobj|stream|endstream|xref|trailer|FlateDecode|FontDescriptor)/.test(s)
     );
     return filtered.join('\n').slice(0, 40000);
-  } catch (err) {
-    console.warn('PDF extraction warning:', err);
+  } catch (err: any) {
+    if (String(err?.message || '').includes('Invalid request')) {
+      throw err;
+    }
+    console.warn('PDF extraction warning:', err?.message || err);
     return '';
   }
 }
@@ -171,11 +212,20 @@ export function extractUploadedDocumentText(params: {
   rawText?: string;
 }): string {
   if (params.rawText && params.rawText.trim()) {
-    return params.rawText.trim();
+    return params.rawText.trim().slice(0, MAX_EXTRACTED_CHARS);
   }
   if (!params.base64Data) return '';
 
-  const buffer = Buffer.from(params.base64Data, 'base64');
+  const compactB64 = params.base64Data.replace(/\s+/g, '');
+  if (compactB64.length > Math.ceil((MAX_UPLOAD_BYTES * 4) / 3) + 16) {
+    throw new Error('Invalid request: Uploaded file exceeds the 4.5 MB limit.');
+  }
+
+  const buffer = Buffer.from(compactB64, 'base64');
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    throw new Error('Invalid request: Uploaded file exceeds the 4.5 MB limit.');
+  }
+
   const lowerName = params.fileName.toLowerCase();
   const mime = (params.mimeType || '').toLowerCase();
 
@@ -191,5 +241,5 @@ export function extractUploadedDocumentText(params: {
     return extractTextFromPdfBuffer(buffer);
   }
 
-  return buffer.toString('utf8').trim();
+  return buffer.toString('utf8').trim().slice(0, MAX_EXTRACTED_CHARS);
 }

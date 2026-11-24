@@ -1,6 +1,7 @@
 import type {
   CopilotProposedChange,
   CourseProject,
+  SelectedTextContext,
   WorkflowStage,
 } from '../types';
 import { computeFullAlignmentReport } from './alignmentHelpers';
@@ -117,6 +118,7 @@ export function resolveProposalTargetLocation(
     outcome: 3,
     assessment_item: 4,
     lesson: 5,
+    module_content: 5,
     scenario: 5,
     case_study: 5,
     knowledge_check: 5,
@@ -881,10 +883,315 @@ export function applyCopilotProposal(
     };
   }
 
+  /* -------------------- 9. MODULE CONTENT (INTRO / SUMMARY / OBJECTIVES) -------------------- */
+  if (proposal.targetType === 'module_content') {
+    const normalizedPatch: Record<string, any> = { ...patch };
+    if (
+      normalizedPatch.introduction === undefined &&
+      normalizedPatch.summary === undefined &&
+      !Array.isArray(normalizedPatch.learningObjectives) &&
+      !Array.isArray(normalizedPatch.furtherLearningResources) &&
+      proposal.afterPreview
+    ) {
+      if (titleNorm.includes('summary')) normalizedPatch.summary = proposal.afterPreview;
+      else normalizedPatch.introduction = proposal.afterPreview;
+    }
+
+    const matchedMod =
+      project.content.modules.find(
+        m =>
+          (loc.moduleId && (m.moduleId === loc.moduleId || m.id === loc.moduleId)) ||
+          (targetIdNorm &&
+            (normalizeStr(m.id) === targetIdNorm || normalizeStr(m.moduleId) === targetIdNorm)) ||
+          (loc.moduleNumber !== undefined && m.moduleNumber === loc.moduleNumber)
+      ) || undefined;
+
+    if (matchedMod) {
+      const nextMods = project.content.modules.map(cm =>
+        cm.moduleId === matchedMod.moduleId
+          ? {
+              ...cm,
+              ...(typeof normalizedPatch.introduction === 'string'
+                ? { introduction: normalizedPatch.introduction }
+                : {}),
+              ...(typeof normalizedPatch.summary === 'string'
+                ? { summary: normalizedPatch.summary }
+                : {}),
+              ...(Array.isArray(normalizedPatch.learningObjectives)
+                ? { learningObjectives: normalizedPatch.learningObjectives }
+                : {}),
+              ...(Array.isArray(normalizedPatch.furtherLearningResources)
+                ? { furtherLearningResources: normalizedPatch.furtherLearningResources }
+                : {}),
+              editStatus: 'human_edited' as const,
+            }
+          : cm
+      );
+      return {
+        ...loc,
+        stage: 5,
+        moduleNumber: matchedMod.moduleNumber,
+        moduleId: matchedMod.moduleId,
+        matchedTargetId: matchedMod.id,
+        stageLabel: `Stage 5 · Module ${matchedMod.moduleNumber}`,
+        nextProject: {
+          ...project,
+          content: { ...project.content, modules: nextMods, approval: { approved: false } },
+        },
+        applied: true,
+        detail: `Updated Module ${matchedMod.moduleNumber} overview/summary in Stage 5.`,
+      };
+    }
+
+    return {
+      ...loc,
+      stage: 5,
+      stageLabel: 'Stage 5 · Learning Content',
+      nextProject: project,
+      applied: false,
+      detail: 'Could not locate generated Stage 5 module content. Generate Module content first or jump to Stage 5.',
+    };
+  }
+
   return {
     ...loc,
     nextProject: project,
     applied: false,
     detail: 'Unsupported proposal target. Jump to the affected stage to edit or regenerate.',
+  };
+}
+
+export function applySelectedTextReplacement(
+  project: CourseProject,
+  selectedCtx: SelectedTextContext,
+  replacementText: string
+): { nextProject: CourseProject; applied: boolean; detail: string } {
+  const snippet = selectedCtx.text.trim();
+  const nextVal = replacementText.trim();
+  if (!snippet || !nextVal) {
+    return { nextProject: project, applied: false, detail: 'Empty selection or replacement text.' };
+  }
+
+  const replaceOnce = (source: string): string | null => {
+    if (!source) return null;
+    if (source.includes(snippet)) {
+      return source.replace(snippet, nextVal);
+    }
+    const compactSnippet = snippet.replace(/\s+/g, ' ');
+    const escaped = compactSnippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
+    const re = new RegExp(escaped);
+    if (re.test(source)) {
+      return source.replace(re, nextVal);
+    }
+    return null;
+  };
+
+  // Search Stage 5 generated content first
+  for (const mod of project.content.modules) {
+    if (selectedCtx.moduleNumber && mod.moduleNumber !== selectedCtx.moduleNumber) continue;
+    const introHit = replaceOnce(mod.introduction);
+    if (introHit !== null) {
+      return {
+        applied: true,
+        detail: `Replaced selected text in Module ${mod.moduleNumber} introduction.`,
+        nextProject: {
+          ...project,
+          content: {
+            ...project.content,
+            approval: { approved: false },
+            modules: project.content.modules.map(m =>
+              m.moduleId === mod.moduleId
+                ? { ...m, introduction: introHit, editStatus: 'human_edited' }
+                : m
+            ),
+          },
+        },
+      };
+    }
+    const sumHit = replaceOnce(mod.summary);
+    if (sumHit !== null) {
+      return {
+        applied: true,
+        detail: `Replaced selected text in Module ${mod.moduleNumber} summary.`,
+        nextProject: {
+          ...project,
+          content: {
+            ...project.content,
+            approval: { approved: false },
+            modules: project.content.modules.map(m =>
+              m.moduleId === mod.moduleId ? { ...m, summary: sumHit, editStatus: 'human_edited' } : m
+            ),
+          },
+        },
+      };
+    }
+    for (const les of mod.lessons) {
+      for (const field of ['explanation', 'practicalApplication', 'guidedActivity', 'title'] as const) {
+        const hit = replaceOnce(les[field]);
+        if (hit !== null) {
+          return {
+            applied: true,
+            detail: `Replaced selected text in Lesson "${les.title}" (${field}).`,
+            nextProject: {
+              ...project,
+              content: {
+                ...project.content,
+                approval: { approved: false },
+                modules: project.content.modules.map(m =>
+                  m.moduleId === mod.moduleId
+                    ? {
+                        ...m,
+                        lessons: m.lessons.map(l =>
+                          l.id === les.id ? { ...l, [field]: hit, editStatus: 'human_edited' } : l
+                        ),
+                      }
+                    : m
+                ),
+              },
+            },
+          };
+        }
+      }
+    }
+    for (const sc of mod.scenarios) {
+      for (const field of ['situation', 'challenge', 'decisionPrompt', 'modelDebrief', 'keyTakeaway'] as const) {
+        const hit = replaceOnce(sc[field]);
+        if (hit !== null) {
+          return {
+            applied: true,
+            detail: `Replaced selected text in Scenario "${sc.title}".`,
+            nextProject: {
+              ...project,
+              content: {
+                ...project.content,
+                approval: { approved: false },
+                modules: project.content.modules.map(m =>
+                  m.moduleId === mod.moduleId
+                    ? {
+                        ...m,
+                        scenarios: m.scenarios.map(s =>
+                          s.id === sc.id ? { ...s, [field]: hit } : s
+                        ),
+                      }
+                    : m
+                ),
+              },
+            },
+          };
+        }
+      }
+    }
+    for (const cs of mod.workplaceCaseStudies) {
+      for (const field of ['background', 'facilitatorNotes'] as const) {
+        const hit = replaceOnce(cs[field]);
+        if (hit !== null) {
+          return {
+            applied: true,
+            detail: `Replaced selected text in Case Study "${cs.title}".`,
+            nextProject: {
+              ...project,
+              content: {
+                ...project.content,
+                approval: { approved: false },
+                modules: project.content.modules.map(m =>
+                  m.moduleId === mod.moduleId
+                    ? {
+                        ...m,
+                        workplaceCaseStudies: m.workplaceCaseStudies.map(c =>
+                          c.id === cs.id ? { ...c, [field]: hit } : c
+                        ),
+                      }
+                    : m
+                ),
+              },
+            },
+          };
+        }
+      }
+    }
+  }
+
+  // Search Stage 4 assessment items
+  for (const it of project.assessments.items) {
+    for (const field of ['promptOrQuestion', 'instructions', 'modelAnswer', 'markingGuide'] as const) {
+      const hit = replaceOnce(it[field] || '');
+      if (hit !== null) {
+        return {
+          applied: true,
+          detail: `Replaced selected text in Assessment "${it.title}".`,
+          nextProject: {
+            ...project,
+            assessments: {
+              ...project.assessments,
+              approval: { approved: false },
+              items: project.assessments.items.map(x =>
+                x.id === it.id ? { ...x, [field]: hit } : x
+              ),
+            },
+          },
+        };
+      }
+    }
+  }
+
+  // Search Stage 3 outcomes
+  for (const co of project.outcomes.courseOutcomes) {
+    const hit = replaceOnce(co.statement);
+    if (hit !== null) {
+      return {
+        applied: true,
+        detail: `Replaced selected text in outcome ${co.code}.`,
+        nextProject: {
+          ...project,
+          outcomes: {
+            ...project.outcomes,
+            approval: { approved: false },
+            courseOutcomes: project.outcomes.courseOutcomes.map(x =>
+              x.id === co.id ? { ...x, statement: hit } : x
+            ),
+          },
+        },
+      };
+    }
+  }
+  for (const mo of project.outcomes.moduleOutcomes) {
+    const hit = replaceOnce(mo.statement);
+    if (hit !== null) {
+      return {
+        applied: true,
+        detail: `Replaced selected text in outcome ${mo.code}.`,
+        nextProject: {
+          ...project,
+          outcomes: {
+            ...project.outcomes,
+            approval: { approved: false },
+            moduleOutcomes: project.outcomes.moduleOutcomes.map(x =>
+              x.id === mo.id ? { ...x, statement: hit } : x
+            ),
+          },
+        },
+      };
+    }
+  }
+
+  // Search Stage 1 non-locked descriptive fields
+  for (const field of ['purpose', 'workplaceProblem', 'learningRequirements', 'subjectTopicsInput'] as const) {
+    const hit = replaceOnce(project.brief[field]);
+    if (hit !== null) {
+      return {
+        applied: true,
+        detail: `Replaced selected text in Stage 1 Brief (${field}).`,
+        nextProject: {
+          ...project,
+          brief: { ...project.brief, [field]: hit, approval: { approved: false } },
+        },
+      };
+    }
+  }
+
+  return {
+    nextProject: project,
+    applied: false,
+    detail: 'Could not locate the exact selected snippet cleanly (it may be protected metadata or already modified).',
   };
 }

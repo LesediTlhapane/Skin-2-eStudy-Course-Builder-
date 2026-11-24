@@ -70,9 +70,12 @@ export default function App() {
           project={store.activeProject}
           template={activeTemplate}
           saveState={store.saveState}
+          lastSavedAt={store.lastSavedAt}
+          saveError={store.saveError}
           selectedProvider={store.selectedProvider}
           selectedModel={store.selectedModel}
           onBackToDashboard={() => store.setRoute('dashboard')}
+          onFlushSaveNow={store.flushSaveNow}
           onUpdateProject={(updater, snapshot) =>
             store.updateProject(store.activeProject!.id, updater, snapshot)
           }

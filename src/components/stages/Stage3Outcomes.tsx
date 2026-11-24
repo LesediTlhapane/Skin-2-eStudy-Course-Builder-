@@ -32,6 +32,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
   onApproveAndContinue,
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const outcomes = project.outcomes;
 
@@ -46,7 +47,14 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
     }));
   };
 
-  const handleGenerateOutcomes = async () => {
+  const handleGenerateOutcomes = async (confirmed = false) => {
+    const hasExisting =
+      outcomes.courseOutcomes.length > 0 || outcomes.moduleOutcomes.length > 0;
+    if (hasExisting && !confirmed) {
+      setConfirmOverwrite(true);
+      return;
+    }
+    setConfirmOverwrite(false);
     setIsGenerating(true);
     setErrorMsg(null);
     try {
@@ -151,7 +159,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
         <button
           type="button"
           disabled={isGenerating || project.curriculum.modules.length === 0}
-          onClick={handleGenerateOutcomes}
+          onClick={() => handleGenerateOutcomes(false)}
           className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
         >
           {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />}
@@ -162,6 +170,30 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
           </span>
         </button>
       </div>
+
+      {confirmOverwrite && (
+        <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-950">
+          <div>
+            <strong>Confirm Outcomes Regeneration:</strong> Regenerating will replace your existing {outcomes.courseOutcomes.length} CLO(s) and {outcomes.moduleOutcomes.length} MLO(s) and reset outcome approval.
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleGenerateOutcomes(true)}
+              className="px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white font-bold cursor-pointer"
+            >
+              Confirm Regenerate
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmOverwrite(false)}
+              className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-900 font-semibold cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">

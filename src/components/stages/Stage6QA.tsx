@@ -5,7 +5,9 @@ import {
   CheckCircle2,
   Eye,
   FlaskConical,
+  Info,
   Loader2,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   Wrench,
@@ -14,11 +16,13 @@ import type {
   AIProvider,
   CourseProject,
   QADimensionWeight,
+  QAIssueItem,
   RoleSignOffRecord,
   WorkflowStage,
 } from '../../types';
 import { DEFAULT_QA_WEIGHTS } from '../../data/templates';
 import { computeFullAlignmentReport } from '../../utils/alignmentHelpers';
+import { runStructuralAndConsistencyAudit } from '../../utils/courseValidation';
 import {
   runAccessibilityChecks,
   runTechnicalValidationChecks,
@@ -85,6 +89,34 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
   const liveAccessibility = useMemo(() => runAccessibilityChecks(project), [project]);
   const liveTechnical = useMemo(() => runTechnicalValidationChecks(project), [project]);
   const liveAlignment = useMemo(() => computeFullAlignmentReport(project), [project]);
+  const liveStructural = useMemo(() => runStructuralAndConsistencyAudit(project), [project]);
+
+  const isQaStale = Boolean(
+    qa && (!qa.evaluatedDataSignature || qa.evaluatedDataSignature !== liveStructural.dataSignature)
+  );
+
+  // Merge live structural blockers with any AI-identified critical issues when QA is fresh
+  const activeBlockingErrors: QAIssueItem[] = useMemo(() => {
+    if (!qa) return liveStructural.blockingErrors;
+    if (!isQaStale && Array.isArray(qa.blockingErrors)) {
+      return qa.blockingErrors;
+    }
+    return liveStructural.blockingErrors;
+  }, [qa, isQaStale, liveStructural.blockingErrors]);
+
+  const activeWarnings: QAIssueItem[] = useMemo(() => {
+    if (!qa || isQaStale || !Array.isArray(qa.warnings)) {
+      return liveStructural.warnings;
+    }
+    return qa.warnings;
+  }, [qa, isQaStale, liveStructural.warnings]);
+
+  const activeInfo: QAIssueItem[] = useMemo(() => {
+    if (!qa || isQaStale || !Array.isArray(qa.informationalFeedback)) {
+      return liveStructural.informationalFeedback;
+    }
+    return qa.informationalFeedback;
+  }, [qa, isQaStale, liveStructural.informationalFeedback]);
 
   const roles = qa?.humanSignOff.roles || {
     sme: { signedOff: false, reviewerName: '' },
@@ -107,8 +139,11 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
       };
       const allRolesSigned =
         updatedRoles.sme.signedOff &&
+        Boolean(updatedRoles.sme.reviewerName.trim()) &&
         updatedRoles.instructionalDesigner.signedOff &&
-        updatedRoles.complianceAuthorizer.signedOff;
+        Boolean(updatedRoles.instructionalDesigner.reviewerName.trim()) &&
+        updatedRoles.complianceAuthorizer.signedOff &&
+        Boolean(updatedRoles.complianceAuthorizer.reviewerName.trim());
 
       const combinedNames = [
         updatedRoles.sme.reviewerName && `SME: ${updatedRoles.sme.reviewerName}`,
@@ -165,7 +200,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           latestQA: report,
           qaHistory: [report, ...prev.qaHistory],
           lifecycleStatus:
-            report.verdict === 'FAIL' || report.verdict === 'REVISION REQUIRED'
+            report.verdict === 'FAIL'
               ? 'revision_required'
               : 'awaiting_review',
         }),
@@ -174,6 +209,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           summary: `Executed Stage 6 QA: ${report.verdict} (${report.weightedScore}%)`,
         }
       );
+      setRepairNotice(null);
     } catch (err: any) {
       setErrorMsg(err?.message || 'QA audit failed.');
     } finally {
@@ -191,138 +227,72 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
   const handleAutoRepairAlignment = () => {
     setRepairNotice(null);
-    onUpdateProject(
-      prev => {
-        const courseOutcomeIds = prev.outcomes.courseOutcomes.map(c => c.id);
-        const modOutcomesByMod = new Map<string, string[]>();
-        for (const mo of prev.outcomes.moduleOutcomes) {
-          if (!mo.moduleId) continue;
-          const list = modOutcomesByMod.get(mo.moduleId) || [];
-          list.push(mo.id);
-          modOutcomesByMod.set(mo.moduleId, list);
-        }
+    onUpdateProject(prev => {
+      const courseOutcomeIds = prev.outcomes.courseOutcomes.map(c => c.id);
+      const modOutcomesByMod = new Map<string, string[]>();
+      for (const mo of prev.outcomes.moduleOutcomes) {
+        if (!mo.moduleId) continue;
+        const list = modOutcomesByMod.get(mo.moduleId) || [];
+        list.push(mo.id);
+        modOutcomesByMod.set(mo.moduleId, list);
+      }
 
-        const nextCurriculumModules = prev.curriculum.modules.map(pm => {
-          const fallbackIds = Array.from(
-            new Set([...(modOutcomesByMod.get(pm.id) || []), ...courseOutcomeIds.slice(0, 2)])
-          );
-          return {
-            ...pm,
-            lessons: pm.lessons.map(pl => ({
-              ...pl,
-              outcomeIds: Array.from(new Set([...(pl.outcomeIds || []), ...fallbackIds])),
-            })),
-          };
-        });
+      const nextCurriculumModules = prev.curriculum.modules.map(pm => {
+        const modMos = modOutcomesByMod.get(pm.id) || [];
+        const fallbackIds = Array.from(new Set([...modMos, ...courseOutcomeIds]));
+        return {
+          ...pm,
+          lessons: pm.lessons.map(pl => ({
+            ...pl,
+            outcomeIds: Array.from(new Set([...(pl.outcomeIds || []), ...fallbackIds])),
+          })),
+        };
+      });
 
-        const nextContentModules = prev.content.modules.map(cm => {
-          const fallbackIds = Array.from(
-            new Set([...(modOutcomesByMod.get(cm.moduleId) || []), ...courseOutcomeIds.slice(0, 2)])
-          );
-          return {
-            ...cm,
-            lessons: cm.lessons.map(gl => ({
-              ...gl,
-              outcomeIds: Array.from(new Set([...(gl.outcomeIds || []), ...fallbackIds])),
-            })),
-          };
-        });
+      const nextContentModules = prev.content.modules.map(cm => {
+        const modMos = modOutcomesByMod.get(cm.moduleId) || [];
+        const fallbackIds = Array.from(new Set([...modMos, ...courseOutcomeIds]));
+        return {
+          ...cm,
+          lessons: cm.lessons.map(gl => ({
+            ...gl,
+            outcomeIds: Array.from(new Set([...(gl.outcomeIds || []), ...fallbackIds])),
+          })),
+        };
+      });
 
-        // Also ensure every outcome has at least one assessment linked (if assessments exist)
-        const nextItems = [...prev.assessments.items];
-        if (nextItems.length > 0) {
-          const allOuts = [...prev.outcomes.courseOutcomes, ...prev.outcomes.moduleOutcomes];
-          for (const out of allOuts) {
-            const alreadyAssessed = nextItems.some(it => it.outcomeIds.includes(out.id));
-            if (!alreadyAssessed) {
-              const targetIdx =
-                out.moduleId
-                  ? nextItems.findIndex(it => it.moduleId === out.moduleId)
-                  : 0;
-              const idx = targetIdx >= 0 ? targetIdx : 0;
-              nextItems[idx] = {
-                ...nextItems[idx],
-                outcomeIds: Array.from(new Set([...nextItems[idx].outcomeIds, out.id])),
-              };
-            }
+      const nextItems = [...prev.assessments.items];
+      if (nextItems.length > 0) {
+        const allOuts = [...prev.outcomes.courseOutcomes, ...prev.outcomes.moduleOutcomes];
+        for (const out of allOuts) {
+          const alreadyAssessed = nextItems.some(it => it.outcomeIds.includes(out.id));
+          if (!alreadyAssessed) {
+            const targetIdx = out.moduleId
+              ? nextItems.findIndex(it => it.moduleId === out.moduleId)
+              : 0;
+            const idx = targetIdx >= 0 ? targetIdx : 0;
+            nextItems[idx] = {
+              ...nextItems[idx],
+              outcomeIds: Array.from(new Set([...nextItems[idx].outcomeIds, out.id])),
+            };
           }
         }
-
-        const updated: CourseProject = {
-          ...prev,
-          curriculum: { ...prev.curriculum, modules: nextCurriculumModules },
-          content: { ...prev.content, modules: nextContentModules },
-          assessments: { ...prev.assessments, items: nextItems },
-        };
-        const report = computeFullAlignmentReport(updated);
-        updated.assessments.alignmentFlags = report.flags;
-        updated.assessments.alignmentScorePercent = report.scorePercent;
-        return updated;
       }
-    );
-    setRepairNotice(
-      'Updated missing lesson-to-outcome and assessment-to-outcome links. Click "Re-run Quality Assurance" above to refresh your QA verdict.'
-    );
-  };
 
-  const resolveFailureTarget = (item: {
-    id?: string;
-    rule?: string;
-    affectedSection?: string;
-    description?: string;
-    recommendedFix?: string;
-  }): { stage: WorkflowStage; label: string; moduleNumber?: number; reason: string } => {
-    const id = String(item.id || '').toLowerCase();
-    const combined = `${item.rule || ''} ${item.affectedSection || ''} ${item.description || ''}`;
-    const lower = combined.toLowerCase();
-    const modMatch =
-      combined.match(/\b(?:Module|M)\s*(\d+)\b/i) ||
-      combined.match(/\bMLO-(\d+)\.\d+\b/i);
-    const moduleNumber = modMatch ? Number(modMatch[1]) : undefined;
-    const reason = `${item.rule || 'QA Failure'}: ${item.description || ''} ${
-      item.recommendedFix ? `(${item.recommendedFix})` : ''
-    }`.trim();
-
-    if (id.includes('metadata') || lower.includes('stage 1') || lower.includes('brief metadata')) {
-      return { stage: 1, label: 'Stage 1 · Course Brief', reason };
-    }
-    if (
-      id.includes('omitted') ||
-      id.includes('conflict') ||
-      lower.includes('stage 2') ||
-      lower.includes('curriculum') ||
-      lower.includes('omitted topic')
-    ) {
-      return { stage: 2, label: 'Stage 2 · Curriculum', reason };
-    }
-    if (id.includes('vague-outcomes') || lower.includes('stage 3') || lower.includes('vague outcome')) {
-      return { stage: 3, label: 'Stage 3 · Outcomes', reason };
-    }
-    if (
-      (id.includes('assessment') || lower.includes('stage 4') || lower.includes('assessment')) &&
-      !moduleNumber
-    ) {
-      return { stage: 4, label: 'Stage 4 · Assessments & Alignment', reason };
-    }
-    if (moduleNumber) {
-      return {
-        stage: 5,
-        moduleNumber,
-        label: `Stage 5 · Module ${moduleNumber}`,
-        reason,
+      const updated: CourseProject = {
+        ...prev,
+        curriculum: { ...prev.curriculum, modules: nextCurriculumModules },
+        content: { ...prev.content, modules: nextContentModules },
+        assessments: { ...prev.assessments, items: nextItems },
       };
-    }
-    if (
-      id.includes('content') ||
-      id.includes('claims') ||
-      lower.includes('stage 5') ||
-      lower.includes('lesson') ||
-      lower.includes('claim') ||
-      lower.includes('scenario')
-    ) {
-      return { stage: 5, label: 'Stage 5 · Learning Content', reason };
-    }
-    return { stage: 4, label: 'Stage 4 · Assessments & Alignment', reason };
+      const report = computeFullAlignmentReport(updated);
+      updated.assessments.alignmentFlags = report.flags;
+      updated.assessments.alignmentScorePercent = report.scorePercent;
+      return updated;
+    });
+    setRepairNotice(
+      'Linked all course & module outcomes to lessons and assessments. Click "Re-run Quality Assurance" above to refresh your QA score and verdict.'
+    );
   };
 
   const resolveDimensionStage = (dimId: string): WorkflowStage => {
@@ -331,8 +301,15 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     return 5;
   };
 
+  const isReleaseBlocked =
+    !qa ||
+    isQaStale ||
+    activeBlockingErrors.length > 0 ||
+    qa.verdict === 'FAIL' ||
+    !allThreeRolesApproved;
+
   const handleReleaseCourse = () => {
-    if (!qa || qa.verdict === 'FAIL' || !allThreeRolesApproved) return;
+    if (isReleaseBlocked) return;
     onUpdateProject(
       prev => ({
         ...prev,
@@ -355,7 +332,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             Stage 6: Quality Assurance, Accessibility & Multi-Role Sign-Off
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Combines deterministic accessibility, technical source-claim, and 3-way alignment diagnostics with the 7-dimension AI QA framework.
+            Separates release-blocking errors from advisory warnings and informational checks across the 7-dimension QA framework.
           </p>
         </div>
 
@@ -387,6 +364,186 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
         </div>
       )}
 
+      {/* Stale QA Banner */}
+      {isQaStale && qa && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-950">
+          <div className="flex items-start gap-2.5">
+            <RefreshCw className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold">Course Data Changed Since Last QA Audit</div>
+              <p className="text-amber-900 mt-0.5">
+                You edited course content, outcomes, assessments, or sources after the last QA evaluation ({new Date(qa.evaluatedAt).toLocaleTimeString('en-ZA')}). Re-run QA before releasing to Stage 7. Your reviewer names below are preserved.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={isRunning || totalWeight !== 100}
+            onClick={handleRunQA}
+            className="px-3.5 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white font-bold shrink-0 cursor-pointer"
+          >
+            Re-run QA Now
+          </button>
+        </div>
+      )}
+
+      {/* Live Deterministic Readiness Strip (Blocking / Warnings / Info before & after AI QA) */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div
+          className={`rounded-xl border p-4 space-y-2 ${
+            activeBlockingErrors.length > 0
+              ? 'bg-red-50/60 border-red-300'
+              : 'bg-emerald-50/60 border-emerald-200'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[#052B66]">A. Blocking Errors</span>
+            <span
+              className={`text-xs font-mono font-bold ${
+                activeBlockingErrors.length > 0 ? 'text-red-700' : 'text-emerald-700'
+              }`}
+            >
+              {activeBlockingErrors.length}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-600">
+            Issues that prevent Stage 7 publishing until resolved (missing mandatory metadata, untaught/unassessed outcomes, missing modules, placeholders).
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[#052B66]">B. Advisory Warnings</span>
+            <span className="text-xs font-mono font-bold text-amber-700">
+              {activeWarnings.length}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-600">
+            Recommended improvements (duration variance, SME review queue, readability, optional weighting tips). <strong>Do not block publishing.</strong>
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[#052B66]">C. Informational Notes</span>
+            <span className="text-xs font-mono font-bold text-slate-700">
+              {activeInfo.length}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-600">
+            Course readiness metrics, accessibility scope boundaries, and alignment governance notices.
+          </p>
+        </div>
+      </section>
+
+      {/* Blocking Errors List (shown immediately whenever any exist, even before running AI QA) */}
+      {activeBlockingErrors.length > 0 && (
+        <section className="bg-white border border-red-300 rounded-xl p-5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-bold text-red-800">
+              Blocking Errors Preventing Release ({activeBlockingErrors.length})
+            </h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleAutoRepairAlignment}
+                className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Wrench className="w-3.5 h-3.5 text-[#45CC42]" />
+                <span>Auto-Link Unmapped Lessons & Outcomes</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onJumpToStage(4)}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-[#052B66] text-[#052B66] text-xs font-bold cursor-pointer"
+              >
+                Edit Stage 4 Alignment
+              </button>
+            </div>
+          </div>
+
+          {repairNotice && (
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-medium">
+              {repairNotice}
+            </div>
+          )}
+
+          {activeBlockingErrors.map(err => (
+            <div
+              key={err.id}
+              className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-2"
+            >
+              <div className="space-y-1">
+                <div className="font-bold text-red-900">
+                  {err.rule} ({err.affectedSection})
+                </div>
+                <div className="text-red-800">{err.description}</div>
+                <div className="text-slate-700">
+                  <strong>Recommended Fix:</strong> {err.recommendedFix}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  onJumpToStage(err.stage, {
+                    moduleNumber: err.moduleNumber,
+                    reason: `${err.rule}: ${err.description}`,
+                  })
+                }
+                className="px-3 py-1.5 rounded-lg bg-white border border-red-300 hover:border-[#052B66] text-[#052B66] text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+              >
+                <span>Fix in Stage {err.stage}{err.moduleNumber ? ` · M${err.moduleNumber}` : ''}</span>
+                <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* Advisory Warnings Panel (Non-Blocking) */}
+      {activeWarnings.length > 0 && (
+        <section className="bg-white border border-amber-200 rounded-xl p-5 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-bold text-amber-900">
+              Advisory Warnings ({activeWarnings.length}) — Does Not Block Publishing
+            </h3>
+            <span className="text-[11px] font-semibold text-amber-700">Optional improvements</span>
+          </div>
+          <div className="space-y-2">
+            {activeWarnings.map(w => (
+              <div
+                key={w.id}
+                className="p-3 bg-amber-50/60 border border-amber-200 rounded-lg text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-2"
+              >
+                <div className="space-y-0.5">
+                  <div className="font-bold text-amber-950">
+                    {w.rule} ({w.affectedSection})
+                  </div>
+                  <div className="text-amber-900">{w.description}</div>
+                  <div className="text-slate-600">
+                    <strong>Suggestion:</strong> {w.recommendedFix}
+                  </div>
+                </div>
+                {w.stage !== 6 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onJumpToStage(w.stage, {
+                        moduleNumber: w.moduleNumber,
+                        reason: `${w.rule}: ${w.description}`,
+                      })
+                    }
+                    className="px-2.5 py-1 rounded bg-white border border-amber-300 hover:border-[#052B66] text-[#052B66] text-[11px] font-bold shrink-0 cursor-pointer"
+                  >
+                    Review in Stage {w.stage} →
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Deterministic Accessibility & Technical Validation Pre-Audit Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
@@ -401,6 +558,11 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
               {liveAccessibility.scorePercent}% · {liveAccessibility.averageSentenceWords} words/sentence
             </span>
           </div>
+          {liveAccessibility.limitationsNote && (
+            <p className="text-[11px] text-slate-500 bg-[#F5F7FA] p-2.5 rounded border border-slate-200 leading-relaxed">
+              {liveAccessibility.limitationsNote}
+            </p>
+          )}
           <div className="space-y-2">
             {liveAccessibility.checks.map(chk => (
               <div
@@ -432,15 +594,16 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                   <button
                     type="button"
                     onClick={() => {
+                      const targetStage: WorkflowStage = chk.id === 'acc-instructions' ? 4 : 5;
                       const modMatch = (chk.affectedSections[0] || '').match(/\b(?:Module|M)\s*(\d+)\b/i);
-                      onJumpToStage(5, {
+                      onJumpToStage(targetStage, {
                         moduleNumber: modMatch ? Number(modMatch[1]) : undefined,
                         reason: `${chk.label}: ${chk.details}`,
                       });
                     }}
                     className="mt-1 px-2.5 py-1 text-[11px] font-bold text-[#052B66] bg-white border border-slate-200 hover:border-[#052B66] rounded cursor-pointer"
                   >
-                    Fix & Regenerate in Stage 5 →
+                    Fix in Stage {chk.id === 'acc-instructions' ? 4 : 5} →
                   </button>
                 )}
               </div>
@@ -453,7 +616,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             <div className="flex items-center gap-2">
               <FlaskConical className="w-4 h-4 text-[#052B66]" />
               <h3 className="text-sm font-bold text-[#052B66]">
-                Technical & Regulatory Validation Summary
+                Technical & Source Verification Summary
               </h3>
             </div>
             <span className="text-xs font-mono font-bold text-[#052B66]">
@@ -517,12 +680,26 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                   >
                     {chk.id === 'tech-metadata-tbc'
                       ? 'Confirm Metadata in Stage 1 →'
-                      : 'Fix / Regenerate in Stage 5 →'}
+                      : 'Review in Stage 5 →'}
                   </button>
                 )}
               </div>
             ))}
           </div>
+
+          {activeInfo.length > 0 && (
+            <div className="pt-2 border-t border-slate-100 space-y-1.5">
+              <div className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                <Info className="w-3.5 h-3.5 text-[#052B66]" />
+                <span>Informational Feedback</span>
+              </div>
+              {activeInfo.map(info => (
+                <div key={info.id} className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded border border-slate-200">
+                  <strong>{info.rule}:</strong> {info.description}
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </div>
 
@@ -570,11 +747,6 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>{errorMsg}</span>
           </div>
-          {errorMsg.toLowerCase().includes('rate limit') && (
-            <p className="text-[11px] text-red-600 pl-6">
-              Groq Cloud free-tier token-per-minute window resets quickly. Wait 10–15 seconds before clicking again, or switch to Qwen 3.8 27B / GPT OSS 20B in the model selector above.
-            </p>
-          )}
         </div>
       )}
 
@@ -594,7 +766,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-base font-bold text-[#052B66]">
-                QA Outcome: {qa.verdict}
+                QA Outcome: {qa.verdict} {isQaStale ? '(Outdated — Re-run Required)' : ''}
               </div>
               <div className="text-xl font-bold font-mono tabular-nums text-[#052B66]">
                 {qa.weightedScore}%
@@ -602,73 +774,6 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             </div>
             <p className="text-xs text-slate-800 leading-relaxed">{qa.verdictExplanation}</p>
           </section>
-
-          {/* Critical Failures */}
-          {qa.criticalFailures.length > 0 && (
-            <section className="bg-white border border-red-300 rounded-xl p-5 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-bold text-red-800">
-                  Critical Failures Blocking Release ({qa.criticalFailures.length})
-                </h3>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleAutoRepairAlignment}
-                    className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Wrench className="w-3.5 h-3.5 text-[#45CC42]" />
-                    <span>Auto-Link Unmapped Lessons & Outcomes</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onJumpToStage(4)}
-                    className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-[#052B66] text-[#052B66] text-xs font-bold cursor-pointer"
-                  >
-                    Edit Stage 4 Alignment
-                  </button>
-                </div>
-              </div>
-              {repairNotice && (
-                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-medium">
-                  {repairNotice}
-                </div>
-              )}
-              {qa.criticalFailures.map(f => {
-                const target = resolveFailureTarget(f);
-                return (
-                  <div
-                    key={f.id}
-                    className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs space-y-2"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
-                      <div className="space-y-1">
-                        <div className="font-bold text-red-900">
-                          {f.rule} ({f.affectedSection})
-                        </div>
-                        <div className="text-red-800">{f.description}</div>
-                        <div className="text-slate-700">
-                          <strong>Recommended Fix:</strong> {f.recommendedFix}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onJumpToStage(target.stage, {
-                            moduleNumber: target.moduleNumber,
-                            reason: target.reason,
-                          })
-                        }
-                        className="px-3 py-1.5 rounded-lg bg-white border border-red-300 hover:border-[#052B66] text-[#052B66] text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
-                      >
-                        <span>Fix & Regenerate in {target.label}</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </section>
-          )}
 
           {/* Dimension Breakdown */}
           <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
@@ -714,7 +819,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                         }}
                         className="px-2.5 py-1 text-[11px] font-bold bg-[#F5F7FA] border border-slate-200 rounded hover:border-[#052B66] cursor-pointer"
                       >
-                        Fix & Regenerate in Stage {resolveDimensionStage(dim.id)} →
+                        Edit in Stage {resolveDimensionStage(dim.id)} →
                       </button>
                     </div>
                   )}
@@ -773,12 +878,13 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                             : 'bg-white border border-[#052B66] text-[#052B66]'
                         }`}
                       >
-                        {record.signedOff ? 'Approved ✓' : 'Sign Off Role'}
+                        {record.signedOff ? 'Approved ✓ (Click to unlock)' : 'Sign Off Role'}
                       </button>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                       <input
                         type="text"
+                        readOnly={record.signedOff}
                         value={record.reviewerName}
                         onChange={e =>
                           updateRoleSignOff(roleDef.key, {
@@ -787,7 +893,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                           })
                         }
                         placeholder="Reviewer full name..."
-                        className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded"
+                        className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded read-only:bg-slate-100"
                       />
                       <input
                         type="text"
@@ -809,12 +915,23 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
                 <span
                   className={`px-2 py-1 rounded border font-semibold ${
-                    qa.verdict !== 'FAIL'
+                    !isQaStale
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-amber-50 border-amber-200 text-amber-800'
+                  }`}
+                >
+                  {!isQaStale ? '✓ QA Up-to-Date' : '⟳ QA Outdated (Re-run)'}
+                </span>
+                <span
+                  className={`px-2 py-1 rounded border font-semibold ${
+                    activeBlockingErrors.length === 0 && qa.verdict !== 'FAIL'
                       ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                       : 'bg-red-50 border-red-200 text-red-800'
                   }`}
                 >
-                  {qa.verdict !== 'FAIL' ? '✓ QA Verdict Passed' : '✕ QA Verdict is FAIL'}
+                  {activeBlockingErrors.length === 0 && qa.verdict !== 'FAIL'
+                    ? '✓ Zero Blocking Errors'
+                    : `✕ ${activeBlockingErrors.length || 1} Blocking Error(s)`}
                 </span>
                 <span
                   className={`px-2 py-1 rounded border font-semibold ${
@@ -857,43 +974,35 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <span className="text-xs text-slate-500">
-                  {qa.verdict === 'FAIL'
-                    ? 'Release is blocked while QA verdict is FAIL. Jump to the failing stage to fix or regenerate with AI, then re-run QA.'
+                  {isQaStale
+                    ? 'Re-run Quality Assurance above so the audit reflects your latest course edits.'
+                    : activeBlockingErrors.length > 0 || qa.verdict === 'FAIL'
+                    ? 'Release is blocked until all blocking errors are fixed and QA re-runs.'
                     : allThreeRolesApproved
-                    ? 'All 3 governance roles signed off. Ready for official Stage 7 release.'
-                    : 'Enter reviewer names and click "Sign Off Role" on all 3 roles above to unlock Stage 7 release.'}
+                    ? 'All blocking checks passed and 3 governance roles signed off. Ready for Stage 7 release.'
+                    : 'Enter reviewer names and click "Sign Off Role" on all 3 roles above to unlock Stage 7.'}
                 </span>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  {qa.verdict === 'FAIL' && (() => {
-                    const primaryFail = qa.criticalFailures[0];
-                    const lowestDim = [...qa.dimensions].sort((a, b) => a.score - b.score)[0];
-                    const target = primaryFail
-                      ? resolveFailureTarget(primaryFail)
-                      : {
-                          stage: lowestDim ? resolveDimensionStage(lowestDim.id) : (5 as WorkflowStage),
-                          label: `Stage ${lowestDim ? resolveDimensionStage(lowestDim.id) : 5}`,
-                          moduleNumber: undefined,
-                          reason: qa.verdictExplanation,
-                        };
-                    return (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onJumpToStage(target.stage, {
-                            moduleNumber: target.moduleNumber,
-                            reason: target.reason,
-                          })
-                        }
-                        className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <span>Go Fix Failing Area ({target.label})</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    );
-                  })()}
+                  {activeBlockingErrors.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onJumpToStage(activeBlockingErrors[0].stage, {
+                          moduleNumber: activeBlockingErrors[0].moduleNumber,
+                          reason: `${activeBlockingErrors[0].rule}: ${activeBlockingErrors[0].description}`,
+                        })
+                      }
+                      className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>
+                        Go Fix Blocking Issue (Stage {activeBlockingErrors[0].stage})
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     type="button"
-                    disabled={qa.verdict === 'FAIL' || !allThreeRolesApproved}
+                    disabled={isReleaseBlocked}
                     onClick={handleReleaseCourse}
                     className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
                   >
