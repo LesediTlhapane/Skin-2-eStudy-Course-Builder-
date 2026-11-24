@@ -64,8 +64,30 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   const [isSourcesOpen, setIsSourcesOpen] = useState(false);
   const [isVersionsOpen, setIsVersionsOpen] = useState(false);
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+  const [qaFixContext, setQaFixContext] = useState<{
+    stage: WorkflowStage;
+    moduleNumber?: number;
+    reason: string;
+  } | null>(null);
 
   const setStage = (stage: WorkflowStage) => {
+    if (stage === 6) setQaFixContext(null);
+    onUpdateProject(prev => ({ ...prev, currentStage: stage }));
+  };
+
+  const handleJumpFromQA = (
+    stage: WorkflowStage,
+    context?: { moduleNumber?: number; reason?: string }
+  ) => {
+    if (context?.reason || context?.moduleNumber) {
+      setQaFixContext({
+        stage,
+        moduleNumber: context.moduleNumber,
+        reason: context.reason || `Address Stage 6 QA issue in Stage ${stage}.`,
+      });
+    } else {
+      setQaFixContext(null);
+    }
     onUpdateProject(prev => ({ ...prev, currentStage: stage }));
   };
 
@@ -340,6 +362,39 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
       {/* Main Stage Content */}
       <main className="flex-1 p-5 sm:p-8 overflow-y-auto">
         <div className="max-w-5xl mx-auto">
+          {qaFixContext &&
+            qaFixContext.stage === project.currentStage &&
+            project.currentStage !== 6 && (
+              <div className="mb-5 p-4 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="text-xs text-amber-950 space-y-0.5">
+                  <div className="font-bold">
+                    Fixing Stage 6 QA Issue
+                    {qaFixContext.moduleNumber ? ` (Module ${qaFixContext.moduleNumber})` : ''}
+                  </div>
+                  <p className="text-amber-900">{qaFixContext.reason}</p>
+                  <p className="text-[11px] text-amber-800">
+                    Edit directly below or use the AI regenerate button on this stage, then return to Stage 6 to re-run QA.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setStage(6)}
+                    className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
+                  >
+                    ← Back to Stage 6 QA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQaFixContext(null)}
+                    className="px-2 py-1.5 text-xs font-semibold text-amber-800 hover:text-amber-950 cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
           {project.currentStage === 1 && (
             <Stage1Brief
               project={project}
@@ -383,6 +438,12 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
               project={project}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
+              initialModuleNumber={
+                qaFixContext?.stage === 5 ? qaFixContext.moduleNumber : undefined
+              }
+              initialGuidance={
+                qaFixContext?.stage === 5 ? qaFixContext.reason : undefined
+              }
               onUpdateProject={onUpdateProject}
               onApproveAndContinue={() => setStage(6)}
             />
@@ -393,7 +454,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               onUpdateProject={onUpdateProject}
-              onJumpToStage={setStage}
+              onJumpToStage={handleJumpFromQA}
               onProceedToPublish={() => setStage(7)}
             />
           )}

@@ -33,7 +33,10 @@ interface Stage6QAProps {
     updater: (prev: CourseProject) => CourseProject,
     snapshot?: { trigger: 'stage_approval' | 'ai_generation'; summary: string }
   ) => void;
-  onJumpToStage: (stage: WorkflowStage) => void;
+  onJumpToStage: (
+    stage: WorkflowStage,
+    context?: { moduleNumber?: number; reason?: string }
+  ) => void;
   onProceedToPublish: () => void;
 }
 
@@ -262,6 +265,70 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     );
   };
 
+  const resolveFailureTarget = (item: {
+    id?: string;
+    rule?: string;
+    affectedSection?: string;
+    description?: string;
+    recommendedFix?: string;
+  }): { stage: WorkflowStage; label: string; moduleNumber?: number; reason: string } => {
+    const id = String(item.id || '').toLowerCase();
+    const combined = `${item.rule || ''} ${item.affectedSection || ''} ${item.description || ''}`;
+    const lower = combined.toLowerCase();
+    const modMatch = combined.match(/\b(?:Module|M)\s*(\d+)\b/i);
+    const moduleNumber = modMatch ? Number(modMatch[1]) : undefined;
+    const reason = `${item.rule || 'QA Failure'}: ${item.description || ''} ${
+      item.recommendedFix ? `(${item.recommendedFix})` : ''
+    }`.trim();
+
+    if (id.includes('metadata') || lower.includes('stage 1') || lower.includes('brief metadata')) {
+      return { stage: 1, label: 'Stage 1 · Course Brief', reason };
+    }
+    if (
+      id.includes('omitted') ||
+      id.includes('conflict') ||
+      lower.includes('stage 2') ||
+      lower.includes('curriculum') ||
+      lower.includes('omitted topic')
+    ) {
+      return { stage: 2, label: 'Stage 2 · Curriculum', reason };
+    }
+    if (id.includes('vague-outcomes') || lower.includes('stage 3') || lower.includes('vague outcome')) {
+      return { stage: 3, label: 'Stage 3 · Outcomes', reason };
+    }
+    if (
+      (id.includes('assessment') || lower.includes('stage 4') || lower.includes('assessment')) &&
+      !moduleNumber
+    ) {
+      return { stage: 4, label: 'Stage 4 · Assessments & Alignment', reason };
+    }
+    if (moduleNumber) {
+      return {
+        stage: 5,
+        moduleNumber,
+        label: `Stage 5 · Module ${moduleNumber}`,
+        reason,
+      };
+    }
+    if (
+      id.includes('content') ||
+      id.includes('claims') ||
+      lower.includes('stage 5') ||
+      lower.includes('lesson') ||
+      lower.includes('claim') ||
+      lower.includes('scenario')
+    ) {
+      return { stage: 5, label: 'Stage 5 · Learning Content', reason };
+    }
+    return { stage: 4, label: 'Stage 4 · Assessments & Alignment', reason };
+  };
+
+  const resolveDimensionStage = (dimId: string): WorkflowStage => {
+    if (dimId === 'curriculum_coverage') return 2;
+    if (dimId === 'outcomes_alignment' || dimId === 'assessment_quality') return 4;
+    return 5;
+  };
+
   const handleReleaseCourse = () => {
     if (!qa || qa.verdict === 'FAIL' || !allThreeRolesApproved) return;
     onUpdateProject(
@@ -359,6 +426,21 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     {chk.affectedSections.length > 4 ? '...' : ''}
                   </p>
                 )}
+                {chk.status !== 'pass' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const modMatch = (chk.affectedSections[0] || '').match(/\b(?:Module|M)\s*(\d+)\b/i);
+                      onJumpToStage(5, {
+                        moduleNumber: modMatch ? Number(modMatch[1]) : undefined,
+                        reason: `${chk.label}: ${chk.details}`,
+                      });
+                    }}
+                    className="mt-1 px-2.5 py-1 text-[11px] font-bold text-[#052B66] bg-white border border-slate-200 hover:border-[#052B66] rounded cursor-pointer"
+                  >
+                    Fix & Regenerate in Stage 5 →
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -417,6 +499,25 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                   </span>
                 </div>
                 <p className="text-slate-600">{chk.details}</p>
+                {chk.status !== 'pass' && chk.id !== 'tech-source-grounding' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetStage: WorkflowStage =
+                        chk.id === 'tech-metadata-tbc' ? 1 : 5;
+                      const modMatch = (chk.affectedSections[0] || '').match(/\b(?:Module|M)\s*(\d+)\b/i);
+                      onJumpToStage(targetStage, {
+                        moduleNumber: modMatch ? Number(modMatch[1]) : undefined,
+                        reason: `${chk.label}: ${chk.details}`,
+                      });
+                    }}
+                    className="mt-1 px-2.5 py-1 text-[11px] font-bold text-[#052B66] bg-white border border-slate-200 hover:border-[#052B66] rounded cursor-pointer"
+                  >
+                    {chk.id === 'tech-metadata-tbc'
+                      ? 'Confirm Metadata in Stage 1 →'
+                      : 'Fix / Regenerate in Stage 5 →'}
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -530,20 +631,40 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                   {repairNotice}
                 </div>
               )}
-              {qa.criticalFailures.map(f => (
-                <div
-                  key={f.id}
-                  className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs space-y-1"
-                >
-                  <div className="font-bold text-red-900">
-                    {f.rule} ({f.affectedSection})
+              {qa.criticalFailures.map(f => {
+                const target = resolveFailureTarget(f);
+                return (
+                  <div
+                    key={f.id}
+                    className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs space-y-2"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                      <div className="space-y-1">
+                        <div className="font-bold text-red-900">
+                          {f.rule} ({f.affectedSection})
+                        </div>
+                        <div className="text-red-800">{f.description}</div>
+                        <div className="text-slate-700">
+                          <strong>Recommended Fix:</strong> {f.recommendedFix}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onJumpToStage(target.stage, {
+                            moduleNumber: target.moduleNumber,
+                            reason: target.reason,
+                          })
+                        }
+                        className="px-3 py-1.5 rounded-lg bg-white border border-red-300 hover:border-[#052B66] text-[#052B66] text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                      >
+                        <span>Fix & Regenerate in {target.label}</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-red-800">{f.description}</div>
-                  <div className="text-slate-700">
-                    <strong>Recommended Fix:</strong> {f.recommendedFix}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </section>
           )}
 
@@ -579,20 +700,19 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                       </span>
                       <button
                         type="button"
-                        onClick={() =>
-                          onJumpToStage(
-                            dim.id === 'curriculum_coverage'
-                              ? 2
-                              : dim.id === 'outcomes_alignment'
-                              ? 3
-                              : dim.id === 'assessment_quality'
-                              ? 4
-                              : 5
-                          )
-                        }
+                        onClick={() => {
+                          const targetStage = resolveDimensionStage(dim.id);
+                          const modMatch = (dim.affectedSections[0] || '').match(/\b(?:Module|M)\s*(\d+)\b/i);
+                          onJumpToStage(targetStage, {
+                            moduleNumber: modMatch ? Number(modMatch[1]) : undefined,
+                            reason: `${dim.label} (${dim.score}%): ${
+                              dim.recommendedCorrections[0] || dim.weaknesses[0] || ''
+                            }`,
+                          });
+                        }}
                         className="px-2.5 py-1 text-[11px] font-bold bg-[#F5F7FA] border border-slate-200 rounded hover:border-[#052B66] cursor-pointer"
                       >
-                        Go Fix Affected Stage
+                        Fix & Regenerate in Stage {resolveDimensionStage(dim.id)} →
                       </button>
                     </div>
                   )}
@@ -736,20 +856,39 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <span className="text-xs text-slate-500">
                   {qa.verdict === 'FAIL'
-                    ? 'Official release is blocked while QA verdict is FAIL. Fix critical failures above and click Re-run Quality Assurance (or export drafts below).'
+                    ? 'Release is blocked while QA verdict is FAIL. Jump to the failing stage to fix or regenerate with AI, then re-run QA.'
                     : allThreeRolesApproved
                     ? 'All 3 governance roles signed off. Ready for official Stage 7 release.'
-                    : 'Enter reviewer names and click "Sign Off Role" on all 3 roles above to unlock official release.'}
+                    : 'Enter reviewer names and click "Sign Off Role" on all 3 roles above to unlock Stage 7 release.'}
                 </span>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={onProceedToPublish}
-                    className="px-4 py-2.5 rounded-lg border border-[#052B66] text-[#052B66] hover:bg-[#052B66]/5 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <span>Preview / Export Draft in Stage 7</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  {qa.verdict === 'FAIL' && (() => {
+                    const primaryFail = qa.criticalFailures[0];
+                    const lowestDim = [...qa.dimensions].sort((a, b) => a.score - b.score)[0];
+                    const target = primaryFail
+                      ? resolveFailureTarget(primaryFail)
+                      : {
+                          stage: lowestDim ? resolveDimensionStage(lowestDim.id) : (5 as WorkflowStage),
+                          label: `Stage ${lowestDim ? resolveDimensionStage(lowestDim.id) : 5}`,
+                          moduleNumber: undefined,
+                          reason: qa.verdictExplanation,
+                        };
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onJumpToStage(target.stage, {
+                            moduleNumber: target.moduleNumber,
+                            reason: target.reason,
+                          })
+                        }
+                        className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>Go Fix Failing Area ({target.label})</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    );
+                  })()}
                   <button
                     type="button"
                     disabled={qa.verdict === 'FAIL' || !allThreeRolesApproved}

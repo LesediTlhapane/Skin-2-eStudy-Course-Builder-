@@ -258,7 +258,11 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
             ) : (
               <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
             )}
-            <span>Design Assessments with AI</span>
+            <span>
+              {assessments.items.length > 0
+                ? 'Regenerate Assessments with AI'
+                : 'Design Assessments with AI'}
+            </span>
           </button>
         </div>
       </div>

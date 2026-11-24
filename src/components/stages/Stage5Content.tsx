@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -21,6 +21,8 @@ interface Stage5ContentProps {
   project: CourseProject;
   selectedProvider: AIProvider;
   selectedModel: string;
+  initialModuleNumber?: number;
+  initialGuidance?: string;
   onUpdateProject: (
     updater: (prev: CourseProject) => CourseProject,
     snapshot?: { trigger: 'stage_approval' | 'ai_generation'; summary: string }
@@ -32,6 +34,8 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
   project,
   selectedProvider,
   selectedModel,
+  initialModuleNumber,
+  initialGuidance,
   onUpdateProject,
   onApproveAndContinue,
 }) => {
@@ -42,6 +46,16 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const plannedModules = project.curriculum.modules;
+
+  useEffect(() => {
+    if (initialModuleNumber) {
+      const idx = plannedModules.findIndex(m => m.order === initialModuleNumber);
+      if (idx >= 0) setActiveModIdx(idx);
+    }
+    if (initialGuidance) {
+      setRegenPrompt(initialGuidance);
+    }
+  }, [initialModuleNumber, initialGuidance, plannedModules]);
   const generatedModules = project.content.modules;
   const activePlan = plannedModules[activeModIdx];
   const activeGenerated = activePlan

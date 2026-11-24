@@ -155,7 +155,11 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
           className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
         >
           {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />}
-          <span>Generate Measurable Outcomes</span>
+          <span>
+            {outcomes.courseOutcomes.length > 0 || outcomes.moduleOutcomes.length > 0
+              ? 'Regenerate Outcomes with AI'
+              : 'Generate Measurable Outcomes'}
+          </span>
         </button>
       </div>
 

@@ -86,18 +86,6 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project }) => {
         </p>
       </div>
 
-      {/* Draft / Release status notice */}
-      {(!project.latestQA ||
-        project.latestQA.verdict === 'FAIL' ||
-        !project.latestQA.humanSignOff?.signedOff) && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 text-xs text-amber-900">
-          <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-          <div>
-            <strong>Draft Export Mode:</strong> Formal Stage 6 Quality Assurance & 3-role sign-off is not yet completed. You can download and inspect all draft deliverables below, then complete Stage 6 sign-off for final release.
-          </div>
-        </div>
-      )}
-
       {/* Non-accreditation safeguard notice */}
       <div className="p-4 bg-white border border-slate-200 rounded-xl flex items-start gap-3 text-xs text-slate-700">
         <ShieldAlert className="w-4 h-4 text-[#052B66] shrink-0 mt-0.5" />
