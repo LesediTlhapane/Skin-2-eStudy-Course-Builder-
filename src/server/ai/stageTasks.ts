@@ -18,10 +18,12 @@ import { aiRouter, extractAndParseJSON } from './aiRouter.js';
 
 function summarizeSourcesForPrompt(sources: SourceDocument[]): string {
   if (!sources || sources.length === 0) return 'No external source documents uploaded.';
+  const perSourceBudget = Math.max(500, Math.floor(3200 / Math.max(1, sources.length)));
   return sources
+    .slice(0, 6)
     .map(
       (s, i) =>
-        `[Source ${i + 1}: ${s.title} | Org/Author: ${s.authorOrOrganisation || 'Unknown'} | Status: ${s.verificationStatus} | Ref: ${s.referenceOrUrl || s.fileName || 'N/A'}]\nExcerpt:\n${(s.extractedText || s.summary || '').slice(0, 3500)}`
+        `[Source ${i + 1}: ${s.title} | Org/Author: ${s.authorOrOrganisation || 'Unknown'} | Status: ${s.verificationStatus} | Ref: ${s.referenceOrUrl || s.fileName || 'N/A'}]\nExcerpt:\n${(s.extractedText || s.summary || '').slice(0, perSourceBudget)}`
     )
     .join('\n\n---\n\n');
 }
@@ -586,7 +588,8 @@ export async function generateModuleContentWithAI(params: {
     provider: params.provider,
     model: params.model,
     responseFormat: 'json',
-    timeoutMs: 110000,
+    timeoutMs: 45000,
+    maxTokens: 6000,
     systemInstruction: `You are a senior subject-matter educator authoring Module ${params.modulePlan.order} of "${params.brief.title}" for "${params.brief.targetAudience}" (${params.brief.experienceLevel}).
 NON-NEGOTIABLE STANDARDS:
 1. Teach EVERY topic, subtopic, and lesson in the approved module plan with authentic subject depth.
@@ -606,10 +609,10 @@ COURSE BRIEF:
 - Learning Requirements: ${params.brief.learningRequirements}
 
 APPROVED MODULE PLAN:
-${JSON.stringify(params.modulePlan, null, 2)}
+${JSON.stringify(params.modulePlan)}
 
 APPROVED MODULE OUTCOMES:
-${JSON.stringify(modOutcomes, null, 2)}
+${JSON.stringify(modOutcomes)}
 
 APPROVED MODULE ASSESSMENTS TO ALIGN WITH:
 ${JSON.stringify(modAssessments.map(a => ({ id: a.id, title: a.title, type: a.type, objective: a.objective })))}
@@ -632,7 +635,7 @@ Return JSON matching:
       "outcomeIds": ${JSON.stringify(modOutcomes.slice(0, 2).map(o => o.id))},
       "title": "Exact lesson title",
       "durationMinutes": 35,
-      "explanation": "Rich, clear, subject-specific teaching prose (350-600 words) with structured subheadings, mechanics, equations/rules if technical, and common misconceptions",
+      "explanation": "Rich, clear, subject-specific teaching prose (280-450 words) with structured subheadings, mechanics, equations/rules if technical, and common misconceptions",
       "keyTerminology": [{ "term": "Term", "definition": "Accurate domain definition" }],
       "workedExamples": ["Detailed worked example or step-by-step demonstration"],
       "practicalApplication": "Concrete workplace application for target roles",
@@ -699,6 +702,204 @@ Return JSON matching:
     title: params.modulePlan.title,
     editStatus: 'ai_draft',
     lastGeneratedAt: new Date().toISOString(),
+  };
+}
+
+/* ============================================================================
+ * 8B. STAGE 5 FAST CHUNKED GENERATION: MODULE SCAFFOLD + INDIVIDUAL LESSON
+ * ============================================================================ */
+export async function generateModuleScaffoldWithAI(params: {
+  brief: CourseBrief;
+  modulePlan: CurriculumModulePlan;
+  allModules: CurriculumModulePlan[];
+  outcomes: LearningOutcomesPlan;
+  assessments: AssessmentItem[];
+  sources: SourceDocument[];
+  provider?: AIProvider;
+  model?: string;
+}): Promise<GeneratedModuleContent> {
+  const modOutcomes = params.outcomes.moduleOutcomes.filter(
+    o => o.moduleId === params.modulePlan.id
+  );
+  const modAssessments = params.assessments.filter(a => a.moduleId === params.modulePlan.id);
+  const otherModuleTitles = params.allModules
+    .filter(m => m.id !== params.modulePlan.id)
+    .map(m => `M${m.order}: ${m.title}`)
+    .join('; ');
+
+  const aiRule =
+    params.brief.aiIntegrationMode === 'none'
+      ? 'AI integration is DISABLED. Do NOT add AI tips or AI scenarios.'
+      : `AI Mode: ${params.brief.aiIntegrationMode} (${params.brief.aiIntegrationRequirements || 'Integrate relevant AI workflows authentically'}).`;
+
+  const res = await aiRouter.execute({
+    provider: params.provider,
+    model: params.model,
+    responseFormat: 'json',
+    timeoutMs: 32000,
+    maxTokens: 2400,
+    systemInstruction: `You are a senior educator authoring the module overview, workplace case studies, scenarios, and knowledge checks for Module ${params.modulePlan.order} of "${params.brief.title}" (${params.brief.experienceLevel}).
+${aiRule}
+Tailor scenarios to "${params.brief.industryDomain}" and roles "${params.brief.targetJobRoles || params.brief.targetAudience}" in a South African workplace context. Do not duplicate other modules (${otherModuleTitles || 'none'}).
+Return ONLY valid JSON.`,
+    prompt: `Author the module wrapper (excluding individual lesson essays) for Module ${params.modulePlan.order}: "${params.modulePlan.title}".
+Topics: ${JSON.stringify(params.modulePlan.topics.map(t => t.title))}
+Lessons planned: ${JSON.stringify(params.modulePlan.lessons.map(l => l.title))}
+Module Outcomes: ${JSON.stringify(modOutcomes.map(o => ({ code: o.code, statement: o.statement })))}
+Aligned Assessments: ${JSON.stringify(modAssessments.map(a => ({ title: a.title, type: a.type })))}
+Sources: ${summarizeSourcesForPrompt(params.sources)}
+
+Return JSON:
+{
+  "introduction": "Engaging 2-paragraph introduction linking workplace need and module outcomes",
+  "learningObjectives": ${JSON.stringify(modOutcomes.map(o => `${o.code}: ${o.statement}`))},
+  "workplaceCaseStudies": [
+    {
+      "id": "cs-${params.modulePlan.order}-1",
+      "title": "Domain case study title",
+      "background": "Realistic workplace situation and data/context",
+      "analysisQuestions": ["Question 1", "Question 2"],
+      "facilitatorNotes": "Model analysis points"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "sc-${params.modulePlan.order}-1",
+      "title": "Scenario title",
+      "contextType": "Workplace",
+      "situation": "Realistic role scenario",
+      "challenge": "Specific dilemma or operational constraint",
+      "decisionPrompt": "What should the learner decide or do next?",
+      "modelDebrief": "Expert reasoning and consequence analysis",
+      "keyTakeaway": "Core principle"
+    }
+  ],
+  "knowledgeChecks": [
+    {
+      "id": "kc-${params.modulePlan.order}-1",
+      "question": "Concept/application question testing this module",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 0,
+      "explanation": "Why correct option works and distractors fail",
+      "outcomeCode": ${JSON.stringify(modOutcomes[0]?.code || 'MLO-1')}
+    },
+    {
+      "id": "kc-${params.modulePlan.order}-2",
+      "question": "Second applied knowledge check question",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 1,
+      "explanation": "Clear explanation",
+      "outcomeCode": ${JSON.stringify(modOutcomes[Math.min(1, Math.max(0, modOutcomes.length - 1))]?.code || 'MLO-1')}
+    }
+  ],
+  "summary": "Concise synthesis of module takeaways",
+  "furtherLearningResources": ["Recommended reading or verifiable standard"]
+}`,
+  });
+
+  const parsed = extractAndParseJSON<any>(res.text);
+  return {
+    id: `content-${params.modulePlan.id}`,
+    moduleId: params.modulePlan.id,
+    moduleNumber: params.modulePlan.order,
+    title: params.modulePlan.title,
+    introduction: parsed.introduction || `Module ${params.modulePlan.order}: ${params.modulePlan.title}`,
+    learningObjectives: Array.isArray(parsed.learningObjectives)
+      ? parsed.learningObjectives
+      : modOutcomes.map(o => `${o.code}: ${o.statement}`),
+    lessons: [],
+    workplaceCaseStudies: Array.isArray(parsed.workplaceCaseStudies) ? parsed.workplaceCaseStudies : [],
+    scenarios: Array.isArray(parsed.scenarios) ? parsed.scenarios : [],
+    knowledgeChecks: Array.isArray(parsed.knowledgeChecks) ? parsed.knowledgeChecks : [],
+    summary: parsed.summary || '',
+    furtherLearningResources: Array.isArray(parsed.furtherLearningResources)
+      ? parsed.furtherLearningResources
+      : [],
+    editStatus: 'ai_draft',
+    lastGeneratedAt: new Date().toISOString(),
+  };
+}
+
+export async function generateSingleLessonWithAI(params: {
+  brief: CourseBrief;
+  modulePlan: CurriculumModulePlan;
+  lessonPlan: {
+    id: string;
+    title: string;
+    durationMinutes: number;
+    purpose: string;
+    keyTerms: string[];
+  };
+  lessonIndex: number;
+  outcomes: LearningOutcomesPlan;
+  sources: SourceDocument[];
+  provider?: AIProvider;
+  model?: string;
+}): Promise<GeneratedLessonContent> {
+  const modOutcomes = params.outcomes.moduleOutcomes.filter(
+    o => o.moduleId === params.modulePlan.id
+  );
+  const fallbackOutcomeIds = modOutcomes.map(o => o.id);
+
+  const aiRule =
+    params.brief.aiIntegrationMode === 'none'
+      ? 'AI integration is DISABLED. Do NOT add generic AI tips.'
+      : `AI Mode: ${params.brief.aiIntegrationMode} (${params.brief.aiIntegrationRequirements || 'Integrate relevant AI practices authentically'}).`;
+
+  const res = await aiRouter.execute({
+    provider: params.provider,
+    model: params.model,
+    responseFormat: 'json',
+    timeoutMs: 32000,
+    maxTokens: 2200,
+    systemInstruction: `You are a senior subject-matter educator writing a single high-rigour lesson for "${params.brief.title}" (${params.brief.experienceLevel}, audience: "${params.brief.targetAudience}").
+${aiRule}
+Preserve exact equations, units, domain terminology, and South African workplace realism where applicable.
+Tag claims in sourceClaims honestly as "VERIFIED", "NEEDS REVIEW", or "UNSUPPORTED". Never fabricate Act numbers or statistics.
+Return ONLY valid JSON.`,
+    prompt: `Author Lesson ${params.lessonIndex + 1} inside Module ${params.modulePlan.order} ("${params.modulePlan.title}").
+Course Domain: ${params.brief.industryDomain} | Purpose: ${params.brief.purpose}
+Module Topics: ${JSON.stringify(params.modulePlan.topics.map(t => t.title))}
+Lesson Plan: ${JSON.stringify(params.lessonPlan)}
+Module Outcomes: ${JSON.stringify(modOutcomes.map(o => ({ id: o.id, code: o.code, statement: o.statement })))}
+Sources: ${summarizeSourcesForPrompt(params.sources)}
+
+Return JSON:
+{
+  "id": "les-content-${params.modulePlan.order}-${params.lessonIndex + 1}",
+  "lessonPlanId": ${JSON.stringify(params.lessonPlan.id)},
+  "outcomeIds": ${JSON.stringify(fallbackOutcomeIds.slice(0, 2))},
+  "title": ${JSON.stringify(params.lessonPlan.title)},
+  "durationMinutes": ${Number(params.lessonPlan.durationMinutes) || 35},
+  "explanation": "Rich, clear teaching prose (320-480 words) with structured subheadings, core principles/equations, and common misconceptions",
+  "keyTerminology": [{ "term": "Term", "definition": "Accurate domain definition" }],
+  "workedExamples": ["Detailed step-by-step worked example or demonstration"],
+  "practicalApplication": "Concrete workplace application for ${params.brief.targetJobRoles || params.brief.targetAudience}",
+  "guidedActivity": "Structured hands-on learner activity",
+  "sourceClaims": [
+    { "id": "clm-${params.lessonIndex + 1}-1", "claim": "Key statement taught", "sourceTitle": "Source name or General Practice", "status": "NEEDS REVIEW" }
+  ],
+  "editStatus": "ai_draft"
+}`,
+  });
+
+  const parsed = extractAndParseJSON<GeneratedLessonContent>(res.text);
+  return {
+    id: parsed.id || `les-content-${params.modulePlan.order}-${params.lessonIndex + 1}`,
+    lessonPlanId: parsed.lessonPlanId || params.lessonPlan.id,
+    outcomeIds:
+      Array.isArray(parsed.outcomeIds) && parsed.outcomeIds.length > 0
+        ? parsed.outcomeIds
+        : fallbackOutcomeIds,
+    title: parsed.title || params.lessonPlan.title,
+    durationMinutes: Number(parsed.durationMinutes) || Number(params.lessonPlan.durationMinutes) || 35,
+    explanation: parsed.explanation || '',
+    keyTerminology: Array.isArray(parsed.keyTerminology) ? parsed.keyTerminology : [],
+    workedExamples: Array.isArray(parsed.workedExamples) ? parsed.workedExamples : [],
+    practicalApplication: parsed.practicalApplication || '',
+    guidedActivity: parsed.guidedActivity || '',
+    sourceClaims: Array.isArray(parsed.sourceClaims) ? parsed.sourceClaims : [],
+    editStatus: 'ai_draft',
   };
 }
 

@@ -43,13 +43,21 @@ export const aiRouter = new AIRouter();
 
 export function extractAndParseJSON<T = any>(rawText: string): T {
   const cleaned = rawText
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```\s*$/i, '')
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
     .trim();
 
+  const tryParse = (candidate: string): T => {
+    try {
+      return JSON.parse(candidate) as T;
+    } catch {
+      const noTrailingCommas = candidate.replace(/,\s*([}\]])/g, '$1');
+      return JSON.parse(noTrailingCommas) as T;
+    }
+  };
+
   try {
-    return JSON.parse(cleaned) as T;
+    return tryParse(cleaned);
   } catch {
     const firstBrace = cleaned.indexOf('{');
     const firstBracket = cleaned.indexOf('[');
@@ -64,7 +72,11 @@ export function extractAndParseJSON<T = any>(rawText: string): T {
     }
     if (start !== -1 && end > start) {
       const slice = cleaned.slice(start, end + 1);
-      return JSON.parse(slice) as T;
+      try {
+        return tryParse(slice);
+      } catch {
+        // fall through to clear error
+      }
     }
     throw new Error('AI response did not contain valid JSON.');
   }

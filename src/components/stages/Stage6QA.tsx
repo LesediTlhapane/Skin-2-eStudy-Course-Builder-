@@ -222,9 +222,22 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           ) : (
             <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
           )}
-          <span>{qa ? 'Re-run Quality Assurance' : 'Run Quality Assurance'}</span>
+          <span>
+            {isRunning
+              ? 'Evaluating QA...'
+              : qa
+              ? 'Re-run Quality Assurance'
+              : 'Run Quality Assurance'}
+          </span>
         </button>
       </div>
+
+      {isRunning && (
+        <div className="p-3 bg-[#052B66] text-white rounded-lg text-xs font-semibold flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-[#45CC42]" />
+          <span>Running 7-dimension AI Quality Assurance & alignment verification...</span>
+        </div>
+      )}
 
       {/* Deterministic Accessibility & Technical Validation Pre-Audit Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -370,9 +383,16 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
       </section>
 
       {errorMsg && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>{errorMsg}</span>
+        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 space-y-1">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          {errorMsg.toLowerCase().includes('rate limit') && (
+            <p className="text-[11px] text-red-600 pl-6">
+              Groq Cloud free-tier token-per-minute window resets quickly. Wait 10–15 seconds before clicking again, or switch to Qwen 3.8 27B / GPT OSS 20B in the model selector above.
+            </p>
+          )}
         </div>
       )}
 

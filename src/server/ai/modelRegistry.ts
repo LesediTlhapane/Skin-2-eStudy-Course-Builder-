@@ -15,11 +15,11 @@ export const STATIC_MODEL_REGISTRY: AIModelMeta[] = [
     recommendedBadge: 'Recommended (Groq Default)',
   },
   {
-    id: 'llama-3.3-70b-versatile',
+    id: 'qwen/qwen3.8-27b',
     provider: 'groq',
-    displayName: 'Llama 3.3 70B Versatile (Groq)',
+    displayName: 'Qwen 3.8 27B (Groq)',
     description:
-      'Instruction-following open-weights model on Groq LPU with 128k context.',
+      'Fast 27B reasoning and structured JSON model on Groq LPU with high throughput.',
     contextWindow: 131072,
     enabledForCourseGeneration: true,
     enabledForCopilot: true,

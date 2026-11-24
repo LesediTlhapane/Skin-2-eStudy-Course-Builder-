@@ -136,73 +136,109 @@ export async function evaluateCourseQAWithAI(params: {
       level: params.project.brief.experienceLevel,
       duration: params.project.brief.estimatedDuration,
       aiMode: params.project.brief.aiIntegrationMode,
-      saCompliance: params.project.brief.saCompliance,
-      fieldStatuses: params.project.brief.fieldStatuses,
+      saComplianceEnabled: Boolean(params.project.brief.saCompliance?.enabled),
+      nqfLevel: params.project.brief.saCompliance?.nqfLevel || 'Unspecified',
     },
-    sources: params.project.sources.map(s => ({
+    sourcesCount: params.project.sources.length,
+    sources: params.project.sources.slice(0, 6).map(s => ({
       title: s.title,
       status: s.verificationStatus,
-      author: s.authorOrOrganisation,
     })),
-    curriculumModules: params.project.curriculum.modules.map(m => ({
-      id: m.id,
-      title: m.title,
-      topics: m.topics.map(t => t.title),
-      lessons: m.lessons.map(l => l.title),
-    })),
-    coverageChecks: params.project.curriculum.coverageChecks,
+    coverageGaps: (params.project.curriculum.coverageChecks || [])
+      .filter(c => c.status !== 'mapped')
+      .slice(0, 10)
+      .map(c => ({ topic: c.originalTopic, status: c.status })),
+    outcomesCount:
+      params.project.outcomes.courseOutcomes.length +
+      params.project.outcomes.moduleOutcomes.length,
     outcomes: [
       ...params.project.outcomes.courseOutcomes,
       ...params.project.outcomes.moduleOutcomes,
-    ].map(o => ({ code: o.code, verb: o.actionVerb, statement: o.statement })),
-    assessments: params.project.assessments.items.map(a => ({
-      title: a.title,
-      type: a.type,
-      domain: a.assessmentDomain,
-      classification: a.classification,
-      outcomeIds: a.outcomeIds,
-      hasModelAnswer: Boolean(a.modelAnswer?.trim()),
-      rubricCriteriaCount: a.rubric?.length || 0,
-    })),
+    ]
+      .slice(0, 18)
+      .map(o => ({
+        code: o.code,
+        verb: o.actionVerb,
+        statement: String(o.statement || '').slice(0, 140),
+      })),
+    assessmentsSummary: {
+      total: params.project.assessments.items.length,
+      knowledgeCount: params.project.assessments.items.filter(
+        a => a.assessmentDomain === 'knowledge'
+      ).length,
+      practicalCount: params.project.assessments.items.filter(
+        a => a.assessmentDomain === 'practical'
+      ).length,
+      items: params.project.assessments.items.slice(0, 12).map(a => ({
+        title: a.title,
+        type: a.type,
+        domain: a.assessmentDomain,
+        outcomes: a.outcomeIds,
+        hasAnswer: Boolean(a.modelAnswer?.trim()),
+        rubricCount: a.rubric?.length || 0,
+      })),
+    },
     alignmentSummary: {
       scorePercent: alignmentReport.scorePercent,
-      explanation: alignmentReport.explanation,
-      flags: alignmentReport.flags,
+      criticalFlags: alignmentReport.flags
+        .filter(f => f.severity === 'critical')
+        .slice(0, 5)
+        .map(f => f.message),
+      warningCount: alignmentReport.flags.filter(f => f.severity !== 'critical').length,
     },
-    deterministicAccessibilityAudit: accessibilityAudit,
-    deterministicTechnicalValidation: technicalValidation,
+    accessibilityAuditSummary: {
+      scorePercent: accessibilityAudit.scorePercent,
+      avgSentenceWords: accessibilityAudit.averageSentenceWords,
+      issues: accessibilityAudit.checks
+        .filter(c => c.status !== 'pass')
+        .map(c => ({ label: c.label, status: c.status, details: c.details.slice(0, 120) })),
+    },
+    technicalValidationSummary: {
+      verifiedClaims: technicalValidation.verifiedClaimsCount,
+      needsReviewClaims: technicalValidation.needsReviewClaimsCount,
+      unsupportedClaims: technicalValidation.unsupportedClaimsCount,
+      issues: technicalValidation.checks
+        .filter(c => c.status !== 'pass')
+        .map(c => ({ label: c.label, status: c.status })),
+    },
     contentModules: params.project.content.modules.map(m => ({
-      moduleNumber: m.moduleNumber,
+      mod: m.moduleNumber,
       title: m.title,
-      lessonCount: m.lessons.length,
-      lessonSummaries: m.lessons.map(l => ({
+      lessonsCount: m.lessons.length,
+      lessons: m.lessons.slice(0, 5).map(l => ({
         title: l.title,
-        wordCount: l.explanation.split(/\s+/).length,
-        excerpt: l.explanation.slice(0, 450),
-        examplesCount: l.workedExamples.length,
-        claims: l.sourceClaims,
+        words: l.explanation ? l.explanation.split(/\s+/).length : 0,
+        excerpt: String(l.explanation || '').slice(0, 140),
+        examples: l.workedExamples?.length || 0,
+        unsupportedClaims: (l.sourceClaims || []).filter(c => c.status === 'UNSUPPORTED').length,
       })),
-      scenarioCount: m.scenarios.length,
-      scenarioTitles: m.scenarios.map(s => s.title),
-      knowledgeCheckCount: m.knowledgeChecks.length,
+      scenarios: m.scenarios.map(s => s.title),
+      caseStudiesCount: m.workplaceCaseStudies.length,
+      knowledgeChecksCount: m.knowledgeChecks.length,
     })),
-    deterministicCriticalFailures: criticalFailures,
+    deterministicCriticalFailures: criticalFailures.map(f => ({
+      rule: f.rule,
+      description: f.description,
+    })),
   };
 
   const res = await aiRouter.execute({
     provider: params.provider,
     model: params.model,
     responseFormat: 'json',
+    temperature: 0.2,
+    maxTokens: 2600,
+    timeoutMs: 36000,
     systemInstruction: `You are an independent Quality Assurance Auditor for eStudy South Africa.
-Evaluate the course strictly on instructional integrity, subject accuracy, curriculum preservation, 3-way alignment, scenario authenticity, deterministic accessibility readability metrics, and source grounding.
-NEVER award high scores merely because content is long. Penalise repetition, generic filler, weak scenarios, or unsupported claims.
-Evaluate ALL 7 dimensions matching the supplied weights.
+Evaluate strictly on instructional integrity, subject accuracy, curriculum preservation, 3-way alignment, scenario authenticity, deterministic accessibility metrics, and source grounding.
+Penalise repetition, generic filler, weak scenarios, or unsupported claims.
+Evaluate ALL 7 dimensions matching the supplied weights. Keep each array concise (1-3 items per dimension).
 Return ONLY valid JSON.`,
     prompt: `Audit this course against the 7 QA dimensions and weights:
 WEIGHTS: ${JSON.stringify(params.weights)}
 
 COURSE DATA:
-${JSON.stringify(compactCourseForAudit, null, 2)}
+${JSON.stringify(compactCourseForAudit)}
 
 Return JSON:
 {
@@ -223,7 +259,7 @@ Return JSON:
     {
       "id": "ai-crit-1",
       "rule": "Rule violated",
-      "description": "Only include if a genuine critical defect exists (e.g. factually wrong technical claim, misleading assessment, severe cross-module duplication)",
+      "description": "Only include if a genuine critical defect exists",
       "affectedSection": "Affected module/lesson",
       "recommendedFix": "Exact correction needed"
     }

@@ -53,32 +53,13 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     [project.outcomes]
   );
 
-  const generateSingleModule = async (modulePlanIndex: number) => {
-    const modPlan = plannedModules[modulePlanIndex];
-    if (!modPlan) return;
-    setGeneratingStatus(`Generating Module ${modPlan.order}: ${modPlan.title}...`);
-    setErrorMsg(null);
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-    const res = await fetch('/api/v2/content/generate-module', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        brief: project.brief,
-        modulePlan: modPlan,
-        allModules: plannedModules,
-        outcomes: project.outcomes,
-        assessments: project.assessments.items,
-        sources: project.sources,
-        provider: selectedProvider,
-        model: selectedModel,
-      }),
-    });
-    const data = await parseApiJson<any>(res);
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || `Failed to generate Module ${modPlan.order}.`);
-    }
-
-    const modContent: GeneratedModuleContent = data.moduleContent;
+  const saveModuleContentState = (
+    modPlan: (typeof plannedModules)[number],
+    modContent: GeneratedModuleContent,
+    historyNote?: string
+  ) => {
     onUpdateProject(
       prev => {
         const others = prev.content.modules.filter(m => m.moduleId !== modPlan.id);
@@ -90,39 +71,150 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           content: {
             ...prev.content,
             modules: nextMods,
-            generationHistory: [
-              {
-                id: `gen-${Date.now()}`,
-                timestamp: new Date().toISOString(),
-                target: `Module ${modPlan.order}: ${modPlan.title}`,
-                provider: selectedProvider,
-                model: selectedModel,
-                status: 'success',
-                notes: `${modContent.lessons.length} lessons generated`,
-              },
-              ...prev.content.generationHistory,
-            ],
+            generationHistory: historyNote
+              ? [
+                  {
+                    id: `gen-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    target: `Module ${modPlan.order}: ${modPlan.title}`,
+                    provider: selectedProvider,
+                    model: selectedModel,
+                    status: 'success',
+                    notes: historyNote,
+                  },
+                  ...prev.content.generationHistory,
+                ]
+              : prev.content.generationHistory,
             approval: { approved: false },
           },
         };
       },
-      { trigger: 'ai_generation', summary: `Generated Module ${modPlan.order} learning content` }
+      historyNote
+        ? { trigger: 'ai_generation', summary: `Generated Module ${modPlan.order} learning content` }
+        : undefined
     );
+  };
+
+  const generateSingleModule = async (modulePlanIndex: number, forceOverwrite = false) => {
+    const modPlan = plannedModules[modulePlanIndex];
+    if (!modPlan) return;
+    setErrorMsg(null);
+
+    const existing = forceOverwrite
+      ? undefined
+      : generatedModules.find(m => m.moduleId === modPlan.id);
+
+    let workingModule: GeneratedModuleContent;
+
+    if (!existing) {
+      setGeneratingStatus(
+        `Module ${modPlan.order}/${plannedModules.length}: Drafting overview, scenarios & knowledge checks...`
+      );
+      const scaffoldRes = await fetch('/api/v2/content/generate-module-scaffold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brief: project.brief,
+          modulePlan: modPlan,
+          allModules: plannedModules,
+          outcomes: project.outcomes,
+          assessments: project.assessments.items,
+          sources: project.sources,
+          provider: selectedProvider,
+          model: selectedModel,
+        }),
+      });
+      const scaffoldData = await parseApiJson<any>(scaffoldRes);
+      if (!scaffoldRes.ok || !scaffoldData.success) {
+        throw new Error(
+          scaffoldData.error || `Failed to generate overview for Module ${modPlan.order}.`
+        );
+      }
+      workingModule = scaffoldData.moduleContent as GeneratedModuleContent;
+      saveModuleContentState(modPlan, workingModule);
+    } else {
+      workingModule = {
+        ...existing,
+        lessons: [...existing.lessons],
+      };
+    }
+
+    const plannedLessons = modPlan.lessons || [];
+    for (let lIdx = 0; lIdx < plannedLessons.length; lIdx++) {
+      const lp = plannedLessons[lIdx];
+      const alreadyHasLesson = workingModule.lessons.some(
+        l => l.lessonPlanId === lp.id || l.title === lp.title
+      );
+      if (alreadyHasLesson) continue;
+
+      // Brief pacing pause between Groq requests to avoid bursting free-tier TPM/RPM
+      await sleep(750);
+      setGeneratingStatus(
+        `Module ${modPlan.order}/${plannedModules.length} · Writing Lesson ${lIdx + 1}/${plannedLessons.length}: ${lp.title}...`
+      );
+
+      const lessonRes = await fetch('/api/v2/content/generate-lesson', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brief: project.brief,
+          modulePlan: modPlan,
+          lessonPlan: lp,
+          lessonIndex: lIdx,
+          outcomes: project.outcomes,
+          sources: project.sources,
+          provider: selectedProvider,
+          model: selectedModel,
+        }),
+      });
+      const lessonData = await parseApiJson<any>(lessonRes);
+      if (!lessonRes.ok || !lessonData.success) {
+        throw new Error(
+          lessonData.error || `Failed to generate Lesson ${lIdx + 1} in Module ${modPlan.order}.`
+        );
+      }
+
+      const generatedLesson: GeneratedLessonContent = lessonData.lesson;
+      workingModule = {
+        ...workingModule,
+        lessons: [...workingModule.lessons, generatedLesson],
+        lastGeneratedAt: new Date().toISOString(),
+      };
+      const isFinalLesson = lIdx === plannedLessons.length - 1;
+      saveModuleContentState(
+        modPlan,
+        workingModule,
+        isFinalLesson ? `${workingModule.lessons.length} lessons generated` : undefined
+      );
+    }
+
+    if (plannedLessons.length === 0) {
+      saveModuleContentState(modPlan, workingModule, 'Module overview generated');
+    }
+  };
+
+  const isModuleComplete = (pm: (typeof plannedModules)[number]) => {
+    const gm = generatedModules.find(m => m.moduleId === pm.id);
+    if (!gm) return false;
+    const expectedLessons = pm.lessons?.length || 0;
+    return expectedLessons === 0 || gm.lessons.length >= expectedLessons;
   };
 
   const handleGenerateMissingModules = async () => {
     setErrorMsg(null);
     try {
       for (let i = 0; i < plannedModules.length; i++) {
-        const exists = generatedModules.some(m => m.moduleId === plannedModules[i].id);
-        if (!exists) {
+        if (!isModuleComplete(plannedModules[i])) {
           setActiveModIdx(i);
-          await generateSingleModule(i);
+          await generateSingleModule(i, false);
+          if (i < plannedModules.length - 1) {
+            await sleep(900);
+          }
         }
       }
     } catch (err: any) {
       setErrorMsg(
-        `${err?.message || 'Generation interrupted.'} Completed modules remain safely saved.`
+        `${err?.message || 'Generation interrupted.'} Completed lessons & modules remain safely saved — click Generate Remaining to resume.`
       );
     } finally {
       setGeneratingStatus(null);
@@ -133,7 +225,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     if (!activePlan) return;
     setErrorMsg(null);
     try {
-      await generateSingleModule(activeModIdx);
+      await generateSingleModule(activeModIdx, true);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Module regeneration failed.');
     } finally {
@@ -247,9 +339,8 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     });
   };
 
-  const allModulesGenerated =
-    plannedModules.length > 0 &&
-    plannedModules.every(pm => generatedModules.some(gm => gm.moduleId === pm.id));
+  const remainingModuleCount = plannedModules.filter(pm => !isModuleComplete(pm)).length;
+  const allModulesGenerated = plannedModules.length > 0 && remainingModuleCount === 0;
 
   return (
     <div className="space-y-6">
@@ -278,7 +369,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
             <span>
               {allModulesGenerated
                 ? 'All Modules Generated'
-                : `Generate Remaining (${plannedModules.length - generatedModules.length})`}
+                : `Generate Remaining (${remainingModuleCount})`}
             </span>
           </button>
         </div>
@@ -301,7 +392,8 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       {/* Module Selector Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
         {plannedModules.map((pm, idx) => {
-          const hasContent = generatedModules.some(gm => gm.moduleId === pm.id);
+          const isDone = isModuleComplete(pm);
+          const hasPartial = !isDone && generatedModules.some(gm => gm.moduleId === pm.id);
           const isCurrent = idx === activeModIdx;
           return (
             <button
@@ -314,7 +406,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                   : 'bg-white text-slate-700 border-slate-200 hover:border-[#052B66]'
               }`}
             >
-              M{pm.order}: {pm.title} {hasContent ? '✓' : ''}
+              M{pm.order}: {pm.title} {isDone ? '✓' : hasPartial ? '…' : ''}
             </button>
           );
         })}

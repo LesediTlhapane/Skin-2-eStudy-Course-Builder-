@@ -11,6 +11,8 @@ import {
   generateOutcomesWithAI,
   designAssessmentsWithAI,
   generateModuleContentWithAI,
+  generateModuleScaffoldWithAI,
+  generateSingleLessonWithAI,
   regenerateComponentWithAI,
   processCopilotChatWithAI,
   draftCourseFromCopilotPromptWithAI,
@@ -224,6 +226,50 @@ export function createApiRouter(): express.Router {
       return res.json({ success: true, moduleContent });
     } catch (err: any) {
       return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Module content generation failed.' });
+    }
+  });
+
+  router.post('/v2/content/generate-module-scaffold', async (req, res) => {
+    try {
+      const { brief, modulePlan, allModules, outcomes, assessments, sources, provider, model } = req.body || {};
+      if (!brief || !modulePlan) {
+        return res.status(400).json({ success: false, error: 'Missing brief or module plan.' });
+      }
+      const moduleContent = await generateModuleScaffoldWithAI({
+        brief,
+        modulePlan,
+        allModules: allModules || [modulePlan],
+        outcomes: outcomes || { courseOutcomes: [], moduleOutcomes: [], durationRealismNote: '', nqfSummaryNote: '', approval: { approved: false } },
+        assessments: assessments || [],
+        sources: sources || [],
+        provider,
+        model,
+      });
+      return res.json({ success: true, moduleContent });
+    } catch (err: any) {
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Module overview generation failed.' });
+    }
+  });
+
+  router.post('/v2/content/generate-lesson', async (req, res) => {
+    try {
+      const { brief, modulePlan, lessonPlan, lessonIndex, outcomes, sources, provider, model } = req.body || {};
+      if (!brief || !modulePlan || !lessonPlan) {
+        return res.status(400).json({ success: false, error: 'Missing brief, module plan, or lesson plan.' });
+      }
+      const lesson = await generateSingleLessonWithAI({
+        brief,
+        modulePlan,
+        lessonPlan,
+        lessonIndex: Number(lessonIndex) || 0,
+        outcomes: outcomes || { courseOutcomes: [], moduleOutcomes: [], durationRealismNote: '', nqfSummaryNote: '', approval: { approved: false } },
+        sources: sources || [],
+        provider,
+        model,
+      });
+      return res.json({ success: true, lesson });
+    } catch (err: any) {
+      return res.status(resolveErrorStatus(err)).json({ success: false, error: err?.message || 'Lesson generation failed.' });
     }
   });
 

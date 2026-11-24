@@ -10,6 +10,8 @@ export {
   generateOutcomesWithAI,
   designAssessmentsWithAI,
   generateModuleContentWithAI,
+  generateModuleScaffoldWithAI,
+  generateSingleLessonWithAI,
   regenerateComponentWithAI,
   processCopilotChatWithAI,
   draftCourseFromCopilotPromptWithAI,
