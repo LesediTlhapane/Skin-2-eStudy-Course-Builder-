@@ -15,7 +15,7 @@ import type {
   CourseProject,
   CurriculumModulePlan,
 } from '../../types';
-import { parseApiJson } from '../../utils/apiClient';
+import { compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
 
 interface Stage2CurriculumProps {
   project: CourseProject;
@@ -62,7 +62,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           brief: project.brief,
-          sources: project.sources,
+          sources: compactSourcesForApi(project.sources),
           desiredModuleCount: desiredCount ? Number(desiredCount) : undefined,
           existingModules: curriculum.modules.length > 0 ? curriculum.modules : undefined,
           provider: selectedProvider,
@@ -96,7 +96,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           brief: project.brief,
-          sources: project.sources,
+          sources: compactSourcesForApi(project.sources),
           curriculum,
           provider: selectedProvider,
           model: selectedModel,

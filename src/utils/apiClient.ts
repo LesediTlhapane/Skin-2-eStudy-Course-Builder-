@@ -1,3 +1,42 @@
+import type { CourseProject, SourceDocument } from '../types';
+
+export function compactSourcesForApi(sources: SourceDocument[] = []): SourceDocument[] {
+  return sources.slice(0, 6).map(s => ({
+    ...s,
+    extractedText: (s.extractedText || s.summary || '').slice(0, 1500),
+  }));
+}
+
+export function compactProjectForApi(
+  project: CourseProject,
+  options?: { onlyModuleId?: string; includeLessonText?: boolean }
+): CourseProject {
+  const includeLessonText = options?.includeLessonText ?? true;
+  const filteredContentModules = options?.onlyModuleId
+    ? project.content.modules.filter(m => m.moduleId === options.onlyModuleId)
+    : project.content.modules;
+
+  return {
+    ...project,
+    versions: [],
+    qaHistory: [],
+    sources: compactSourcesForApi(project.sources),
+    content: {
+      ...project.content,
+      generationHistory: [],
+      modules: filteredContentModules.map(m => ({
+        ...m,
+        lessons: includeLessonText
+          ? m.lessons
+          : m.lessons.map(l => ({
+              ...l,
+              explanation: l.explanation.slice(0, 300),
+            })),
+      })),
+    },
+  };
+}
+
 export async function parseApiJson<T = any>(res: Response): Promise<T> {
   const rawText = await res.text();
   const trimmed = rawText.trim();
@@ -11,6 +50,11 @@ export async function parseApiJson<T = any>(res: Response): Promise<T> {
   try {
     return JSON.parse(trimmed) as T;
   } catch {
+    if (res.status === 413) {
+      throw new Error(
+        'Request payload exceeded Vercel 4.5 MB limit (HTTP 413). Large attachments or version history are trimmed automatically — please retry.'
+      );
+    }
     const preview = trimmed.replace(/\s+/g, ' ').slice(0, 140);
     throw new Error(
       `API endpoint returned HTTP ${res.status} non-JSON response ("${preview}"). Verify backend API routes are running.`

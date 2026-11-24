@@ -15,7 +15,7 @@ import type {
   GeneratedModuleContent,
   SourceVerificationStatus,
 } from '../../types';
-import { parseApiJson } from '../../utils/apiClient';
+import { compactProjectForApi, compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
 
 interface Stage5ContentProps {
   project: CourseProject;
@@ -133,7 +133,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           allModules: plannedModules,
           outcomes: project.outcomes,
           assessments: project.assessments.items,
-          sources: project.sources,
+          sources: compactSourcesForApi(project.sources),
           provider: selectedProvider,
           model: selectedModel,
         }),
@@ -176,7 +176,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           lessonPlan: lp,
           lessonIndex: lIdx,
           outcomes: project.outcomes,
-          sources: project.sources,
+          sources: compactSourcesForApi(project.sources),
           provider: selectedProvider,
           model: selectedModel,
         }),
@@ -260,7 +260,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project,
+          project: compactProjectForApi(project, { onlyModuleId: activePlan.id }),
           targetType,
           moduleId: activePlan.id,
           targetId,

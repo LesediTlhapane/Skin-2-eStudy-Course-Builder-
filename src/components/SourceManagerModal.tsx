@@ -13,7 +13,7 @@ import type {
   SourceDocument,
   SourceVerificationStatus,
 } from '../types';
-import { parseApiJson } from '../utils/apiClient';
+import { compactSourcesForApi, parseApiJson } from '../utils/apiClient';
 
 interface SourceManagerModalProps {
   isOpen: boolean;
@@ -72,7 +72,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
           mimeType: file.type,
           base64Data,
           rawText,
-          existingSources: project.sources,
+          existingSources: compactSourcesForApi(project.sources),
           provider: selectedProvider,
           model: selectedModel,
         }),

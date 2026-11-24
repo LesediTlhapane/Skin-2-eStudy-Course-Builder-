@@ -6,7 +6,7 @@ import type {
   CopilotProposedChange,
   CourseProject,
 } from '../types';
-import { parseApiJson } from '../utils/apiClient';
+import { compactProjectForApi, parseApiJson } from '../utils/apiClient';
 
 interface CourseCopilotDrawerProps {
   isOpen: boolean;
@@ -59,7 +59,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project,
+          project: compactProjectForApi(project, { includeLessonText: false }),
           messages: nextHistory.map(m => ({ role: m.role, content: m.content })),
           userMessage: text,
           provider: selectedProvider,

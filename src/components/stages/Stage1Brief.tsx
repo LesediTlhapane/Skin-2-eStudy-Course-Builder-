@@ -14,7 +14,7 @@ import type {
   CourseTemplate,
   FieldStatus,
 } from '../../types';
-import { parseApiJson } from '../../utils/apiClient';
+import { compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
 
 interface Stage1BriefProps {
   project: CourseProject;
@@ -174,7 +174,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           brief,
-          sources: project.sources,
+          sources: compactSourcesForApi(project.sources),
           provider: selectedProvider,
           model: selectedModel,
         }),

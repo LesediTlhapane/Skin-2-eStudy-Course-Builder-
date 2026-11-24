@@ -23,7 +23,7 @@ import {
   runAccessibilityChecks,
   runTechnicalValidationChecks,
 } from '../../utils/validationChecks';
-import { parseApiJson } from '../../utils/apiClient';
+import { compactProjectForApi, parseApiJson } from '../../utils/apiClient';
 
 interface Stage6QAProps {
   project: CourseProject;
@@ -148,7 +148,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project,
+          project: compactProjectForApi(project),
           weights,
           provider: selectedProvider,
           model: selectedModel,
