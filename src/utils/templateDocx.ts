@@ -1,7 +1,8 @@
 import {
+  AlignmentType,
   BorderStyle,
   Document,
-  HeadingLevel,
+  Footer,
   Packer,
   Paragraph,
   ShadingType,
@@ -21,8 +22,13 @@ import type {
 import { createEmptyCourseProject } from '../data/benchmarks';
 import { apiFetch, parseApiJson } from './apiClient';
 import {
+  V9_THEME,
   buildMasterV9TemplateDocxDocument,
+  calloutBox,
+  goldRule,
   isMasterV9Template,
+  navyBanner,
+  subHeading,
 } from './masterV9TemplateDocx';
 
 function slugify(input: string): string {
@@ -44,64 +50,80 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 const CELL_BORDERS = {
-  top: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-  bottom: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-  left: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
-  right: { style: BorderStyle.SINGLE, size: 4, color: 'CBD5E1' },
+  top: { style: BorderStyle.SINGLE, size: 4, color: V9_THEME.BORDER_GRAY },
+  bottom: { style: BorderStyle.SINGLE, size: 4, color: V9_THEME.BORDER_GRAY },
+  left: { style: BorderStyle.SINGLE, size: 4, color: V9_THEME.BORDER_GRAY },
+  right: { style: BorderStyle.SINGLE, size: 4, color: V9_THEME.BORDER_GRAY },
+};
+
+const ENTRY_PLACEHOLDER_BORDERS = {
+  top: { style: BorderStyle.SINGLE, size: 4, color: V9_THEME.BORDER_GRAY },
+  bottom: { style: BorderStyle.SINGLE, size: 4, color: V9_THEME.BORDER_GRAY },
+  left: { style: BorderStyle.SINGLE, size: 18, color: V9_THEME.INSERT_BORDER },
+  right: { style: BorderStyle.SINGLE, size: 4, color: V9_THEME.BORDER_GRAY },
 };
 
 const CELL_MARGINS = {
-  top: 100,
-  bottom: 100,
+  top: 90,
+  bottom: 90,
   left: 140,
   right: 140,
 };
 
-function makeParagraphsFromText(text: string, opts?: { muted?: boolean; italic?: boolean }): Paragraph[] {
+function makeParagraphsFromText(
+  text: string,
+  opts?: { isPlaceholder?: boolean; bold?: boolean }
+): Paragraph[] {
   const lines = String(text || '').split(/\r?\n/);
   return lines.map(
     line =>
       new Paragraph({
-        spacing: { after: 60 },
+        spacing: { after: 40 },
         children: [
           new TextRun({
             text: line || ' ',
             size: 20,
-            color: opts?.muted ? '64748B' : '0F172A',
-            italics: Boolean(opts?.italic),
+            bold: Boolean(opts?.bold || opts?.isPlaceholder),
+            italics: Boolean(opts?.isPlaceholder),
+            color: opts?.isPlaceholder ? V9_THEME.INSERT_TEXT : '0F172A',
+            font: 'Calibri',
           }),
         ],
       })
   );
 }
 
-function makeFieldRow(params: {
-  label: string;
-  tag: string;
-  guidance?: string;
-  valueOrPlaceholder: string;
-  isPlaceholder?: boolean;
-}): TableRow {
+function makeFieldRow(
+  params: {
+    label: string;
+    tag: string;
+    guidance?: string;
+    valueOrPlaceholder: string;
+    isPlaceholder?: boolean;
+  },
+  rowIndex = 0
+): TableRow {
   const leftChildren: Paragraph[] = [
     new Paragraph({
-      spacing: { after: 40 },
+      spacing: { after: 30 },
       children: [
         new TextRun({
           text: params.label,
           bold: true,
           size: 20,
-          color: '052B66',
+          color: V9_THEME.NAVY,
+          font: 'Calibri',
         }),
       ],
     }),
     new Paragraph({
-      spacing: { after: params.guidance ? 40 : 0 },
+      spacing: { after: params.guidance ? 30 : 0 },
       children: [
         new TextRun({
           text: params.tag,
           font: 'Courier New',
           size: 16,
-          color: '475569',
+          color: V9_THEME.TEAL,
         }),
       ],
     }),
@@ -116,29 +138,35 @@ function makeFieldRow(params: {
             italics: true,
             size: 17,
             color: '64748B',
+            font: 'Calibri',
           }),
         ],
       })
     );
   }
 
+  const labelFill = rowIndex % 2 === 1 ? 'EEF2F6' : 'F8FAFC';
+
   return new TableRow({
     children: [
       new TableCell({
         width: { size: 38, type: WidthType.PERCENTAGE },
-        shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
+        shading: { type: ShadingType.CLEAR, color: 'auto', fill: labelFill },
         borders: CELL_BORDERS,
         margins: CELL_MARGINS,
         children: leftChildren,
       }),
       new TableCell({
         width: { size: 62, type: WidthType.PERCENTAGE },
-        shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'FFFFFF' },
-        borders: CELL_BORDERS,
+        shading: {
+          type: ShadingType.CLEAR,
+          color: 'auto',
+          fill: params.isPlaceholder ? V9_THEME.INSERT_BG : 'FFFFFF',
+        },
+        borders: params.isPlaceholder ? ENTRY_PLACEHOLDER_BORDERS : CELL_BORDERS,
         margins: CELL_MARGINS,
         children: makeParagraphsFromText(params.valueOrPlaceholder, {
-          muted: params.isPlaceholder,
-          italic: params.isPlaceholder,
+          isPlaceholder: params.isPlaceholder,
         }),
       }),
     ],
@@ -151,29 +179,60 @@ function makeTwoColHeaderRow(leftTitle: string, rightTitle: string): TableRow {
     children: [
       new TableCell({
         width: { size: 38, type: WidthType.PERCENTAGE },
-        shading: { type: ShadingType.CLEAR, color: 'auto', fill: '052B66' },
+        shading: { type: ShadingType.CLEAR, color: 'auto', fill: V9_THEME.NAVY },
         borders: CELL_BORDERS,
         margins: CELL_MARGINS,
         children: [
           new Paragraph({
             children: [
-              new TextRun({ text: leftTitle, bold: true, size: 20, color: 'FFFFFF' }),
+              new TextRun({
+                text: leftTitle,
+                bold: true,
+                size: 20,
+                color: 'FFFFFF',
+                font: 'Calibri',
+              }),
             ],
           }),
         ],
       }),
       new TableCell({
         width: { size: 62, type: WidthType.PERCENTAGE },
-        shading: { type: ShadingType.CLEAR, color: 'auto', fill: '052B66' },
+        shading: { type: ShadingType.CLEAR, color: 'auto', fill: V9_THEME.NAVY },
         borders: CELL_BORDERS,
         margins: CELL_MARGINS,
         children: [
           new Paragraph({
             children: [
-              new TextRun({ text: rightTitle, bold: true, size: 20, color: 'FFFFFF' }),
+              new TextRun({
+                text: rightTitle,
+                bold: true,
+                size: 20,
+                color: 'FFFFFF',
+                font: 'Calibri',
+              }),
             ],
           }),
         ],
+      }),
+    ],
+  });
+}
+
+function spacer(after = 90): Paragraph {
+  return new Paragraph({ spacing: { after }, children: [] });
+}
+
+function v9Bullet(text: string): Paragraph {
+  return new Paragraph({
+    bullet: { level: 0 },
+    spacing: { after: 55 },
+    children: [
+      new TextRun({
+        text,
+        size: 19,
+        color: '1E293B',
+        font: 'Calibri',
       }),
     ],
   });
@@ -197,114 +256,153 @@ export function buildTemplateDocxDocument(
 
   const children: Array<Paragraph | Table> = [];
 
-  // Title Banner
+  // Executive eStudy South Africa Cover Header (matches Master v9.0 Theme)
   children.push(
     new Paragraph({
-      heading: HeadingLevel.TITLE,
-      spacing: { after: 80 },
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 100, after: 40 },
       children: [
         new TextRun({
-          text: template.name,
+          text: 'eStudy South Africa',
           bold: true,
-          size: 36,
-          color: '052B66',
+          size: 44,
+          color: V9_THEME.NAVY,
+          font: 'Calibri',
         }),
       ],
     }),
     new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 40 },
+      children: [
+        new TextRun({
+          text: template.name.toUpperCase(),
+          bold: true,
+          size: 28,
+          color: V9_THEME.GOLD,
+          font: 'Calibri',
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 40 },
+      children: [
+        new TextRun({
+          text: `– ${template.category} · ${template.version} · Universal Fillable Course Template`,
+          italics: true,
+          size: 22,
+          color: V9_THEME.TEAL,
+          font: 'Calibri',
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
       spacing: { after: 140 },
       children: [
         new TextRun({
-          text: `${template.category} · ${template.version} — Fillable Course Authoring Form`,
-          bold: true,
-          size: 22,
-          color: '1E293B',
-        }),
-      ],
-    }),
-    new Paragraph({
-      spacing: { after: 120 },
-      children: [
-        new TextRun({
           text: template.description,
-          size: 20,
-          color: '475569',
+          italics: true,
+          size: 19,
+          color: '64748B',
+          font: 'Calibri',
         }),
       ],
     }),
-    new Paragraph({
-      spacing: { after: 200 },
-      children: [
-        new TextRun({
-          text: 'HOW TO USE THIS WORD TEMPLATE: ',
-          bold: true,
-          size: 19,
-          color: '052B66',
-        }),
-        new TextRun({
+    goldRule(),
+    spacer(40)
+  );
+
+  // HOW TO USE THIS TEMPLATE Banner + Green Callouts
+  children.push(
+    navyBanner('HOW TO USE THIS TEMPLATE'),
+    spacer(50),
+    calloutBox({
+      title: 'Step-by-Step Round-Trip Instructions',
+      lines: [
+        {
           text:
-            'Fill in your course details inside the white right-hand cells below. Keep the bracketed field tags (such as [brief:title] or [field:rootCauses]) intact in the shaded left column so that when you upload this Word document back into eStudy Master Course Builder, every field imports automatically into your course.',
-          size: 19,
-          color: '334155',
-        }),
+            'Replace the blue-highlighted placeholder cells in the right-hand column with your course-specific content. Keep the bracketed field tags intact in the left column so uploading this Word file back into eStudy imports every field automatically.',
+          italic: true,
+        },
       ],
-    })
+      fill: V9_THEME.GREEN_BG,
+      borderColor: V9_THEME.GREEN_BORDER,
+      titleColor: V9_THEME.GREEN_BORDER,
+    }),
+    spacer(80),
+    calloutBox({
+      title: 'GLOBAL RULE — HANDLING PLACEHOLDER FIELDS',
+      lines: [
+        {
+          text: 'Apply these integrity standards across every field in this template:',
+          italic: true,
+        },
+      ],
+      fill: V9_THEME.GREEN_BG,
+      borderColor: V9_THEME.GREEN_BORDER,
+      titleColor: V9_THEME.GREEN_BORDER,
+    }),
+    spacer(50),
+    v9Bullet('If information is known and verified, replace the blue placeholder with course-specific content.'),
+    v9Bullet('If a field does not apply, enter "Not Applicable" with a brief explanation.'),
+    v9Bullet('If information is unknown, enter "To Be Confirmed" and state what is needed.'),
+    v9Bullet('If specialist or accreditation sign-off is required, mark it "Requires SME/Stakeholder Validation".'),
+    v9Bullet('Never invent or assume statutory citations, qualification codes, or unverified thresholds.'),
+    spacer(120)
   );
 
   // Template Identification Metadata Table
   children.push(
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 160, after: 100 },
-      children: [
-        new TextRun({ text: 'Template Identification', bold: true, size: 26, color: '052B66' }),
-      ],
-    }),
+    navyBanner('TEMPLATE IDENTIFICATION'),
+    spacer(50),
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       rows: [
-        makeTwoColHeaderRow('System Property', 'Value (Do Not Remove)'),
-        makeFieldRow({
-          label: 'Template ID',
-          tag: '[meta:templateId]',
-          valueOrPlaceholder: template.id,
-        }),
-        makeFieldRow({
-          label: 'Template Name',
-          tag: '[meta:templateName]',
-          valueOrPlaceholder: template.name,
-        }),
-        makeFieldRow({
-          label: 'Template Version',
-          tag: '[meta:templateVersion]',
-          valueOrPlaceholder: template.version,
-        }),
-      ],
-    })
-  );
-
-  // Section A: Core Course Brief & Metadata
-  children.push(
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 280, after: 100 },
-      children: [
-        new TextRun({
-          text: 'Section A: Stage 1 Core Course Brief & Metadata',
-          bold: true,
-          size: 26,
-          color: '052B66',
-        }),
+        makeTwoColHeaderRow('System Property', 'Template Metadata (Do Not Remove)'),
+        makeFieldRow(
+          {
+            label: 'Template ID',
+            tag: '[meta:templateId]',
+            valueOrPlaceholder: template.id,
+          },
+          0
+        ),
+        makeFieldRow(
+          {
+            label: 'Template Name',
+            tag: '[meta:templateName]',
+            valueOrPlaceholder: template.name,
+          },
+          1
+        ),
+        makeFieldRow(
+          {
+            label: 'Template Version',
+            tag: '[meta:templateVersion]',
+            valueOrPlaceholder: template.version,
+          },
+          2
+        ),
       ],
     }),
+    spacer(120)
+  );
+
+  // Section 1: Core Course Brief & Metadata
+  children.push(
+    navyBanner('1. STAGE 1 CORE COURSE BRIEF & METADATA'),
+    spacer(40),
     new Paragraph({
-      spacing: { after: 120 },
+      spacing: { after: 100 },
       children: [
         new TextRun({
-          text: 'Fields marked with * are required to approve Stage 1 and begin curriculum architecture.',
+          text: 'Fields marked with * are required to approve Stage 1 and unlock curriculum architecture.',
           size: 19,
           italics: true,
           color: '64748B',
+          font: 'Calibri',
         }),
       ],
     })
@@ -321,126 +419,126 @@ export function buildTemplateDocxDocument(
       key: 'title',
       label: 'Course Title *',
       guidance: 'Protected metadata. Official name of the learning programme.',
-      placeholder: '[Enter Course Title here]',
+      placeholder: '[INSERT: COURSE TITLE]',
       currentValue: b?.title,
     },
     {
       key: 'code',
       label: 'Course Code / ID',
-      guidance: 'Internal or qualification course identifier (e.g. EST-AI-101).',
-      placeholder: '[Enter Course Code here]',
+      guidance: 'Internal or qualification course identifier (e.g. EST-ENG-101).',
+      placeholder: '[INSERT: COURSE CODE]',
       currentValue: b?.code,
     },
     {
       key: 'industryDomain',
       label: 'Industry / Subject Domain *',
-      guidance: 'Primary sector or discipline (e.g. Healthcare, Mining, Corporate Leadership).',
-      placeholder: '[Enter Industry or Subject Domain here]',
+      guidance: 'Primary sector or discipline (e.g. Engineering, Compliance, Operations).',
+      placeholder: '[INSERT: INDUSTRY DOMAIN]',
       currentValue: b?.industryDomain,
     },
     {
       key: 'targetAudience',
       label: 'Target Audience *',
       guidance: 'Who the learners are and their workplace environment.',
-      placeholder: '[Enter Target Audience here]',
+      placeholder: '[INSERT: TARGET AUDIENCE]',
       currentValue: b?.targetAudience,
     },
     {
       key: 'targetJobRoles',
       label: 'Target Job Roles',
       guidance: 'Specific job titles or roles (comma-separated).',
-      placeholder: '[Enter Target Job Roles here]',
+      placeholder: '[INSERT: TARGET JOB ROLES]',
       currentValue: b?.targetJobRoles,
     },
     {
       key: 'experienceLevel',
       label: 'Experience Level',
-      guidance: 'Use: Entry / Foundational, Intermediate, Advanced, or Executive / Specialist.',
-      placeholder: '[Enter Experience Level: Entry / Foundational | Intermediate | Advanced | Executive / Specialist]',
+      guidance: 'Entry / Foundational, Intermediate, Advanced, or Executive / Specialist.',
+      placeholder: '[INSERT: EXPERIENCE LEVEL]',
       currentValue: b?.experienceLevel,
     },
     {
       key: 'prerequisites',
       label: 'Prerequisites',
       guidance: 'Prior learning, certifications, or workplace access needed.',
-      placeholder: '[Enter Prerequisites or None required]',
+      placeholder: '[INSERT: PREREQUISITES OR NONE REQUIRED]',
       currentValue: b?.prerequisites,
     },
     {
       key: 'estimatedDuration',
       label: 'Estimated Duration *',
       guidance: 'Total notional learning time (e.g. 8 Hours, 2 Days, 16 Notional Hours).',
-      placeholder: '[Enter Estimated Duration here]',
+      placeholder: '[INSERT: ESTIMATED DURATION]',
       currentValue: b?.estimatedDuration,
     },
     {
       key: 'language',
       label: 'Delivery Language',
       guidance: 'Language and regional context (e.g. English (South African Context)).',
-      placeholder: '[Enter Delivery Language here]',
-      currentValue: b?.language || 'English (South African Context)',
+      placeholder: '[INSERT: DELIVERY LANGUAGE — E.G. ENGLISH (SOUTH AFRICAN CONTEXT)]',
+      currentValue: b?.language,
     },
     {
       key: 'purpose',
       label: 'Course Purpose & Capability Goal *',
       guidance: 'What learners will be able to do reliably in the workplace after completing.',
-      placeholder: '[Enter 2-3 sentence Course Purpose here]',
+      placeholder: '[INSERT: 2–3 SENTENCE COURSE PURPOSE STATEMENT]',
       currentValue: b?.purpose,
     },
     {
       key: 'workplaceProblem',
       label: 'Workplace Problem / Operational Need',
       guidance: 'Concrete performance gap, risk, or operational challenge being solved.',
-      placeholder: '[Enter Workplace Problem or Operational Need here]',
+      placeholder: '[INSERT: WORKPLACE PROBLEM / OPERATIONAL NEED]',
       currentValue: b?.workplaceProblem,
     },
     {
       key: 'learningRequirements',
       label: 'Learning Requirements & Constraints',
       guidance: 'Pedagogical depth, hands-on requirements, and verification boundaries.',
-      placeholder: '[Enter Learning Requirements here]',
+      placeholder: '[INSERT: LEARNING REQUIREMENTS & CONSTRAINTS]',
       currentValue: b?.learningRequirements,
     },
     {
       key: 'subjectTopicsInput',
       label: 'Mandatory Subject Topics *',
       guidance: 'List all required topics (one per line). Stage 2 verifies zero silent omissions.',
-      placeholder: '[Enter Mandatory Subject Topics here, one per line]',
+      placeholder: '[INSERT: MANDATORY SUBJECT TOPICS — ONE PER LINE]',
       currentValue: b?.subjectTopicsInput,
     },
     {
       key: 'aiIntegrationMode',
       label: 'AI Integration Mode',
       guidance: 'Choose one: none, optional, or core.',
-      placeholder: template.defaultAiMode,
-      currentValue: b?.aiIntegrationMode || template.defaultAiMode,
+      placeholder: `[INSERT: AI INTEGRATION MODE — NONE / OPTIONAL / CORE (DEFAULT: ${template.defaultAiMode.toUpperCase()})]`,
+      currentValue: b?.aiIntegrationMode,
     },
     {
       key: 'aiIntegrationRequirements',
       label: 'AI Integration Scope & Governance',
       guidance: 'Specify AI tools, safeguards, or write Not applicable.',
-      placeholder: '[Enter AI Integration Scope or Not applicable]',
+      placeholder: '[INSERT: AI INTEGRATION SCOPE OR NOT APPLICABLE]',
       currentValue: b?.aiIntegrationRequirements,
     },
     {
       key: 'saCompliance.nqfLevel',
       label: 'NQF Level (Optional SA Context)',
-      guidance: 'If NQF-aligned, specify level (e.g. NQF Level 5). Otherwise leave blank.',
-      placeholder: '[Enter NQF Level if applicable]',
+      guidance: 'If NQF-aligned, specify level (e.g. NQF Level 5). Otherwise leave untouched.',
+      placeholder: '[INSERT: NQF LEVEL IF APPLICABLE]',
       currentValue: b?.saCompliance?.nqfLevel,
     },
     {
       key: 'saCompliance.setaName',
       label: 'SETA / ETQA Name (Optional)',
       guidance: 'Relevant SETA or professional body if applicable.',
-      placeholder: '[Enter SETA Name if applicable]',
+      placeholder: '[INSERT: SETA / ETQA BODY IF APPLICABLE]',
       currentValue: b?.saCompliance?.setaName,
     },
     {
       key: 'saCompliance.industryLegislation',
       label: 'Applicable Legislation / Technical Standards',
       guidance: 'Verified Acts, regulations, SANS/ISO codes, or workplace SOPs.',
-      placeholder: '[Enter Applicable Legislation or Technical Standards here]',
+      placeholder: '[INSERT: APPLICABLE LEGISLATION OR TECHNICAL STANDARDS]',
       currentValue: b?.saCompliance?.industryLegislation,
     },
   ];
@@ -449,59 +547,47 @@ export function buildTemplateDocxDocument(
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       rows: [
-        makeTwoColHeaderRow('Brief Field & Tag', 'Your Entry (Replace Placeholder Text)'),
-        ...briefSpecs.map(spec => {
+        makeTwoColHeaderRow('Brief Field & Tag', 'Your Input (Replace Highlighted Text)'),
+        ...briefSpecs.map((spec, idx) => {
           const resolved = valOrPlaceholder(spec.currentValue, spec.placeholder);
-          return makeFieldRow({
-            label: spec.label,
-            tag: `[brief:${spec.key}]`,
-            guidance: spec.guidance,
-            valueOrPlaceholder: resolved.text,
-            isPlaceholder: resolved.isPlaceholder,
-          });
+          return makeFieldRow(
+            {
+              label: spec.label,
+              tag: `[brief:${spec.key}]`,
+              guidance: spec.guidance,
+              valueOrPlaceholder: resolved.text,
+              isPlaceholder: resolved.isPlaceholder,
+            },
+            idx
+          );
         }),
       ],
-    })
+    }),
+    spacer(140)
   );
 
-  // Section B: Template-Specific Sections & Fields
+  // Section 2: Template-Specific Sections & Fields
   children.push(
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 320, after: 100 },
-      children: [
-        new TextRun({
-          text: `Section B: ${template.name} — Specific Sections`,
-          bold: true,
-          size: 26,
-          color: '052B66',
-        }),
-      ],
-    })
+    navyBanner(`2. ${template.name.toUpperCase()} — SPECIFIC SECTIONS`),
+    spacer(40)
   );
 
   const sortedSections = [...template.sections].sort((a, bSec) => a.order - bSec.order);
-  for (const sec of sortedSections) {
-    children.push(
-      new Paragraph({
-        heading: HeadingLevel.HEADING_2,
-        spacing: { before: 220, after: 60 },
-        children: [
-          new TextRun({
-            text: `${sec.title} (${sec.required ? 'Required' : 'Optional'})`,
-            bold: true,
-            size: 22,
-            color: '042150',
-          }),
-        ],
-      })
-    );
+  for (let sIdx = 0; sIdx < sortedSections.length; sIdx++) {
+    const sec = sortedSections[sIdx];
+    const cleanSecTitle = sec.title.replace(/^\d+\.\s*/, '');
+    children.push(...subHeading(`2.${sIdx + 1} ${cleanSecTitle} (${sec.required ? 'Required' : 'Optional'})`));
     if (sec.description) {
       children.push(
         new Paragraph({
-          spacing: { after: 100 },
+          spacing: { after: 90 },
           children: [
-            new TextRun({ text: sec.description, size: 19, color: '475569' }),
+            new TextRun({
+              text: sec.description,
+              size: 19,
+              color: '475569',
+              font: 'Calibri',
+            }),
           ],
         })
       );
@@ -512,11 +598,11 @@ export function buildTemplateDocxDocument(
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
           rows: [
-            makeTwoColHeaderRow('Template Field & Tag', 'Your Entry (Replace Placeholder Text)'),
-            ...sec.fields.map(fld => {
+            makeTwoColHeaderRow('Template Field & Tag', 'Your Input (Replace Highlighted Text)'),
+            ...sec.fields.map((fld, fIdx) => {
               const resolved = valOrPlaceholder(
                 b?.templateFieldValues?.[fld.key],
-                fld.placeholder || `[Enter ${fld.label} here]`
+                fld.placeholder || `[INSERT: ${fld.label.toUpperCase()}]`
               );
               const guidanceParts = [
                 fld.helpText || '',
@@ -524,41 +610,37 @@ export function buildTemplateDocxDocument(
                   ? `Options: ${fld.options.join(' | ')}`
                   : '',
               ].filter(Boolean);
-              return makeFieldRow({
-                label: `${fld.label}${fld.required ? ' *' : ' (Optional)'}`,
-                tag: `[field:${fld.key}]`,
-                guidance: guidanceParts.join(' · ') || undefined,
-                valueOrPlaceholder: resolved.text,
-                isPlaceholder: resolved.isPlaceholder,
-              });
+              return makeFieldRow(
+                {
+                  label: `${fld.label}${fld.required ? ' *' : ' (Optional)'}`,
+                  tag: `[field:${fld.key}]`,
+                  guidance: guidanceParts.join(' · ') || undefined,
+                  valueOrPlaceholder: resolved.text,
+                  isPlaceholder: resolved.isPlaceholder,
+                },
+                fIdx
+              );
             }),
           ],
-        })
+        }),
+        spacer(80)
       );
     }
   }
 
-  // Section C: Optional Starter Module Outline
+  // Section 3: Optional Starter Module Outline
   children.push(
+    spacer(100),
+    navyBanner('3. OPTIONAL STARTER MODULE OUTLINE'),
+    spacer(40),
     new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 320, after: 100 },
+      spacing: { after: 100 },
       children: [
         new TextRun({
-          text: 'Section C: Optional Starter Module Outline',
-          bold: true,
-          size: 26,
-          color: '052B66',
-        }),
-      ],
-    }),
-    new Paragraph({
-      spacing: { after: 120 },
-      children: [
-        new TextRun({
-          text: 'Optional: If you already know the modules you want, replace the placeholders below. Leave untouched to let Stage 2 AI propose modules from your Mandatory Subject Topics.',
+          text: 'Optional: If you already know the modules you want, replace the highlighted placeholders below. Leave untouched to let Stage 2 AI propose modules from your Mandatory Subject Topics.',
           size: 19,
           color: '475569',
+          font: 'Calibri',
         }),
       ],
     })
@@ -578,13 +660,19 @@ export function buildTemplateDocxDocument(
         col =>
           new TableCell({
             width: { size: col.width, type: WidthType.PERCENTAGE },
-            shading: { type: ShadingType.CLEAR, color: 'auto', fill: '052B66' },
+            shading: { type: ShadingType.CLEAR, color: 'auto', fill: V9_THEME.NAVY },
             borders: CELL_BORDERS,
             margins: CELL_MARGINS,
             children: [
               new Paragraph({
                 children: [
-                  new TextRun({ text: col.label, bold: true, size: 19, color: 'FFFFFF' }),
+                  new TextRun({
+                    text: col.label,
+                    bold: true,
+                    size: 19,
+                    color: 'FFFFFF',
+                    font: 'Calibri',
+                  }),
                 ],
               }),
             ],
@@ -595,23 +683,35 @@ export function buildTemplateDocxDocument(
 
   for (let i = 0; i < moduleRowCount; i++) {
     const mod = existingModules[i];
-    const modTitle = mod?.title || `[Enter Module ${i + 1} Title]`;
+    const modTitle = mod?.title || `[INSERT: MODULE ${i + 1} TITLE]`;
     const modTopics =
       mod && mod.topics.length > 0
         ? mod.topics.map(t => t.title).join(', ')
-        : `[Enter Module ${i + 1} topics, comma-separated]`;
+        : `[INSERT: MODULE ${i + 1} KEY TOPICS]`;
     const modMins =
       mod && mod.lessons.length > 0
         ? `${mod.lessons.reduce((acc, l) => acc + (Number(l.durationMinutes) || 0), 0)} mins`
         : '[e.g. 90 mins]';
 
+    const rowBg = i % 2 === 1 ? V9_THEME.ALT_ROW_BG : 'FFFFFF';
+
     moduleRows.push(
       new TableRow({
         children: [
-          { text: `Module ${i + 1}`, width: 14, shaded: true, muted: false },
-          { text: modTitle, width: 30, shaded: false, muted: !mod?.title },
-          { text: modTopics, width: 40, shaded: false, muted: !(mod && mod.topics.length > 0) },
-          { text: modMins, width: 16, shaded: false, muted: !(mod && mod.lessons.length > 0) },
+          { text: `Module ${i + 1}`, width: 14, isLabel: true, isPlaceholder: false },
+          { text: modTitle, width: 30, isLabel: false, isPlaceholder: !mod?.title },
+          {
+            text: modTopics,
+            width: 40,
+            isLabel: false,
+            isPlaceholder: !(mod && mod.topics.length > 0),
+          },
+          {
+            text: modMins,
+            width: 16,
+            isLabel: false,
+            isPlaceholder: !(mod && mod.lessons.length > 0),
+          },
         ].map(
           cell =>
             new TableCell({
@@ -619,13 +719,17 @@ export function buildTemplateDocxDocument(
               shading: {
                 type: ShadingType.CLEAR,
                 color: 'auto',
-                fill: cell.shaded ? 'F1F5F9' : 'FFFFFF',
+                fill: cell.isLabel
+                  ? 'EEF2F6'
+                  : cell.isPlaceholder
+                    ? V9_THEME.INSERT_BG
+                    : rowBg,
               },
-              borders: CELL_BORDERS,
+              borders: cell.isPlaceholder ? ENTRY_PLACEHOLDER_BORDERS : CELL_BORDERS,
               margins: CELL_MARGINS,
               children: makeParagraphsFromText(cell.text, {
-                muted: cell.muted,
-                italic: cell.muted,
+                isPlaceholder: cell.isPlaceholder,
+                bold: cell.isLabel,
               }),
             })
         ),
@@ -640,36 +744,83 @@ export function buildTemplateDocxDocument(
     })
   );
 
-  // Section D: Quality Rules Reference
+  // Section 4: Quality Rules Reference
   if (template.qualityRules.length > 0) {
     children.push(
-      new Paragraph({
-        heading: HeadingLevel.HEADING_1,
-        spacing: { before: 320, after: 100 },
-        children: [
-          new TextRun({
-            text: 'Section D: Template Quality Rules (Reference)',
-            bold: true,
-            size: 26,
-            color: '052B66',
-          }),
-        ],
-      }),
-      ...template.qualityRules.map(
-        rule =>
-          new Paragraph({
-            bullet: { level: 0 },
-            spacing: { after: 60 },
-            children: [new TextRun({ text: rule, size: 19, color: '334155' })],
-          })
-      )
+      spacer(140),
+      navyBanner('4. TEMPLATE QUALITY RULES & BENCHMARK STANDARDS'),
+      spacer(50),
+      calloutBox({
+        title: `Quality Assurance Standards for ${template.name}`,
+        lines: template.qualityRules.map(rule => ({ text: `• ${rule}` })),
+        fill: V9_THEME.EXAMPLE_BG,
+        borderColor: V9_THEME.EXAMPLE_BORDER,
+        titleColor: '8A6116',
+      })
     );
   }
+
+  // Executive End Banner
+  children.push(
+    spacer(240),
+    goldRule(),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 60, after: 30 },
+      children: [
+        new TextRun({
+          text: `END OF ${template.name.toUpperCase()} (${template.version})`,
+          bold: true,
+          size: 22,
+          color: V9_THEME.NAVY,
+          font: 'Calibri',
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [
+        new TextRun({
+          text: 'eStudy South Africa · Confidential & Proprietary · Not for Distribution',
+          italics: true,
+          size: 18,
+          color: '64748B',
+          font: 'Calibri',
+        }),
+      ],
+    })
+  );
 
   return new Document({
     sections: [
       {
-        properties: {},
+        properties: {
+          page: {
+            margin: {
+              top: 1080,
+              bottom: 1080,
+              left: 1140,
+              right: 1140,
+            },
+          },
+        },
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    text: `eStudy South Africa · ${template.name} (${template.version})`,
+                    size: 16,
+                    color: '94A3B8',
+                    font: 'Calibri',
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
         children,
       },
     ],

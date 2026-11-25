@@ -16,6 +16,7 @@ export {
   processCopilotChatWithAI,
   draftCourseFromCopilotPromptWithAI,
   extractTemplateFromDocumentWithAI,
+  generateOrRefineTemplateWithCopilotAI,
 } from './stageTasks.js';
 export {
   computeAssessmentAlignmentFlags,

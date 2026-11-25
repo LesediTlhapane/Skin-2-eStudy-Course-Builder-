@@ -17,6 +17,7 @@ import {
   processCopilotChatWithAI,
   draftCourseFromCopilotPromptWithAI,
   extractTemplateFromDocumentWithAI,
+  generateOrRefineTemplateWithCopilotAI,
   evaluateCourseQAWithAI,
   parseFilledTemplateTextDeterministically,
   parseFilledCourseBriefWithAI,
@@ -633,6 +634,32 @@ export function createApiRouter(options?: {
         return res.json({ success: true, ...result });
       } catch (err: any) {
         return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'Copilot draft failed.') });
+      }
+    }
+  );
+
+  router.post(
+    '/v2/templates/copilot-draft',
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const { prompt, currentTemplate, messages, provider, model } = req.body || {};
+        if (!prompt || !String(prompt).trim()) {
+          return res.status(400).json({ success: false, error: 'Please describe the template you want to create.' });
+        }
+        const result = await runWithAiTelemetry(req, 'templates.copilot_draft', () =>
+          generateOrRefineTemplateWithCopilotAI({
+            prompt: String(prompt).trim().slice(0, 8000),
+            currentTemplate: currentTemplate || null,
+            messages: Array.isArray(messages) ? messages : [],
+            provider,
+            model,
+          })
+        );
+        return res.json({ success: true, ...result });
+      } catch (err: any) {
+        return res
+          .status(resolveErrorStatus(err))
+          .json({ success: false, error: sanitizeErrorMessage(err, 'Template Copilot failed.') });
       }
     }
   );

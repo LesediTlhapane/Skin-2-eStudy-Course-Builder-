@@ -458,7 +458,7 @@ export function parseFilledTemplateTextDeterministically(
       const labelCell = segments[i];
       const valueCell = segments[i + 1].trim();
 
-      const metaMatch = labelCell.match(/\[meta:([a-zA-Z0-9_.-]+)\]/);
+      const metaMatch = labelCell.match(/(?:^|\n)\s*\[meta:([a-zA-Z0-9_.-]+)\]\s*(?:\n|$)/);
       if (metaMatch) {
         const metaKey = metaMatch[1];
         if (!isPlaceholderValue(valueCell)) {
@@ -468,13 +468,13 @@ export function parseFilledTemplateTextDeterministically(
         continue;
       }
 
-      const briefMatch = labelCell.match(/\[brief:([a-zA-Z0-9_.-]+)\]/);
+      const briefMatch = labelCell.match(/(?:^|\n)\s*\[brief:([a-zA-Z0-9_.-]+)\]\s*(?:\n|$)/);
       if (briefMatch) {
         setBriefKey(briefMatch[1], valueCell);
         continue;
       }
 
-      const fieldMatch = labelCell.match(/\[field:([a-zA-Z0-9_.-]+)\]/);
+      const fieldMatch = labelCell.match(/(?:^|\n)\s*\[field:([a-zA-Z0-9_.-]+)\]\s*(?:\n|$)/);
       if (fieldMatch) {
         if (!isPlaceholderValue(valueCell)) {
           templateFieldValues[fieldMatch[1]] = valueCell;
@@ -578,14 +578,25 @@ export function parseFilledTemplateTextDeterministically(
     brief.saCompliance = saCompliancePatch as any;
   }
 
-  if (template && Object.keys(templateFieldValues).length === 0 && segments.length >= 2) {
+  const hasFieldTags = /\[field:[a-zA-Z0-9_.-]+\]/.test(extractedText);
+  if (template && !hasFieldTags && Object.keys(templateFieldValues).length === 0 && segments.length >= 2) {
     const allFields = template.sections.flatMap(s => s.fields);
     for (let i = 0; i < segments.length - 1; i++) {
-      const labelCell = segments[i].toLowerCase();
+      const labelLine = (segments[i].split('\n')[0] || '').replace(/\s*\*$/, '').trim().toLowerCase();
       const valueCell = segments[i + 1].trim();
-      if (isPlaceholderValue(valueCell)) continue;
+      if (
+        !labelLine ||
+        labelLine.startsWith('[') ||
+        isPlaceholderValue(valueCell) ||
+        /\[(brief|field|meta):/i.test(valueCell) ||
+        /^Your Input\b/i.test(valueCell) ||
+        /^END OF\b/i.test(valueCell)
+      ) {
+        continue;
+      }
       for (const fld of allFields) {
-        if (!templateFieldValues[fld.key] && labelCell.includes(fld.label.toLowerCase())) {
+        const fldNorm = fld.label.replace(/\s*\*$/, '').trim().toLowerCase();
+        if (!templateFieldValues[fld.key] && (labelLine === fldNorm || labelLine.startsWith(fldNorm))) {
           templateFieldValues[fld.key] = valueCell;
         }
       }

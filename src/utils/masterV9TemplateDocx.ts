@@ -13,18 +13,33 @@ import {
 } from 'docx';
 import type { CourseProject, CourseTemplate } from '../types';
 
-const NAVY = '1B365D';
-const GOLD = 'B68D2C';
-const TEAL = '2C6B74';
-const INSERT_BG = 'EBF3FC';
-const INSERT_BORDER = '2B6CB0';
-const INSERT_TEXT = '1D4ED8';
-const GREEN_BG = 'ECF5F0';
-const GREEN_BORDER = '1E6F5C';
-const EXAMPLE_BG = 'FDF6E3';
-const EXAMPLE_BORDER = 'D4A017';
-const ALT_ROW_BG = 'F3F4F6';
-const BORDER_GRAY = 'D1D5DB';
+export const V9_THEME = {
+  NAVY: '1B365D',
+  GOLD: 'B68D2C',
+  TEAL: '2C6B74',
+  INSERT_BG: 'EBF3FC',
+  INSERT_BORDER: '2B6CB0',
+  INSERT_TEXT: '1D4ED8',
+  GREEN_BG: 'ECF5F0',
+  GREEN_BORDER: '1E6F5C',
+  EXAMPLE_BG: 'FDF6E3',
+  EXAMPLE_BORDER: 'D4A017',
+  ALT_ROW_BG: 'F3F4F6',
+  BORDER_GRAY: 'D1D5DB',
+} as const;
+
+const NAVY = V9_THEME.NAVY;
+const GOLD = V9_THEME.GOLD;
+const TEAL = V9_THEME.TEAL;
+const INSERT_BG = V9_THEME.INSERT_BG;
+const INSERT_BORDER = V9_THEME.INSERT_BORDER;
+const INSERT_TEXT = V9_THEME.INSERT_TEXT;
+const GREEN_BG = V9_THEME.GREEN_BG;
+const GREEN_BORDER = V9_THEME.GREEN_BORDER;
+const EXAMPLE_BG = V9_THEME.EXAMPLE_BG;
+const EXAMPLE_BORDER = V9_THEME.EXAMPLE_BORDER;
+const ALT_ROW_BG = V9_THEME.ALT_ROW_BG;
+const BORDER_GRAY = V9_THEME.BORDER_GRAY;
 
 const NO_BORDERS = {
   top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
@@ -40,7 +55,7 @@ const GRID_BORDERS = {
   right: { style: BorderStyle.SINGLE, size: 4, color: BORDER_GRAY },
 };
 
-function goldRule(): Paragraph {
+export function goldRule(): Paragraph {
   return new Paragraph({
     spacing: { before: 40, after: 140 },
     border: {
@@ -50,7 +65,7 @@ function goldRule(): Paragraph {
   });
 }
 
-function navyBanner(title: string): Table {
+export function navyBanner(title: string): Table {
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
@@ -82,7 +97,7 @@ function navyBanner(title: string): Table {
   });
 }
 
-function subHeading(text: string, color = NAVY): Paragraph[] {
+export function subHeading(text: string, color = NAVY): Paragraph[] {
   return [
     new Paragraph({
       spacing: { before: 240, after: 40 },
@@ -254,7 +269,7 @@ function insertBox(
   });
 }
 
-function calloutBox(params: {
+export function calloutBox(params: {
   title: string;
   lines: Array<{ text: string; italic?: boolean }>;
   fill: string;
@@ -732,33 +747,88 @@ export function buildMasterV9TemplateDocxDocument(
     bodyPara(
       'Every course generated using this template must be developed from an identified workplace performance need and progress through the following stages, in sequence, through to LMS-ready output:'
     ),
-    makeStyledDataTable({
-      headers: [
-        { label: 'Phase 1: Analysis & Foundation', width: 33 },
-        { label: 'Phase 2: Design & Development', width: 34 },
-        { label: 'Phase 3: Review & LMS Delivery', width: 33 },
-      ],
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
       rows: [
-        [
-          { text: '1. Workplace Need', bold: true },
-          { text: '5. Learning Design', bold: true },
-          { text: '9. AI / Ethics / Compliance Review', bold: true },
-        ],
-        [
-          { text: '2. Problem & Root-Cause Analysis', bold: true },
-          { text: '6. Module & Scenario Development', bold: true },
-          { text: '10. Accreditation Alignment', bold: true },
-        ],
-        [
-          { text: '3. Research & Source Validation', bold: true },
-          { text: '7. Practical / Workplace Application', bold: true },
-          { text: '11. Quality Assurance', bold: true },
-        ],
-        [
-          { text: '4. Target Audience & Readiness', bold: true },
-          { text: '8. Assessment', bold: true },
-          { text: '12. LMS-Ready Output', bold: true },
-        ],
+        new TableRow({
+          tableHeader: true,
+          children: [
+            new TableCell({
+              columnSpan: 3,
+              shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F1F5F9' },
+              borders: GRID_BORDERS,
+              margins: { top: 80, bottom: 80, left: 120, right: 120 },
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [
+                    new TextRun({
+                      text: 'WORKPLACE LEARNING AND DEVELOPMENT PROCESS FLOW',
+                      bold: true,
+                      size: 20,
+                      color: NAVY,
+                      font: 'Calibri',
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+        ...[
+          [
+            { text: '1. WORKPLACE NEED', fill: 'E0F2FE', border: '0284C7' },
+            { text: '5. LEARNING DESIGN', fill: 'EDE9FE', border: '7C3AED' },
+            { text: '9. AI / ETHICS / COMPLIANCE REVIEW', fill: 'FCE7F3', border: 'DB2777' },
+          ],
+          [
+            { text: '2. PROBLEM & ROOT-CAUSE ANALYSIS', fill: 'DBEAFE', border: '2563EB' },
+            { text: '6. MODULE & SCENARIO DEVELOPMENT', fill: 'FEF3C7', border: 'D97706' },
+            { text: '10. ACCREDITATION ALIGNMENT', fill: 'CCFBF1', border: '0D9488' },
+          ],
+          [
+            { text: '3. RESEARCH & SOURCE VALIDATION', fill: 'DCFCE7', border: '16A34A' },
+            { text: '7. PRACTICAL / WORKPLACE APPLICATION', fill: 'FEE2E2', border: 'DC2626' },
+            { text: '11. QUALITY ASSURANCE', fill: 'D1FAE5', border: '059669' },
+          ],
+          [
+            { text: '4. TARGET AUDIENCE & READINESS', fill: 'FFEDD5', border: 'EA580C' },
+            { text: '8. ASSESSMENT & DIAGNOSTICS', fill: 'FCE7F3', border: 'BE185D' },
+            { text: '12. LMS-READY OUTPUT', fill: 'E2E8F0', border: NAVY },
+          ],
+        ].map(
+          rowCards =>
+            new TableRow({
+              children: rowCards.map(
+                card =>
+                  new TableCell({
+                    width: { size: 33, type: WidthType.PERCENTAGE },
+                    shading: { type: ShadingType.CLEAR, color: 'auto', fill: card.fill },
+                    borders: {
+                      top: { style: BorderStyle.SINGLE, size: 12, color: card.border },
+                      bottom: { style: BorderStyle.SINGLE, size: 12, color: card.border },
+                      left: { style: BorderStyle.SINGLE, size: 18, color: card.border },
+                      right: { style: BorderStyle.SINGLE, size: 12, color: card.border },
+                    },
+                    margins: { top: 80, bottom: 80, left: 100, right: 100 },
+                    children: [
+                      new Paragraph({
+                        alignment: AlignmentType.CENTER,
+                        children: [
+                          new TextRun({
+                            text: card.text,
+                            bold: true,
+                            size: 17,
+                            color: NAVY,
+                            font: 'Calibri',
+                          }),
+                        ],
+                      }),
+                    ],
+                  })
+              ),
+            })
+        ),
       ],
     }),
     spacer(80),

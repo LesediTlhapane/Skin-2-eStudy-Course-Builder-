@@ -1461,3 +1461,231 @@ Return JSON matching this exact schema:
       : [],
   };
 }
+
+/* ============================================================================
+ * 13. TEMPLATE COPILOT: CREATE OR REFINE A CUSTOM COURSE TEMPLATE FROM PROMPT
+ * ============================================================================ */
+function toSafeCamelKey(raw: string, fallbackIndex: number): string {
+  const cleaned = String(raw || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[^a-zA-Z0-9\s_]/g, ' ')
+    .trim()
+    .split(/[\s_]+/)
+    .filter(Boolean);
+  if (cleaned.length === 0) return `customField${fallbackIndex}`;
+  return cleaned
+    .map((word, idx) =>
+      idx === 0
+        ? word.toLowerCase()
+        : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+    )
+    .join('')
+    .replace(/^[0-9]+/, 'f');
+}
+
+export async function generateOrRefineTemplateWithCopilotAI(params: {
+  prompt: string;
+  currentTemplate?: Partial<CourseTemplate> | null;
+  messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  provider?: AIProvider;
+  model?: string;
+}): Promise<{
+  reply: string;
+  template: CourseTemplate;
+  suggestedFollowUps: string[];
+}> {
+  const historyText = (params.messages || [])
+    .slice(-8)
+    .map(m => `[${m.role.toUpperCase()}]: ${m.content}`)
+    .join('\n');
+
+  const isRefining = Boolean(params.currentTemplate && params.currentTemplate.name);
+
+  const res = await aiRouter.execute({
+    provider: params.provider,
+    model: params.model,
+    responseFormat: 'json',
+    systemInstruction: `You are the eStudy Template Copilot — a senior instructional-design architect who designs reusable, Word-downloadable CourseTemplates for the eStudy Master Course Builder.
+
+CRITICAL DESIGN RULES:
+1. Note that eStudy's Stage 1 Core Course Brief ALREADY collects Course Title, Course Code, Industry Domain, Target Audience, Job Roles, Experience Level, Duration, Purpose, Workplace Problem, Mandatory Topics, AI Integration Mode, and NQF/SETA fields. Do NOT waste template sections repeating those generic brief fields — focus template sections and fields on the domain-specific instructional, regulatory, assessment, operational, or lab architecture unique to the user's request!
+2. Build a comprehensive, practical, domain-tailored CourseTemplate with 3 to 6 logical sections and 2 to 5 fields per section (unless the user explicitly asks for more or fewer sections/fields).
+3. Every field MUST have:
+   - unique camelCase "key" (no spaces or special characters)
+   - clear "label"
+   - actionable placeholder formatted strictly as "[INSERT: SPECIFIC GUIDANCE]" (e.g. "[INSERT: APPLICABLE SANS STANDARDS OR WORKPLACE SOPS]") so it renders in the eStudy Master v9.0 Word callout boxes and cleanly parses back on upload
+   - "fieldType": one of "text", "textarea", "select", "list", or "boolean"
+   - "required": boolean
+   - "helpText": concise instruction for the course author
+   - "options": string array ONLY when fieldType is "select"
+4. Include 3 to 6 domain-specific "qualityRules" that QA & authors must enforce when building courses with this template.
+5. Set "defaultAiMode" to "none", "optional", or "core" based on the template domain.
+6. ${
+      isRefining
+        ? 'You are REFINING the provided CURRENT TEMPLATE. Preserve existing sections and fields that do not conflict with the user instruction while applying all requested additions, removals, or edits.'
+        : 'You are creating a BRAND NEW template tailored closely to the user prompt.'
+    }
+7. Never fabricate official SAQA/QCTO qualification IDs or unverified statutory registration claims.
+Return ONLY valid JSON.`,
+    prompt: `USER REQUEST:
+${params.prompt}
+
+${
+  isRefining
+    ? `CURRENT TEMPLATE TO REFINE:
+${JSON.stringify(params.currentTemplate, null, 2)}`
+    : 'MODE: Create a brand-new reusable CourseTemplate.'
+}
+
+CONVERSATION HISTORY:
+${historyText || 'None'}
+
+Return JSON matching this exact schema:
+{
+  "reply": "Clear 2-3 sentence summary explaining the template created or updated, its key sections, and how an author fills it in.",
+  "template": {
+    "name": "Descriptive Template Name",
+    "category": "e.g. Technical / Engineering, Compliance & Governance, Corporate Enablement, Healthcare, Vocational Skills",
+    "description": "1-2 sentence explanation of the programmes this template supports and what standards it enforces.",
+    "version": "v1.0",
+    "defaultAiMode": "optional",
+    "qualityRules": [
+      "Quality assurance rule 1",
+      "Quality assurance rule 2",
+      "Quality assurance rule 3"
+    ],
+    "sections": [
+      {
+        "title": "Section Title (without leading number prefix)",
+        "description": "What this section captures and why it matters.",
+        "required": true,
+        "fields": [
+          {
+            "key": "uniqueCamelCaseKey",
+            "label": "Field Label",
+            "placeholder": "[INSERT: SPECIFIC AUTHOR PROMPT]",
+            "fieldType": "textarea",
+            "required": true,
+            "helpText": "Brief author guidance",
+            "options": []
+          }
+        ]
+      }
+    ]
+  },
+  "suggestedFollowUps": [
+    "Add a practical workplace assessment rubric section",
+    "Include South African NQF / SETA alignment fields",
+    "Make safety & verification fields mandatory"
+  ]
+}`,
+  });
+
+  const parsed = extractAndParseJSON<any>(res.text);
+  const rawTpl = parsed?.template && typeof parsed.template === 'object' ? parsed.template : parsed;
+  const now = new Date().toISOString();
+  const baseStamp = Date.now();
+  const usedKeys = new Set<string>();
+  const allowedTypes = new Set(['text', 'textarea', 'select', 'list', 'boolean']);
+
+  const rawSections = Array.isArray(rawTpl?.sections) ? rawTpl.sections : [];
+  const sections = rawSections.map((sec: any, sIdx: number) => {
+    const rawFields = Array.isArray(sec?.fields) ? sec.fields : [];
+    const fields = rawFields.map((fld: any, fIdx: number) => {
+      let candidateKey = toSafeCamelKey(fld?.key || fld?.label, sIdx * 10 + fIdx + 1);
+      while (usedKeys.has(candidateKey)) {
+        candidateKey = `${candidateKey}${fIdx + 2}`;
+      }
+      usedKeys.add(candidateKey);
+
+      const rawType = String(fld?.fieldType || 'textarea').toLowerCase();
+      const fieldType = (allowedTypes.has(rawType) ? rawType : 'textarea') as
+        | 'text'
+        | 'textarea'
+        | 'select'
+        | 'list'
+        | 'boolean';
+
+      const rawPlaceholder = String(fld?.placeholder || '').trim();
+      const labelStr = String(fld?.label || `Field ${fIdx + 1}`).trim();
+      const placeholder = /^\[INSERT\b/i.test(rawPlaceholder)
+        ? rawPlaceholder
+        : `[INSERT: ${(rawPlaceholder.replace(/^\{\{|\}\}$/g, '') || labelStr).toUpperCase()}]`;
+
+      const options =
+        fieldType === 'select' && Array.isArray(fld?.options)
+          ? fld.options.map((o: any) => String(o).trim()).filter(Boolean)
+          : undefined;
+
+      return {
+        id: String(fld?.id || `fld-${baseStamp}-${sIdx + 1}-${fIdx + 1}`),
+        key: candidateKey,
+        label: labelStr,
+        placeholder,
+        fieldType,
+        required: Boolean(fld?.required),
+        helpText: fld?.helpText ? String(fld.helpText).trim() : undefined,
+        ...(options && options.length > 0 ? { options } : {}),
+      };
+    });
+
+    const cleanTitle = String(sec?.title || `Section ${sIdx + 1}`)
+      .trim()
+      .replace(/^\d+\.\s*/, '');
+
+    return {
+      id: String(sec?.id || `sec-${baseStamp}-${sIdx + 1}`),
+      title: `${sIdx + 1}. ${cleanTitle}`,
+      description: String(sec?.description || '').trim(),
+      required: sec?.required !== undefined ? Boolean(sec.required) : sIdx === 0,
+      order: sIdx + 1,
+      fields,
+    };
+  });
+
+  const aiModeRaw = String(rawTpl?.defaultAiMode || 'optional').toLowerCase();
+  const defaultAiMode: 'none' | 'optional' | 'core' =
+    aiModeRaw === 'none' || aiModeRaw === 'core' ? aiModeRaw : 'optional';
+
+  const qualityRules = Array.isArray(rawTpl?.qualityRules)
+    ? rawTpl.qualityRules.map((r: any) => String(r).trim()).filter(Boolean)
+    : ['Verify all metadata, statutory standards, and learning outcome alignment before export.'];
+
+  const preservedId =
+    isRefining && params.currentTemplate?.id && !params.currentTemplate?.isSystemReference
+      ? String(params.currentTemplate.id)
+      : `tpl-custom-${baseStamp}`;
+
+  const template: CourseTemplate = {
+    id: preservedId,
+    name: String(rawTpl?.name || 'Custom AI-Designed Template').trim(),
+    category: String(rawTpl?.category || 'Custom').trim(),
+    description: String(
+      rawTpl?.description || 'Reusable custom instructional-design template created with Template Copilot.'
+    ).trim(),
+    version: String(rawTpl?.version || 'v1.0').trim(),
+    isSystemReference: false,
+    defaultAiMode,
+    qualityRules:
+      qualityRules.length > 0
+        ? qualityRules
+        : ['Verify all metadata, statutory standards, and learning outcome alignment before export.'],
+    sections,
+    createdAt:
+      isRefining && params.currentTemplate?.createdAt
+        ? String(params.currentTemplate.createdAt)
+        : now,
+    updatedAt: now,
+  };
+
+  return {
+    reply:
+      String(parsed?.reply || '').trim() ||
+      `Created "${template.name}" with ${template.sections.length} structured sections ready to edit, save, or download as Word (.docx).`,
+    template,
+    suggestedFollowUps: Array.isArray(parsed?.suggestedFollowUps)
+      ? parsed.suggestedFollowUps.map((s: any) => String(s).trim()).filter(Boolean).slice(0, 3)
+      : [],
+  };
+}
+

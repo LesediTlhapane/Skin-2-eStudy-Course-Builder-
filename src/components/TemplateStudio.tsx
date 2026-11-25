@@ -10,6 +10,7 @@ import {
   Loader2,
   Plus,
   Save,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import type {
@@ -24,6 +25,7 @@ import {
   exportTemplateAsDocx,
   uploadAndParseFilledTemplateFile,
 } from '../utils/templateDocx';
+import { TemplateCopilotDrawer } from './TemplateCopilotDrawer';
 
 interface TemplateStudioProps {
   templates: CourseTemplate[];
@@ -54,6 +56,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const filledDocRef = useRef<HTMLInputElement>(null);
 
@@ -367,10 +370,18 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
           </button>
           <button
             type="button"
-            onClick={handleCreateBlank}
+            onClick={() => setIsCopilotOpen(!isCopilotOpen)}
             className="px-3.5 py-2 text-xs font-bold bg-[#052B66] hover:bg-[#042150] text-white rounded-lg flex items-center gap-1.5 cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5 text-[#45CC42]" />
+            <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
+            <span>Template Copilot</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleCreateBlank}
+            className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5 text-[#052B66]" />
             <span>New Template</span>
           </button>
         </div>
@@ -546,31 +557,64 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
               </div>
 
               {previewMode ? (
-                <div className="space-y-4">
-                  <div className="p-4 bg-[#F5F7FA] rounded-lg border border-slate-200 space-y-1">
-                    <div className="text-xs font-bold text-[#052B66]">Template Preview</div>
-                    <p className="text-xs text-slate-600">{activeTemplate.description}</p>
+                <div className="space-y-5 bg-[#F8FAFC] p-4 sm:p-6 rounded-xl border border-slate-200">
+                  {/* eStudy South Africa Executive Cover Header */}
+                  <div className="bg-white border border-slate-200 border-b-4 border-b-[#B68D2C] rounded-lg px-6 py-6 text-center space-y-2 shadow-xs">
+                    <div className="text-base font-extrabold tracking-wide text-[#1B365D]">
+                      eStudy South Africa
+                    </div>
+                    <div className="text-lg font-extrabold uppercase tracking-wider text-[#B68D2C]">
+                      {activeTemplate.name}
+                    </div>
+                    <div className="text-xs italic font-medium text-[#2C6B74]">
+                      {activeTemplate.category} · Version {activeTemplate.version} · Universal Fillable Word Template
+                    </div>
+                    <p className="text-xs text-slate-600 max-w-2xl mx-auto pt-1 leading-relaxed">
+                      {activeTemplate.description}
+                    </p>
                   </div>
-                  {activeTemplate.sections.map(sec => (
-                    <div key={sec.id} className="border border-slate-200 rounded-lg p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-bold text-[#052B66]">{sec.title}</h3>
-                        <span className="text-xs text-slate-500">
-                          {sec.required ? 'Required Section' : 'Optional Section'}
+
+                  {/* Green Global Rule Callout */}
+                  <div className="bg-[#ECF5F0] border-l-4 border-[#1E6F5C] px-4 py-3 rounded-r text-xs text-[#1B365D] leading-relaxed">
+                    <span className="font-bold text-[#1E6F5C]">HOW TO USE THIS TEMPLATE: </span>
+                    Download as Word (.docx), replace each highlighted{' '}
+                    <span className="font-semibold text-[#1D4ED8]">[INSERT: ...]</span> block with your course
+                    details while keeping the section layout intact, then upload the completed document to
+                    auto-populate Stage 1 Brief, custom template fields, and starter modules.
+                  </div>
+
+                  {/* Section Banners + Pale-Blue Fillable Fields */}
+                  {activeTemplate.sections.map((sec, sIdx) => (
+                    <div key={sec.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
+                      <div className="bg-[#1B365D] px-4 py-2.5 flex items-center justify-between border-b-2 border-[#B68D2C]">
+                        <h3 className="text-xs sm:text-sm font-bold tracking-wide text-white uppercase">
+                          {sIdx + 1}. {sec.title.replace(/^\d+\.\s*/, '')}
+                        </h3>
+                        <span className="text-[11px] font-semibold text-[#FDE68A]">
+                          {sec.required ? 'REQUIRED' : 'OPTIONAL'}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500">{sec.description}</p>
-                      <div className="space-y-2">
-                        {sec.fields.map(f => (
-                          <div key={f.id} className="space-y-1">
-                            <label className="block text-xs font-semibold text-slate-700">
-                              {f.label} {f.required ? '*' : '(Optional)'}
-                            </label>
-                            <div className="px-3 py-2 text-xs text-slate-400 bg-[#F5F7FA] border border-slate-200 rounded">
-                              {f.placeholder}
+                      <div className="p-4 space-y-3">
+                        <p className="text-xs text-slate-600 italic border-b border-slate-100 pb-2">
+                          {sec.description}
+                        </p>
+                        <div className="space-y-3">
+                          {sec.fields.map(f => (
+                            <div key={f.id} className="space-y-1">
+                              <label className="block text-xs font-bold text-[#1B365D]">
+                                {f.label}{' '}
+                                <span className={f.required ? 'text-[#B68D2C]' : 'text-slate-400 font-normal'}>
+                                  {f.required ? '*' : '(Optional)'}
+                                </span>
+                              </label>
+                              <div className="px-3.5 py-2.5 text-xs italic text-[#1D4ED8] bg-[#EBF3FC] border border-[#BFDBFE] border-l-4 border-l-[#2B6CB0] rounded-r">
+                                {f.placeholder?.trim().startsWith('[')
+                                  ? f.placeholder
+                                  : `[INSERT: ${(f.placeholder || f.label).toUpperCase()}]`}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -752,6 +796,29 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
           )}
         </section>
       </div>
+
+      <TemplateCopilotDrawer
+        isOpen={isCopilotOpen}
+        activeTemplate={activeTemplate}
+        isEditingDraft={Boolean(draft)}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        onClose={() => setIsCopilotOpen(false)}
+        onLoadDraftInStudio={tpl => {
+          setDraft(tpl);
+          setSelectedId(tpl.id);
+          setPreviewMode(false);
+          setSaveNotice(`Loaded "${tpl.name}" from Template Copilot. Review or edit sections and click Save Template.`);
+        }}
+        onSaveTemplateFromCopilot={tpl => {
+          onSaveTemplate(tpl);
+          setSelectedId(tpl.id);
+          setDraft(null);
+          setPreviewMode(false);
+          setSaveNotice(`Saved "${tpl.name}" to your Template Library.`);
+        }}
+        onDownloadDocx={handleDownloadDocx}
+      />
     </main>
   );
 };
