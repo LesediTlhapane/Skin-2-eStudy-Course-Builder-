@@ -8,7 +8,11 @@ import {
   X,
 } from 'lucide-react';
 import type { CourseProject, CourseTemplate } from '../types';
-import { apiFetch, parseApiJson } from '../utils/apiClient';
+import {
+  apiFetch,
+  compactProjectForCloudPayload,
+  parseApiJson,
+} from '../utils/apiClient';
 
 interface LocalMigrationModalProps {
   isOpen: boolean;
@@ -29,12 +33,14 @@ export const LocalMigrationModal: React.FC<LocalMigrationModalProps> = ({
   const [localTemplates, setLocalTemplates] = useState<CourseTemplate[]>([]);
   const [loadingLocal, setLoadingLocal] = useState(false);
   const [migrating, setMigrating] = useState(false);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [result, setResult] = useState<{
     migratedCourses: number;
     skippedCourses: number;
     migratedTemplates: number;
     skippedTemplates: number;
+    trimmedCourses: number;
   } | null>(null);
 
   useEffect(() => {
@@ -42,6 +48,7 @@ export const LocalMigrationModal: React.FC<LocalMigrationModalProps> = ({
     setLoadingLocal(true);
     setErrorMsg(null);
     setResult(null);
+    setProgressLabel(null);
     readLocalBackup()
       .then(data => {
         setLocalProjects(data.projects || []);
@@ -58,28 +65,74 @@ export const LocalMigrationModal: React.FC<LocalMigrationModalProps> = ({
   const handleMigrate = async () => {
     setMigrating(true);
     setErrorMsg(null);
+    setProgressLabel(null);
+
+    let migratedCourses = 0;
+    let skippedCourses = 0;
+    let migratedTemplates = 0;
+    let skippedTemplates = 0;
+    let trimmedCourses = 0;
+
     try {
-      const res = await apiFetch('/api/v2/courses/migrate-local', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projects: localProjects,
-          customTemplates: localTemplates,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Local workspace migration failed.');
+      // 1. Migrate custom templates first (individually to stay well under request size limits)
+      for (let i = 0; i < localTemplates.length; i++) {
+        setProgressLabel(`Migrating custom template ${i + 1} of ${localTemplates.length}...`);
+        const res = await apiFetch('/api/v2/courses/migrate-local', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projects: [],
+            customTemplates: [localTemplates[i]],
+          }),
+        });
+        const data = await parseApiJson<any>(res);
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'Template migration failed.');
+        }
+        migratedTemplates += Number(data.migratedTemplates || 0);
+        skippedTemplates += Number(data.skippedTemplates || 0);
       }
+
+      // 2. Migrate each course individually and compact oversized version snapshots/attachments
+      for (let i = 0; i < localProjects.length; i++) {
+        const proj = localProjects[i];
+        const title = proj?.brief?.title ? ` ("${proj.brief.title}")` : '';
+        setProgressLabel(`Migrating course ${i + 1} of ${localProjects.length}${title}...`);
+
+        const { project: compacted, trimmed } = compactProjectForCloudPayload(proj, 2_800_000);
+        if (trimmed) trimmedCourses += 1;
+
+        const res = await apiFetch('/api/v2/courses/migrate-local', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projects: [compacted],
+            customTemplates: [],
+          }),
+        });
+        const data = await parseApiJson<any>(res);
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || `Failed migrating course ${i + 1}${title}.`);
+        }
+        migratedCourses += Number(data.migratedCourses || 0);
+        skippedCourses += Number(data.skippedCourses || 0);
+      }
+
+      setProgressLabel(null);
       setResult({
-        migratedCourses: Number(data.migratedCourses || 0),
-        skippedCourses: Number(data.skippedCourses || 0),
-        migratedTemplates: Number(data.migratedTemplates || 0),
-        skippedTemplates: Number(data.skippedTemplates || 0),
+        migratedCourses,
+        skippedCourses,
+        migratedTemplates,
+        skippedTemplates,
+        trimmedCourses,
       });
       await onMigrationComplete();
     } catch (err: any) {
+      setProgressLabel(null);
       setErrorMsg(err?.message || 'Migration failed.');
+      if (migratedCourses > 0 || migratedTemplates > 0) {
+        await onMigrationComplete().catch(() => {});
+      }
     } finally {
       setMigrating(false);
     }
@@ -129,6 +182,13 @@ export const LocalMigrationModal: React.FC<LocalMigrationModalProps> = ({
             </div>
           )}
 
+          {progressLabel && (
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-accent-ink shrink-0" />
+              <span className="truncate">{progressLabel}</span>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -148,6 +208,11 @@ export const LocalMigrationModal: React.FC<LocalMigrationModalProps> = ({
               <div>
                 Migrated {result.migratedTemplates} template(s) ({result.skippedTemplates} skipped).
               </div>
+              {result.trimmedCourses > 0 && (
+                <div className="text-emerald-700/90 pt-0.5">
+                  {result.trimmedCourses} large course(s) had redundant local version snapshots compacted to fit cloud upload limits while preserving full course content.
+                </div>
+              )}
             </div>
           )}
 

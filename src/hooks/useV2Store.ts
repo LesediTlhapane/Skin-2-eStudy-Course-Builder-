@@ -9,7 +9,7 @@ import type {
 } from '../types';
 import { SYSTEM_TEMPLATES } from '../data/templates';
 import { BENCHMARK_PRESETS, createEmptyCourseProject } from '../data/benchmarks';
-import { apiFetch, parseApiJson } from '../utils/apiClient';
+import { apiFetch, compactProjectForCloudPayload, parseApiJson } from '../utils/apiClient';
 
 const DB_NAME = 'estudy_course_builder_v2';
 const DB_VERSION = 1;
@@ -357,10 +357,11 @@ export function useV2Store(options?: UseV2StoreOptions) {
             for (const id of dirtyIds) {
               const target = projList.find(p => p.id === id);
               if (!target) continue;
+              const compacted = compactProjectForCloudPayload(target, 2_800_000).project;
               const res = await apiFetch(`/api/v2/courses/${encodeURIComponent(id)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ project: target }),
+                body: JSON.stringify({ project: compacted }),
               });
               const data = await parseApiJson<any>(res);
               if (!res.ok || !data.success) {
@@ -464,10 +465,11 @@ export function useV2Store(options?: UseV2StoreOptions) {
         void (async () => {
           setSaveState('saving');
           try {
+            const compacted = compactProjectForCloudPayload(enriched, 2_800_000).project;
             const res = await apiFetch('/api/v2/courses', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ project: enriched }),
+              body: JSON.stringify({ project: compacted }),
             });
             const data = await parseApiJson<any>(res);
             if (!res.ok || !data.success) {
@@ -538,11 +540,17 @@ export function useV2Store(options?: UseV2StoreOptions) {
         })
       );
 
-      if (isCloudMode && snapshotOptions && createdSnapshot) {
+      const snap = createdSnapshot as CourseVersionSnapshot | null;
+      if (isCloudMode && snapshotOptions && snap) {
+        const snapshotPayload: CourseVersionSnapshot = {
+          ...snap,
+          data: compactProjectForCloudPayload(snap.data as CourseProject, 2_500_000)
+            .project,
+        };
         void apiFetch(`/api/v2/courses/${encodeURIComponent(projectId)}/versions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ snapshot: createdSnapshot }),
+          body: JSON.stringify({ snapshot: snapshotPayload }),
         }).catch(() => {});
       }
     },
@@ -600,10 +608,11 @@ export function useV2Store(options?: UseV2StoreOptions) {
       setProjects(prev => [copy, ...prev]);
 
       if (isCloudMode) {
+        const compacted = compactProjectForCloudPayload(copy, 2_800_000).project;
         void apiFetch('/api/v2/courses', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: copy }),
+          body: JSON.stringify({ project: compacted }),
         }).catch(() => {});
       }
     },
@@ -738,14 +747,24 @@ export function useV2Store(options?: UseV2StoreOptions) {
         });
       }
       if (isCloudMode && (importedProjects.length > 0 || importedTemplates.length > 0)) {
-        void apiFetch('/api/v2/courses/migrate-local', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projects: importedProjects,
-            customTemplates: importedTemplates,
-          }),
-        }).then(() => reloadCloudWorkspace());
+        void (async () => {
+          for (const tpl of importedTemplates) {
+            await apiFetch('/api/v2/courses/migrate-local', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projects: [], customTemplates: [tpl] }),
+            });
+          }
+          for (const proj of importedProjects) {
+            const compacted = compactProjectForCloudPayload(proj, 2_800_000).project;
+            await apiFetch('/api/v2/courses/migrate-local', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projects: [compacted], customTemplates: [] }),
+            });
+          }
+          await reloadCloudWorkspace();
+        })();
       }
     },
     [isCloudMode, reloadCloudWorkspace]
