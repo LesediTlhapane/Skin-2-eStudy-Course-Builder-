@@ -20,6 +20,9 @@ function isPlaceholderValue(val: string): boolean {
   const trimmed = val.trim();
   if (!trimmed) return true;
   if (/^\[Enter\b[\s\S]*\]$/i.test(trimmed)) return true;
+  if (/^\[INSERT\b/i.test(trimmed)) return true;
+  if (/\[INSERT:\s*[^\]]+\]/i.test(trimmed)) return true;
+  if (/^\[e\.g\.[\s\S]*\]$/i.test(trimmed)) return true;
   if (/^\{\{[\s\S]*\}\}$/.test(trimmed)) return true;
   if (/^(your entry|type here|insert here|n\/a\s*-\s*placeholder)$/i.test(trimmed)) return true;
   return false;
@@ -29,8 +32,18 @@ function normalizeAiMode(raw: string): 'none' | 'optional' | 'core' | undefined 
   const lower = raw.trim().toLowerCase();
   if (!lower) return undefined;
   if (lower === 'none' || lower.startsWith('none ') || lower.includes('no ai')) return 'none';
-  if (lower === 'core' || lower.startsWith('core ') || lower.includes('central')) return 'core';
-  if (lower === 'optional' || lower.startsWith('optional ')) return 'optional';
+  if (
+    lower === 'core' ||
+    lower.startsWith('core ') ||
+    lower.includes('central') ||
+    lower.includes('advanced') ||
+    lower.includes('ai-integrated')
+  ) {
+    return 'core';
+  }
+  if (lower === 'optional' || lower.startsWith('optional ') || lower.includes('applied') || lower.includes('awareness')) {
+    return 'optional';
+  }
   return undefined;
 }
 
@@ -48,14 +61,359 @@ function extractAndParseJSON<T = any>(rawText: string): T {
   }
 }
 
+function parseMasterV9OfficialDocx(extractedText: string): ParsedFilledTemplateResult | null {
+  const isOfficialV9 =
+    /MASTER COURSE GENERATION PROMPT/i.test(extractedText) ||
+    /END OF MASTER PROMPT TEMPLATE v9\.0/i.test(extractedText) ||
+    /3\.1 Course Details/i.test(extractedText);
+
+  if (!isOfficialV9) return null;
+
+  const brief: Partial<CourseBrief> = {};
+  const saCompliancePatch: Record<string, any> = {};
+  const templateFieldValues: Record<string, string> = {};
+  const suggestedModules: CurriculumModulePlan[] = [];
+
+  const segments = extractedText.split(/\t\|(?:\t|$)/);
+
+  // 1. Parse 3.1 Course Details table & 3.9 Module Overview Table via table cell segments
+  if (segments.length >= 2) {
+    for (let i = 0; i < segments.length - 1; i++) {
+      const cellLabel = segments[i].split('\n').pop()?.trim().toLowerCase() || '';
+      const cellVal = segments[i + 1].trim();
+
+      if (!isPlaceholderValue(cellVal)) {
+        if (cellLabel === 'course name') brief.title = cellVal;
+        else if (cellLabel === 'course code / id') brief.code = cellVal;
+        else if (cellLabel === 'industry / domain') brief.industryDomain = cellVal;
+        else if (cellLabel === 'target role group') {
+          brief.targetJobRoles = cellVal;
+          if (!brief.targetAudience) brief.targetAudience = cellVal;
+        } else if (cellLabel === 'ai integration level') {
+          const mode = normalizeAiMode(cellVal);
+          if (mode) brief.aiIntegrationMode = mode;
+          brief.aiIntegrationRequirements = cellVal;
+        } else if (cellLabel.startsWith('accreditation / qualification')) {
+          templateFieldValues.accreditationAlignmentNotes = cellVal;
+        } else if (cellLabel === 'language(s)') brief.language = cellVal;
+        else if (cellLabel === 'estimated duration') brief.estimatedDuration = cellVal;
+      }
+    }
+
+    // Parse 3.9 Module Overview Table rows: "1\t|\tTitle\t|\tPurpose\t|\tKey Skills\t|\t"
+    for (let i = 0; i < segments.length - 3; i++) {
+      const firstCellTail = segments[i].split('\n').pop()?.trim() || '';
+      const rowMatch = firstCellTail.match(/^(\d+)(?:\s*\(optional\))?$/i);
+      if (!rowMatch) continue;
+
+      const order = Number(rowMatch[1]);
+      if (order < 1 || order > 12) continue;
+
+      const modTitle = (segments[i + 1] || '').trim();
+      const modPurpose = (segments[i + 2] || '').trim();
+      const modSkills = (segments[i + 3] || '').trim();
+
+      if (isPlaceholderValue(modTitle)) continue;
+
+      const topicList = isPlaceholderValue(modSkills)
+        ? []
+        : modSkills
+            .split(/[\n,;]+/)
+            .map(s => s.trim())
+            .filter(Boolean);
+
+      suggestedModules.push({
+        id: `mod-v9-${order}-${Date.now()}`,
+        order,
+        title: modTitle,
+        qctoModuleType: 'Standard Module',
+        purpose: isPlaceholderValue(modPurpose) ? `Module ${order}: ${modTitle}` : modPurpose,
+        objectives: [],
+        competencies: topicList,
+        topics: topicList.map((t, idx) => ({
+          id: `top-v9-${order}-${idx + 1}`,
+          title: t,
+          subtopics: [],
+        })),
+        lessons:
+          topicList.length > 0
+            ? topicList.map((t, lIdx) => ({
+                id: `les-v9-${order}-${lIdx + 1}`,
+                title: t,
+                durationMinutes: 45,
+                purpose: `Develop practical capability in ${t}.`,
+                keyTerms: [],
+              }))
+            : [
+                {
+                  id: `les-v9-${order}-1`,
+                  title: `${modTitle} — Core Concepts & Application`,
+                  durationMinutes: 60,
+                  purpose: isPlaceholderValue(modPurpose) ? `Core content for ${modTitle}.` : modPurpose,
+                  keyTerms: [],
+                },
+              ],
+      });
+    }
+  }
+
+  // 2. Parse prompt-label -> following non-empty text blocks across sections 1–7
+  const lines = extractedText
+    .split('\n')
+    .map(l => l.replace(/\t\|(?:\t|$)/g, ' ').trim());
+
+  const captureNextBlock = (
+    triggerPattern: RegExp,
+    stopPatterns: RegExp[] = []
+  ): string => {
+    for (let i = 0; i < lines.length; i++) {
+      if (!triggerPattern.test(lines[i])) continue;
+      const collected: string[] = [];
+      for (let j = i + 1; j < Math.min(lines.length, i + 12); j++) {
+        const line = lines[j];
+        if (!line) {
+          if (collected.length > 0) break;
+          continue;
+        }
+        if (
+          /^(?:\d+\.\d+(?:\.\d+)?|MODULE\s+\d+:|\d+\.\s+[A-Z]|HOW TO USE|FINAL EXECUTION|GLOBAL RULE|Example \(|Financial Literacy Example)/i.test(
+            line
+          )
+        ) {
+          break;
+        }
+        if (stopPatterns.some(p => p.test(line))) break;
+        // Stop if we hit the next prompt label ending with colon
+        if (/^[A-Za-z0-9 ,/'—–()-]{6,75}:$/.test(line) && collected.length > 0) break;
+        collected.push(line);
+      }
+      const joined = collected.join('\n').trim();
+      if (joined && !isPlaceholderValue(joined)) {
+        return joined;
+      }
+    }
+    return '';
+  };
+
+  if (!brief.title) {
+    const cmdTitle = captureNextBlock(
+      /^Generate a complete, structured, industry-ready training programme for:$/i,
+      [/^Ensure the course aligns/i]
+    );
+    if (cmdTitle) brief.title = cmdTitle;
+  }
+
+  const probStmt = captureNextBlock(/^Complete the following statement:$/i, [
+    /^Example \(Financial Literacy/i,
+  ]);
+  if (probStmt) {
+    templateFieldValues.problemStatement = probStmt;
+    if (!brief.workplaceProblem) brief.workplaceProblem = probStmt;
+  }
+
+  const fieldMatchers: Array<{
+    trigger: RegExp;
+    assign: (val: string) => void;
+    stops?: RegExp[];
+  }> = [
+    {
+      trigger: /^Root causes of the problem:$/i,
+      assign: v => {
+        templateFieldValues.rootCauses = v;
+      },
+    },
+    {
+      trigger: /^Process or system failures involved:$/i,
+      assign: v => {
+        templateFieldValues.processFailures = v;
+      },
+    },
+    {
+      trigger: /^Skills or knowledge gaps:$/i,
+      assign: v => {
+        templateFieldValues.skillKnowledgeGaps = v;
+      },
+    },
+    {
+      trigger: /^Organisational or environmental constraints:$/i,
+      assign: v => {
+        templateFieldValues.organisationalConstraints = v;
+      },
+    },
+    {
+      trigger: /^AI literacy gap/i,
+      assign: v => {
+        templateFieldValues.aiLiteracyGap = v;
+      },
+    },
+    {
+      trigger: /^Data and digital readiness/i,
+      assign: v => {
+        templateFieldValues.digitalReadinessLevel = v;
+      },
+    },
+    {
+      trigger: /^Ethical or compliance risks introduced by AI/i,
+      assign: v => {
+        templateFieldValues.aiEthicsComplianceRisk = v;
+      },
+    },
+    {
+      trigger: /^2\.1 Reference Links/i,
+      assign: v => {
+        templateFieldValues.referenceLinks = v;
+      },
+    },
+    {
+      trigger: /^Specify the regulatory or standards framework applicable to this course:$/i,
+      assign: v => {
+        templateFieldValues.evidenceStandard = v;
+        saCompliancePatch.industryLegislation = v;
+        saCompliancePatch.enabled = true;
+      },
+    },
+    {
+      trigger: /^AI tools or platforms used in this domain:$/i,
+      assign: v => {
+        templateFieldValues.aiToolsPlatforms = v;
+      },
+    },
+    {
+      trigger: /^Relevant AI ethics framework:$/i,
+      assign: v => {
+        templateFieldValues.aiEthicsFramework = v;
+      },
+    },
+    {
+      trigger: /^Industry case studies or use cases:$/i,
+      assign: v => {
+        templateFieldValues.industryCaseStudies = v;
+      },
+    },
+    {
+      trigger: /^Purpose of the course:$/i,
+      assign: v => {
+        brief.purpose = v;
+      },
+    },
+    {
+      trigger: /^Workplace relevance:$/i,
+      assign: v => {
+        brief.workplaceProblem = v;
+      },
+    },
+    {
+      trigger: /^Expected performance improvement:$/i,
+      assign: v => {
+        brief.learningRequirements = v;
+      },
+    },
+    {
+      trigger: /^AI or technology angle of this course:$/i,
+      assign: v => {
+        templateFieldValues.aiTechAngle = v;
+      },
+    },
+    {
+      trigger: /^What the course covers:$/i,
+      assign: v => {
+        brief.subjectTopicsInput = v;
+      },
+    },
+    {
+      trigger: /^Job roles:$/i,
+      assign: v => {
+        brief.targetJobRoles = v;
+        if (!brief.targetAudience) brief.targetAudience = v;
+      },
+    },
+    {
+      trigger: /^Departments:$/i,
+      assign: v => {
+        templateFieldValues.targetDepartments = v;
+      },
+    },
+    {
+      trigger: /^Experience level:$/i,
+      assign: v => {
+        brief.experienceLevel = v;
+      },
+    },
+    {
+      trigger: /^Required knowledge:$/i,
+      assign: v => {
+        brief.prerequisites = v;
+      },
+    },
+    {
+      trigger: /^Reading level appropriate for target audience:$/i,
+      assign: v => {
+        templateFieldValues.toneAndReadingLevel = v;
+      },
+    },
+    {
+      trigger: /^Accreditation \/ Standards Body:$/i,
+      assign: v => {
+        saCompliancePatch.setaName = v;
+        saCompliancePatch.enabled = true;
+      },
+    },
+    {
+      trigger: /^NQF Level:$/i,
+      assign: v => {
+        saCompliancePatch.nqfLevel = v;
+        saCompliancePatch.enabled = true;
+      },
+    },
+    {
+      trigger: /^Accreditation \/ Standards Requirements:$/i,
+      assign: v => {
+        saCompliancePatch.saqaNotes = v;
+        saCompliancePatch.enabled = true;
+      },
+    },
+  ];
+
+  for (const matcher of fieldMatchers) {
+    const extracted = captureNextBlock(matcher.trigger, matcher.stops);
+    if (extracted) {
+      matcher.assign(extracted);
+    }
+  }
+
+  if (Object.keys(saCompliancePatch).length > 0) {
+    brief.saCompliance = saCompliancePatch as any;
+  }
+
+  const populatedCount =
+    Object.keys(brief).filter(k => k !== 'saCompliance').length +
+    Object.keys(saCompliancePatch).length +
+    Object.keys(templateFieldValues).length;
+
+  return {
+    mode: 'structured',
+    matchedTemplateId: 'tpl-estudy-master-v9',
+    matchedTemplateName: 'eStudy Master Course Generation Template v9.0',
+    brief,
+    templateFieldValues,
+    suggestedModules,
+    populatedCount,
+  };
+}
+
 /**
  * Deterministically parses `.docx` files downloaded from Template Studio / CreateCourseModal / Stage 1.
- * Handles both table-cell-delimited text (`\t|\t` from `extractTextFromDocxBuffer`) and pasted plain text.
+ * Supports both the official 9-section Master v9.0 Word layout and standard 2-column tagged templates.
  */
 export function parseFilledTemplateTextDeterministically(
   extractedText: string,
   template?: CourseTemplate
 ): ParsedFilledTemplateResult {
+  const masterV9Result = parseMasterV9OfficialDocx(extractedText);
+  if (masterV9Result) {
+    return masterV9Result;
+  }
+
   const brief: Partial<CourseBrief> = {};
   const saCompliancePatch: Record<string, any> = {};
   const templateFieldValues: Record<string, string> = {};
@@ -69,7 +427,13 @@ export function parseFilledTemplateTextDeterministically(
 
     if (key.startsWith('saCompliance.')) {
       const subKey = key.slice('saCompliance.'.length);
-      if (subKey === 'enabled' || subKey === 'saqaRelevant' || subKey === 'qctoRelevant' || subKey === 'qctoModulePattern' || subKey === 'popiaRelevant') {
+      if (
+        subKey === 'enabled' ||
+        subKey === 'saqaRelevant' ||
+        subKey === 'qctoRelevant' ||
+        subKey === 'qctoModulePattern' ||
+        subKey === 'popiaRelevant'
+      ) {
         saCompliancePatch[subKey] = /^(yes|true|1|enabled)/i.test(val);
       } else {
         saCompliancePatch[subKey] = val;
@@ -88,7 +452,6 @@ export function parseFilledTemplateTextDeterministically(
   };
 
   // 1. Parse cell-delimited Word table rows: "... [tag:key] ...\t|\t<VALUE>\t|\t"
-  // We split text by "\t|\t" segments and inspect pairs where segment[i] contains a marker
   const segments = extractedText.split(/\t\|(?:\t|$)/);
   if (segments.length >= 2) {
     for (let i = 0; i < segments.length - 1; i++) {
@@ -120,8 +483,7 @@ export function parseFilledTemplateTextDeterministically(
       }
     }
 
-    // Parse Section C Module Outline table rows:
-    // "Module 1\t|\tTitle\t|\tTopic1, Topic2\t|\t90 mins\t|\t"
+    // Parse Section C Module Outline table rows
     for (let i = 0; i < segments.length - 2; i++) {
       const firstCellTail = segments[i].split('\n').pop()?.trim() || '';
       const modNumMatch = firstCellTail.match(/^Module\s+(\d+)$/i);
@@ -153,7 +515,8 @@ export function parseFilledTemplateTextDeterministically(
         order,
         title: modTitle,
         qctoModuleType: 'Standard Module',
-        purpose: topicList.length > 0 ? `Cover ${topicList.join(', ')}` : `Module ${order}: ${modTitle}`,
+        purpose:
+          topicList.length > 0 ? `Cover ${topicList.join(', ')}` : `Module ${order}: ${modTitle}`,
         objectives: [],
         competencies: [],
         topics: topicList.map((t, tIdx) => ({
@@ -200,7 +563,8 @@ export function parseFilledTemplateTextDeterministically(
     ];
 
     for (const line of extractedText.split('\n')) {
-      const clean = line.replace(/\t\|\t/g, ': ').trim();
+      if (line.includes('\t|')) continue;
+      const clean = line.trim();
       for (const rule of labelMap) {
         const m = clean.match(rule.pattern);
         if (m && m[1] && !(brief as any)[rule.key]) {
@@ -214,7 +578,6 @@ export function parseFilledTemplateTextDeterministically(
     brief.saCompliance = saCompliancePatch as any;
   }
 
-  // If template provided, also verify any direct label matches for template fields
   if (template && Object.keys(templateFieldValues).length === 0 && segments.length >= 2) {
     const allFields = template.sections.flatMap(s => s.fields);
     for (let i = 0; i < segments.length - 1; i++) {
@@ -246,8 +609,7 @@ export function parseFilledTemplateTextDeterministically(
 }
 
 /**
- * AI-assisted fallback when user uploads a freeform/heavily modified Word, PDF, or text brief
- * without our `[brief:...]` / `[field:...]` markers.
+ * AI-assisted fallback when user uploads a freeform/heavily modified Word, PDF, or text brief.
  */
 export async function parseFilledCourseBriefWithAI(params: {
   fileName: string;
@@ -270,17 +632,17 @@ export async function parseFilledCourseBriefWithAI(params: {
     responseFormat: 'json',
     systemInstruction: `You extract filled course brief information from an uploaded Word/PDF/text template into structured eStudy V2 CourseBrief JSON.
 RULES:
-1. Extract ONLY what the author wrote in the document. Do NOT invent or fabricate facts, codes, or topics that are not in the document. Leave missing fields as empty string "".
+1. Extract ONLY what the author wrote in the document. Ignore untouched [INSERT: ...] placeholders and benchmark Financial Literacy example text. Do NOT invent facts or codes. Leave missing fields as "".
 2. Put template-specific answers into "templateFieldValues" keyed by the matching field key from TEMPLATE FIELDS.
-3. If the document includes a module outline, extract starter modules in "suggestedModules". Otherwise return [].
+3. If the document includes a module outline (e.g. 3.9 Module Overview Table), extract starter modules in "suggestedModules". Otherwise return [].
 4. Return ONLY valid JSON.`,
     prompt: `FILE: ${params.fileName}
-TEMPLATE: ${params.template?.name || 'eStudy Master Course Generation Template'}
+TEMPLATE: ${params.template?.name || 'eStudy Master Course Generation Template v9.0'}
 TEMPLATE FIELDS:
 ${JSON.stringify(templateFields, null, 2)}
 
 DOCUMENT TEXT:
-${params.extractedText.slice(0, 14000)}
+${params.extractedText.slice(0, 16000)}
 
 Return JSON:
 {

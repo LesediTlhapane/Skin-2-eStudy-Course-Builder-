@@ -20,6 +20,10 @@ import type {
 } from '../types';
 import { createEmptyCourseProject } from '../data/benchmarks';
 import { apiFetch, parseApiJson } from './apiClient';
+import {
+  buildMasterV9TemplateDocxDocument,
+  isMasterV9Template,
+} from './masterV9TemplateDocx';
 
 function slugify(input: string): string {
   return (input || 'estudy-template')
@@ -179,6 +183,9 @@ export function buildTemplateDocxDocument(
   template: CourseTemplate,
   prefillProject?: CourseProject
 ): Document {
+  if (isMasterV9Template(template)) {
+    return buildMasterV9TemplateDocxDocument(template, prefillProject);
+  }
   const b = prefillProject?.brief;
 
   const valOrPlaceholder = (val: string | undefined, placeholder: string) => {
