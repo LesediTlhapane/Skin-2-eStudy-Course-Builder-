@@ -22,3 +22,7 @@ export {
   detectDeterministicCriticalFailures,
   evaluateCourseQAWithAI,
 } from './qaEngineServer.js';
+export {
+  parseFilledTemplateTextDeterministically,
+  parseFilledCourseBriefWithAI,
+} from './templateRoundTrip.js';

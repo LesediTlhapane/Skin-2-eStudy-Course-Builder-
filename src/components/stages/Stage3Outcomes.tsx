@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import type { AIProvider, BloomLevel, CourseProject, LearningOutcome } from '../../types';
 import { detectVagueOutcomeWarning } from '../../utils/alignmentHelpers';
-import { parseApiJson } from '../../utils/apiClient';
+import { apiFetch, parseApiJson } from '../../utils/apiClient';
 
 interface Stage3OutcomesProps {
   project: CourseProject;
@@ -58,7 +58,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
     setIsGenerating(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/v2/outcomes/generate', {
+      const res = await apiFetch('/api/v2/outcomes/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

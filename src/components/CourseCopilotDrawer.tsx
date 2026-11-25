@@ -20,7 +20,7 @@ import type {
   SelectedTextContext,
   WorkflowStage,
 } from '../types';
-import { compactProjectForApi, parseApiJson } from '../utils/apiClient';
+import { apiFetch, compactProjectForApi, parseApiJson } from '../utils/apiClient';
 import {
   resolveProposalTargetLocation,
   type ApplyProposalResult,
@@ -228,7 +228,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
     try {
       const focusModuleId =
         activeSelectionCtx?.moduleId || project.content.modules[0]?.moduleId;
-      const res = await fetch('/api/v2/copilot/chat', {
+      const res = await apiFetch('/api/v2/copilot/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -404,7 +404,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
       return next;
     });
     try {
-      const res = await fetch('/api/v2/content/regenerate', {
+      const res = await apiFetch('/api/v2/content/regenerate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

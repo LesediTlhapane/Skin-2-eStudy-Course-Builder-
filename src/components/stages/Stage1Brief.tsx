@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   Loader2,
   Lock,
   Sparkles,
@@ -14,7 +15,11 @@ import type {
   CourseTemplate,
   FieldStatus,
 } from '../../types';
-import { compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
+import { apiFetch, compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
+import {
+  exportTemplateAsDocx,
+  uploadAndParseFilledTemplateFile,
+} from '../../utils/templateDocx';
 
 interface Stage1BriefProps {
   project: CourseProject;
@@ -49,10 +54,116 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
 }) => {
   const [isAnalysing, setIsAnalysing] = useState(false);
   const [isCopilotDrafting, setIsCopilotDrafting] = useState(false);
+  const [isDocxDownloading, setIsDocxDownloading] = useState(false);
+  const [isDocxUploading, setIsDocxUploading] = useState(false);
   const [copilotBriefPrompt, setCopilotBriefPrompt] = useState('');
   const [copilotNotice, setCopilotNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const wordUploadRef = useRef<HTMLInputElement>(null);
   const brief = project.brief;
+
+  const handleDownloadWordForm = async () => {
+    if (!template) return;
+    setIsDocxDownloading(true);
+    setErrorMsg(null);
+    try {
+      await exportTemplateAsDocx(template, project);
+      setCopilotNotice(
+        `Downloaded "${template.name}" pre-filled with your current Stage 1 entries. Edit offline in Word and re-upload anytime.`
+      );
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not export Stage 1 Word form.');
+    } finally {
+      setIsDocxDownloading(false);
+    }
+  };
+
+  const handleUploadWordForm = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsDocxUploading(true);
+    setErrorMsg(null);
+    setCopilotNotice(null);
+    try {
+      const outcome = await uploadAndParseFilledTemplateFile({
+        file,
+        templates: template ? [template] : [],
+        fallbackTemplateId: template?.id,
+        provider: selectedProvider,
+        model: selectedModel,
+      });
+      if (outcome.populatedFieldCount === 0 && outcome.suggestedModules.length === 0) {
+        throw new Error(
+          'No filled values were detected in this Word document. Replace the placeholder text inside the right-hand cells before uploading.'
+        );
+      }
+
+      const protectedKeys = new Set([
+        'title',
+        'code',
+        'industryDomain',
+        'targetAudience',
+        'estimatedDuration',
+        'language',
+      ]);
+
+      onUpdateProject(
+        prev => {
+          const nextBrief = {
+            ...prev.brief,
+            saCompliance: {
+              ...prev.brief.saCompliance,
+              ...(outcome.parsedBrief.saCompliance || {}),
+            },
+            templateFieldValues: {
+              ...prev.brief.templateFieldValues,
+              ...outcome.parsedFieldValues,
+            },
+            approval: { approved: false },
+          };
+
+          for (const [k, v] of Object.entries(outcome.parsedBrief)) {
+            if (k === 'saCompliance' || k === 'templateFieldValues' || k === 'fieldStatuses') continue;
+            if (prev.brief.metadataLocked && protectedKeys.has(k)) continue;
+            if (v !== undefined && v !== null && String(v).trim() !== '') {
+              (nextBrief as any)[k] = v;
+            }
+          }
+
+          const shouldSeedModules =
+            prev.curriculum.modules.length === 0 && outcome.suggestedModules.length > 0;
+
+          return {
+            ...prev,
+            lifecycleStatus: prev.lifecycleStatus === 'draft' ? 'in_development' : prev.lifecycleStatus,
+            brief: nextBrief,
+            curriculum: shouldSeedModules
+              ? {
+                  ...prev.curriculum,
+                  rationale: `Starter ${outcome.suggestedModules.length}-module structure imported from ${file.name}.`,
+                  modules: outcome.suggestedModules,
+                  approval: { approved: false },
+                }
+              : prev.curriculum,
+          };
+        },
+        { trigger: 'ai_generation', summary: `Imported filled Word template (${file.name})` }
+      );
+
+      setCopilotNotice(
+        `Imported ${outcome.populatedFieldCount} field(s) from "${file.name}"${
+          outcome.suggestedModules.length > 0 && project.curriculum.modules.length === 0
+            ? ` and ${outcome.suggestedModules.length} starter module(s) into Stage 2`
+            : ''
+        }.`
+      );
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not import filled Word document.');
+    } finally {
+      setIsDocxUploading(false);
+      e.target.value = '';
+    }
+  };
 
   const handleCopilotAutoFillStage1 = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -62,7 +173,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
     setErrorMsg(null);
     setCopilotNotice(null);
     try {
-      const res = await fetch('/api/v2/copilot/draft-course', {
+      const res = await apiFetch('/api/v2/copilot/draft-course', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -169,7 +280,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
     setIsAnalysing(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/v2/brief/analyse', {
+      const res = await apiFetch('/api/v2/brief/analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -243,6 +354,43 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={wordUploadRef}
+            type="file"
+            accept=".docx,.pdf,.txt,.md"
+            onChange={handleUploadWordForm}
+            className="hidden"
+          />
+          {template && (
+            <button
+              type="button"
+              disabled={isDocxDownloading}
+              onClick={() => void handleDownloadWordForm()}
+              className="px-3 py-2 text-xs font-semibold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              title="Download this Stage 1 form as a fillable Word (.docx) document"
+            >
+              {isDocxDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              <span>Download Word (.docx)</span>
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={isDocxUploading}
+            onClick={() => wordUploadRef.current?.click()}
+            className="px-3 py-2 text-xs font-semibold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+            title="Upload a filled Word (.docx) template to populate Stage 1"
+          >
+            {isDocxUploading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <FileUp className="w-3.5 h-3.5" />
+            )}
+            <span>Upload Filled Word</span>
+          </button>
           <button
             type="button"
             onClick={onOpenSources}

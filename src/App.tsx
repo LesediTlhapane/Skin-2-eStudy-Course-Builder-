@@ -7,7 +7,8 @@ import { CourseWorkspace } from './components/CourseWorkspace';
 import { CreateCourseModal } from './components/CreateCourseModal';
 
 export default function App() {
-  const store = useV2Store();
+  const store = useV2Store({ isCloudMode: false });
+
   const [isNewCourseModalOpen, setIsNewCourseModalOpen] = useState(false);
   const [preselectedTemplateId, setPreselectedTemplateId] = useState<string | undefined>(undefined);
 
@@ -62,6 +63,7 @@ export default function App() {
             setPreselectedTemplateId(tplId);
             setIsNewCourseModalOpen(true);
           }}
+          onCreateCourseFromFilledDoc={project => store.createProject(project)}
         />
       )}
 

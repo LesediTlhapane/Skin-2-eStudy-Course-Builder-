@@ -27,7 +27,7 @@ import {
   runAccessibilityChecks,
   runTechnicalValidationChecks,
 } from '../../utils/validationChecks';
-import { compactProjectForApi, parseApiJson } from '../../utils/apiClient';
+import { apiFetch, compactProjectForApi, parseApiJson } from '../../utils/apiClient';
 
 interface Stage6QAProps {
   project: CourseProject;
@@ -300,7 +300,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     setIsRunning(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/v2/qa/evaluate', {
+      const res = await apiFetch('/api/v2/qa/evaluate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

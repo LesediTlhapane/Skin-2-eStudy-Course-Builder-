@@ -3,15 +3,27 @@ import {
   ArrowDown,
   ArrowUp,
   Copy,
+  Download,
   Eye,
+  FileText,
   FileUp,
   Loader2,
   Plus,
   Save,
   Trash2,
 } from 'lucide-react';
-import type { AIProvider, CourseTemplate, TemplateField, TemplateSection } from '../types';
-import { parseApiJson } from '../utils/apiClient';
+import type {
+  AIProvider,
+  CourseProject,
+  CourseTemplate,
+  TemplateField,
+  TemplateSection,
+} from '../types';
+import { apiFetch, parseApiJson } from '../utils/apiClient';
+import {
+  exportTemplateAsDocx,
+  uploadAndParseFilledTemplateFile,
+} from '../utils/templateDocx';
 
 interface TemplateStudioProps {
   templates: CourseTemplate[];
@@ -21,6 +33,7 @@ interface TemplateStudioProps {
   onDuplicateTemplate: (templateId: string) => CourseTemplate | null;
   onDeleteTemplate: (templateId: string) => void;
   onUseTemplate: (templateId: string) => void;
+  onCreateCourseFromFilledDoc?: (project: CourseProject) => void;
 }
 
 export const TemplateStudio: React.FC<TemplateStudioProps> = ({
@@ -31,14 +44,18 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
   onDuplicateTemplate,
   onDeleteTemplate,
   onUseTemplate,
+  onCreateCourseFromFilledDoc,
 }) => {
   const [selectedId, setSelectedId] = useState<string>(templates[0]?.id || '');
   const [draft, setDraft] = useState<CourseTemplate | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isImportingFilled, setIsImportingFilled] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const filledDocRef = useRef<HTMLInputElement>(null);
 
   const activeTemplate =
     draft || templates.find(t => t.id === selectedId) || templates[0];
@@ -120,7 +137,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
           reader.readAsDataURL(file);
         });
       }
-      const res = await fetch('/api/v2/templates/extract', {
+      const res = await apiFetch('/api/v2/templates/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -157,6 +174,49 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
       setUploadError(err?.message || 'Could not extract template.');
     } finally {
       setIsUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleDownloadDocx = async (tpl: CourseTemplate) => {
+    setDownloadingId(tpl.id);
+    setUploadError(null);
+    try {
+      await exportTemplateAsDocx(tpl);
+      setSaveNotice(
+        `Downloaded "${tpl.name}" as a fillable Word (.docx) document. Fill in the right-hand cells and upload it back to create your course.`
+      );
+    } catch (err: any) {
+      setUploadError(err?.message || 'Could not generate Word template.');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handleUploadFilledWordCourse = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !onCreateCourseFromFilledDoc) return;
+    setIsImportingFilled(true);
+    setUploadError(null);
+    setSaveNotice(null);
+    try {
+      const outcome = await uploadAndParseFilledTemplateFile({
+        file,
+        templates,
+        fallbackTemplateId: activeTemplate?.id,
+        provider: selectedProvider,
+        model: selectedModel,
+      });
+      if (outcome.populatedFieldCount === 0 && outcome.suggestedModules.length === 0) {
+        throw new Error(
+          'No filled fields were detected in this Word document. Replace the placeholder text inside the right-hand cells before uploading.'
+        );
+      }
+      onCreateCourseFromFilledDoc(outcome.project);
+    } catch (err: any) {
+      setUploadError(err?.message || 'Could not import filled Word template.');
+    } finally {
+      setIsImportingFilled(false);
       e.target.value = '';
     }
   };
@@ -274,6 +334,28 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
             onChange={handleUploadTemplateFile}
             className="hidden"
           />
+          <input
+            ref={filledDocRef}
+            type="file"
+            accept=".docx,.pdf,.txt,.md"
+            onChange={handleUploadFilledWordCourse}
+            className="hidden"
+          />
+          {onCreateCourseFromFilledDoc && (
+            <button
+              type="button"
+              disabled={isImportingFilled}
+              onClick={() => filledDocRef.current?.click()}
+              className="px-3.5 py-2 text-xs font-bold bg-[#45CC42] hover:bg-[#3ab837] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+            >
+              {isImportingFilled ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FileText className="w-3.5 h-3.5" />
+              )}
+              <span>Upload Filled Word (.docx)</span>
+            </button>
+          )}
           <button
             type="button"
             disabled={isUploading}
@@ -281,7 +363,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
             className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer"
           >
             {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5" />}
-            <span>Upload Template</span>
+            <span>Import Structure</span>
           </button>
           <button
             type="button"
@@ -333,7 +415,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                   </div>
                 </div>
                 <p className="text-xs text-slate-600 mt-2 line-clamp-2">{tpl.description}</p>
-                <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-2">
+                <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={e => {
@@ -346,6 +428,23 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                   </button>
                   <button
                     type="button"
+                    disabled={downloadingId === tpl.id}
+                    onClick={e => {
+                      e.stopPropagation();
+                      void handleDownloadDocx(tpl);
+                    }}
+                    className="px-2.5 py-1 text-[11px] font-semibold bg-[#F5F7FA] border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                    title="Download fillable Word (.docx) template"
+                  >
+                    {downloadingId === tpl.id ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Download className="w-3 h-3" />
+                    )}
+                    <span>Word (.docx)</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={e => {
                       e.stopPropagation();
                       const copy = onDuplicateTemplate(tpl.id);
@@ -354,7 +453,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                         setDraft(copy);
                       }
                     }}
-                    className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-[#052B66] flex items-center gap-1 cursor-pointer"
+                    className="px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-[#052B66] flex items-center gap-1 cursor-pointer"
                   >
                     <Copy className="w-3 h-3" />
                     <span>Duplicate</span>
@@ -394,7 +493,20 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={downloadingId === activeTemplate.id}
+                    onClick={() => void handleDownloadDocx(activeTemplate)}
+                    className="px-3 py-1.5 text-xs font-bold border border-[#052B66]/30 bg-[#F5F7FA] hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  >
+                    {downloadingId === activeTemplate.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    <span>Download Word (.docx)</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setPreviewMode(!previewMode)}

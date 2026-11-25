@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AIModelMeta,
   AIProvider,
@@ -9,7 +9,7 @@ import type {
 } from '../types';
 import { SYSTEM_TEMPLATES } from '../data/templates';
 import { BENCHMARK_PRESETS, createEmptyCourseProject } from '../data/benchmarks';
-import { parseApiJson } from '../utils/apiClient';
+import { apiFetch, parseApiJson } from '../utils/apiClient';
 
 const DB_NAME = 'estudy_course_builder_v2';
 const DB_VERSION = 1;
@@ -73,6 +73,33 @@ async function idbPutAll<T extends { id: string }>(storeName: string, items: T[]
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+export async function readLocalBackupSnapshot(): Promise<{
+  projects: CourseProject[];
+  customTemplates: CourseTemplate[];
+}> {
+  try {
+    const [loadedProjects, loadedTemplates] = await Promise.all([
+      idbGetAll<CourseProject>(STORE_PROJECTS),
+      idbGetAll<CourseTemplate>(STORE_TEMPLATES),
+    ]);
+    return {
+      projects: (loadedProjects || []).map(normalizeProjectSchema),
+      customTemplates: Array.isArray(loadedTemplates) ? loadedTemplates : [],
+    };
+  } catch {
+    try {
+      const pRaw = localStorage.getItem(FALLBACK_PROJECTS_KEY);
+      const tRaw = localStorage.getItem(FALLBACK_TEMPLATES_KEY);
+      return {
+        projects: pRaw ? JSON.parse(pRaw).map(normalizeProjectSchema) : [],
+        customTemplates: tRaw ? JSON.parse(tRaw) : [],
+      };
+    } catch {
+      return { projects: [], customTemplates: [] };
+    }
+  }
 }
 
 export function normalizeProjectSchema(raw: any): CourseProject {
@@ -164,7 +191,17 @@ export function normalizeProjectSchema(raw: any): CourseProject {
 
 export type AppRoute = 'dashboard' | 'templates' | 'workspace';
 
-export function useV2Store() {
+export interface UseV2StoreOptions {
+  companyId?: string | null;
+  accessToken?: string | null;
+  isCloudMode?: boolean;
+}
+
+export function useV2Store(options?: UseV2StoreOptions) {
+  const companyId = options?.companyId || null;
+  const accessToken = options?.accessToken || null;
+  const isCloudMode = Boolean(options?.isCloudMode && companyId && accessToken);
+
   const [projects, setProjects] = useState<CourseProject[]>([]);
   const [customTemplates, setCustomTemplates] = useState<CourseTemplate[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -173,6 +210,7 @@ export function useV2Store() {
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved');
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingLocalMigrationCount, setPendingLocalMigrationCount] = useState<number>(0);
 
   const [selectedProvider, setSelectedProviderState] = useState<AIProvider>('groq');
 
@@ -188,6 +226,8 @@ export function useV2Store() {
   const [keysStatus, setKeysStatus] = useState<{ groq: boolean }>({
     groq: false,
   });
+
+  const dirtyProjectIdsRef = useRef<Set<string>>(new Set());
 
   // Load AI models & configured keys from backend
   useEffect(() => {
@@ -210,8 +250,62 @@ export function useV2Store() {
       .catch(() => {});
   }, []);
 
-  // Load persisted projects & templates
+  const reloadCloudWorkspace = useCallback(async () => {
+    if (!isCloudMode || !companyId || !accessToken) return;
+    setIsLoaded(false);
+    setSaveError(null);
+    dirtyProjectIdsRef.current.clear();
+
+    try {
+      const [coursesRes, templatesRes, localBackup] = await Promise.all([
+        apiFetch('/api/v2/courses'),
+        apiFetch('/api/v2/templates'),
+        readLocalBackupSnapshot(),
+      ]);
+
+      const coursesData = await parseApiJson<any>(coursesRes);
+      const templatesData = await parseApiJson<any>(templatesRes);
+
+      if (!coursesRes.ok || !coursesData.success) {
+        throw new Error(coursesData.error || 'Failed to load company courses.');
+      }
+
+      const loadedCloudProjects: CourseProject[] = Array.isArray(coursesData.courses)
+        ? coursesData.courses.map(normalizeProjectSchema)
+        : [];
+      const loadedCloudTemplates: CourseTemplate[] = Array.isArray(templatesData.templates)
+        ? templatesData.templates.filter((t: CourseTemplate) => !t.isSystemReference)
+        : [];
+
+      // Count local IndexedDB projects not yet mirrored in cloud workspace
+      const cloudKnownIds = new Set(
+        loadedCloudProjects.flatMap(p => [p.id, p.localSourceId].filter(Boolean) as string[])
+      );
+      const unmigratedLocal = (localBackup.projects || []).filter(
+        p => !cloudKnownIds.has(p.id) && !(p.localSourceId && cloudKnownIds.has(p.localSourceId))
+      );
+      setPendingLocalMigrationCount(unmigratedLocal.length);
+
+      setProjects(loadedCloudProjects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+      setCustomTemplates(loadedCloudTemplates);
+      setActiveProjectId(prev =>
+        prev && loadedCloudProjects.some(p => p.id === prev) ? prev : null
+      );
+      setLastSavedAt(new Date().toISOString());
+    } catch (err: any) {
+      setSaveError(err?.message || 'Unable to load cloud workspace.');
+    } finally {
+      setIsLoaded(true);
+    }
+  }, [isCloudMode, companyId, accessToken]);
+
+  // Initial load: Cloud mode (Supabase PostgreSQL via Express) OR legacy Local IndexedDB mode
   useEffect(() => {
+    if (isCloudMode) {
+      void reloadCloudWorkspace();
+      return;
+    }
+
     (async () => {
       try {
         const [loadedProjects, loadedTemplates] = await Promise.all([
@@ -225,7 +319,6 @@ export function useV2Store() {
             .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
           setProjects(normalized);
         } else {
-          // Seed one ready-to-explore starter project from Benchmark 1 (draft brief)
           const starter = createEmptyCourseProject({
             templateId: 'tpl-technical-engineering',
             templateName: 'Technical & Engineering Mastery Template',
@@ -250,46 +343,71 @@ export function useV2Store() {
         setIsLoaded(true);
       }
     })();
-  }, []);
+  }, [isCloudMode, reloadCloudWorkspace]);
 
   const persistNow = useCallback(
     async (projList: CourseProject[], tplList: CourseTemplate[]) => {
       setSaveState('saving');
       setSaveError(null);
       try {
+        if (isCloudMode) {
+          const dirtyIds = Array.from(dirtyProjectIdsRef.current);
+          if (dirtyIds.length > 0) {
+            dirtyProjectIdsRef.current.clear();
+            for (const id of dirtyIds) {
+              const target = projList.find(p => p.id === id);
+              if (!target) continue;
+              const res = await apiFetch(`/api/v2/courses/${encodeURIComponent(id)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project: target }),
+              });
+              const data = await parseApiJson<any>(res);
+              if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Cloud save failed.');
+              }
+            }
+          }
+          setLastSavedAt(new Date().toISOString());
+          return;
+        }
+
         await Promise.all([
           idbPutAll(STORE_PROJECTS, projList),
           idbPutAll(STORE_TEMPLATES, tplList),
         ]);
         setLastSavedAt(new Date().toISOString());
-      } catch (idbErr: any) {
-        try {
-          localStorage.setItem(FALLBACK_PROJECTS_KEY, JSON.stringify(projList));
-          localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(tplList));
-          setLastSavedAt(new Date().toISOString());
-        } catch (lsErr: any) {
-          setSaveError(
-            lsErr?.message ||
-              idbErr?.message ||
-              'Browser storage quota exceeded. Export a backup JSON file from the Dashboard.'
-          );
+      } catch (err: any) {
+        if (!isCloudMode) {
+          try {
+            localStorage.setItem(FALLBACK_PROJECTS_KEY, JSON.stringify(projList));
+            localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(tplList));
+            setLastSavedAt(new Date().toISOString());
+            return;
+          } catch {}
         }
+        setSaveError(
+          err?.message ||
+            'Failed to save changes. Export a backup JSON file from the Dashboard as a precaution.'
+        );
       } finally {
         setSaveState('saved');
       }
     },
-    []
+    [isCloudMode]
   );
 
   // Persist projects cleanly with debounce
   useEffect(() => {
     if (!isLoaded) return;
+    if (isCloudMode && dirtyProjectIdsRef.current.size === 0) return;
+
     setSaveState('saving');
     const timer = setTimeout(() => {
       void persistNow(projects, customTemplates);
-    }, 250);
+    }, isCloudMode ? 450 : 250);
     return () => clearTimeout(timer);
-  }, [projects, customTemplates, isLoaded, persistNow]);
+  }, [projects, customTemplates, isLoaded, isCloudMode, persistNow]);
 
   // Warn before closing tab while save is in flight
   useEffect(() => {
@@ -304,10 +422,16 @@ export function useV2Store() {
   }, [saveState]);
 
   const flushSaveNow = useCallback(async () => {
+    if (isCloudMode && activeProjectId) {
+      dirtyProjectIdsRef.current.add(activeProjectId);
+    }
     await persistNow(projects, customTemplates);
-  }, [persistNow, projects, customTemplates]);
+  }, [persistNow, projects, customTemplates, isCloudMode, activeProjectId]);
 
-  const allTemplates = [...SYSTEM_TEMPLATES, ...customTemplates];
+  const allTemplates = [
+    ...SYSTEM_TEMPLATES,
+    ...customTemplates.filter(t => !SYSTEM_TEMPLATES.some(sys => sys.id === t.id)),
+  ];
   const activeProject = projects.find(p => p.id === activeProjectId) || null;
 
   const setProvider = useCallback((_provider: AIProvider) => {
@@ -329,21 +453,51 @@ export function useV2Store() {
     } catch {}
   }, []);
 
-  const createProject = useCallback((project: CourseProject) => {
-    setProjects(prev => [project, ...prev]);
-    setActiveProjectId(project.id);
-    setRoute('workspace');
-  }, []);
+  const createProject = useCallback(
+    (project: CourseProject) => {
+      const enriched: CourseProject = isCloudMode && companyId ? { ...project, companyId } : project;
+      setProjects(prev => [enriched, ...prev]);
+      setActiveProjectId(enriched.id);
+      setRoute('workspace');
 
-  const openProject = useCallback((projectId: string, stage?: WorkflowStage) => {
-    setActiveProjectId(projectId);
-    if (stage) {
-      setProjects(prev =>
-        prev.map(p => (p.id === projectId ? { ...p, currentStage: stage } : p))
-      );
-    }
-    setRoute('workspace');
-  }, []);
+      if (isCloudMode) {
+        void (async () => {
+          setSaveState('saving');
+          try {
+            const res = await apiFetch('/api/v2/courses', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ project: enriched }),
+            });
+            const data = await parseApiJson<any>(res);
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || 'Failed to save new course to cloud.');
+            }
+            setLastSavedAt(new Date().toISOString());
+          } catch (err: any) {
+            setSaveError(err?.message || 'Failed to save new course.');
+          } finally {
+            setSaveState('saved');
+          }
+        })();
+      }
+    },
+    [isCloudMode, companyId]
+  );
+
+  const openProject = useCallback(
+    (projectId: string, stage?: WorkflowStage) => {
+      setActiveProjectId(projectId);
+      if (stage) {
+        if (isCloudMode) dirtyProjectIdsRef.current.add(projectId);
+        setProjects(prev =>
+          prev.map(p => (p.id === projectId ? { ...p, currentStage: stage } : p))
+        );
+      }
+      setRoute('workspace');
+    },
+    [isCloudMode]
+  );
 
   const updateProject = useCallback(
     (
@@ -354,6 +508,9 @@ export function useV2Store() {
         summary: string;
       }
     ) => {
+      if (isCloudMode) dirtyProjectIdsRef.current.add(projectId);
+      let createdSnapshot: CourseVersionSnapshot | null = null;
+
       setProjects(prev =>
         prev.map(p => {
           if (p.id !== projectId) return p;
@@ -362,7 +519,7 @@ export function useV2Store() {
           let versions = next.versions || [];
           if (snapshotOptions) {
             const { versions: _ignored, ...rest } = p;
-            const snapshot: CourseVersionSnapshot = {
+            createdSnapshot = {
               id: `ver-${Date.now()}`,
               versionNumber: versions.length + 1,
               createdAt: now,
@@ -371,7 +528,7 @@ export function useV2Store() {
               summary: snapshotOptions.summary,
               data: JSON.parse(JSON.stringify(rest)),
             };
-            versions = [snapshot, ...versions].slice(0, 30);
+            versions = [createdSnapshot, ...versions].slice(0, 30);
           }
           return {
             ...next,
@@ -380,75 +537,122 @@ export function useV2Store() {
           };
         })
       );
+
+      if (isCloudMode && snapshotOptions && createdSnapshot) {
+        void apiFetch(`/api/v2/courses/${encodeURIComponent(projectId)}/versions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ snapshot: createdSnapshot }),
+        }).catch(() => {});
+      }
     },
-    []
+    [isCloudMode]
   );
 
-  const restoreProjectVersion = useCallback((projectId: string, snapshotId: string) => {
-    setProjects(prev =>
-      prev.map(p => {
-        if (p.id !== projectId) return p;
-        const target = p.versions.find(v => v.id === snapshotId);
-        if (!target) return p;
-        const { versions: _curr, ...currentRest } = p;
-        const backupBeforeRestore: CourseVersionSnapshot = {
-          id: `ver-${Date.now()}`,
-          versionNumber: p.versions.length + 1,
-          createdAt: new Date().toISOString(),
-          stage: p.currentStage,
-          trigger: 'restore',
-          summary: `Auto-saved before restoring v${target.versionNumber}`,
-          data: JSON.parse(JSON.stringify(currentRest)),
-        };
-        const restored = JSON.parse(JSON.stringify(target.data)) as Omit<CourseProject, 'versions'>;
-        return {
-          ...restored,
-          updatedAt: new Date().toISOString(),
-          versions: [backupBeforeRestore, ...p.versions].slice(0, 30),
-        };
-      })
-    );
-  }, []);
+  const restoreProjectVersion = useCallback(
+    (projectId: string, snapshotId: string) => {
+      if (isCloudMode) dirtyProjectIdsRef.current.add(projectId);
+      setProjects(prev =>
+        prev.map(p => {
+          if (p.id !== projectId) return p;
+          const target = p.versions.find(v => v.id === snapshotId);
+          if (!target) return p;
+          const { versions: _curr, ...currentRest } = p;
+          const backupBeforeRestore: CourseVersionSnapshot = {
+            id: `ver-${Date.now()}`,
+            versionNumber: p.versions.length + 1,
+            createdAt: new Date().toISOString(),
+            stage: p.currentStage,
+            trigger: 'restore',
+            summary: `Auto-saved before restoring v${target.versionNumber}`,
+            data: JSON.parse(JSON.stringify(currentRest)),
+          };
+          const restored = JSON.parse(JSON.stringify(target.data)) as Omit<
+            CourseProject,
+            'versions'
+          >;
+          return {
+            ...restored,
+            updatedAt: new Date().toISOString(),
+            versions: [backupBeforeRestore, ...p.versions].slice(0, 30),
+          };
+        })
+      );
+    },
+    [isCloudMode]
+  );
 
-  const duplicateProject = useCallback((projectId: string) => {
-    setProjects(prev => {
-      const target = prev.find(p => p.id === projectId);
-      if (!target) return prev;
+  const duplicateProject = useCallback(
+    (projectId: string) => {
+      const target = projects.find(p => p.id === projectId);
+      if (!target) return;
       const now = new Date().toISOString();
       const copy: CourseProject = {
         ...JSON.parse(JSON.stringify(target)),
         id: `course-${Date.now()}`,
+        localSourceId: undefined,
         lifecycleStatus: 'draft',
         createdAt: now,
         updatedAt: now,
         versions: [],
       };
       copy.brief.title = `${target.brief.title || 'Untitled Course'} (Copy)`;
-      return [copy, ...prev];
-    });
-  }, []);
+      setProjects(prev => [copy, ...prev]);
+
+      if (isCloudMode) {
+        void apiFetch('/api/v2/courses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: copy }),
+        }).catch(() => {});
+      }
+    },
+    [projects, isCloudMode]
+  );
 
   const deleteProject = useCallback(
     (projectId: string) => {
+      dirtyProjectIdsRef.current.delete(projectId);
       setProjects(prev => prev.filter(p => p.id !== projectId));
       if (activeProjectId === projectId) {
         setActiveProjectId(null);
         setRoute('dashboard');
       }
+      if (isCloudMode) {
+        void apiFetch(`/api/v2/courses/${encodeURIComponent(projectId)}`, {
+          method: 'DELETE',
+        }).catch(() => {});
+      }
     },
-    [activeProjectId]
+    [activeProjectId, isCloudMode]
   );
 
-  const saveTemplate = useCallback((tpl: CourseTemplate) => {
-    const now = new Date().toISOString();
-    setCustomTemplates(prev => {
-      const exists = prev.some(t => t.id === tpl.id && !t.isSystemReference);
-      if (exists) {
-        return prev.map(t => (t.id === tpl.id ? { ...tpl, updatedAt: now } : t));
+  const saveTemplate = useCallback(
+    (tpl: CourseTemplate) => {
+      const now = new Date().toISOString();
+      const updatedTpl: CourseTemplate = {
+        ...tpl,
+        isSystemReference: false,
+        visibility: 'company',
+        updatedAt: now,
+      };
+      setCustomTemplates(prev => {
+        const exists = prev.some(t => t.id === tpl.id && !t.isSystemReference);
+        if (exists) {
+          return prev.map(t => (t.id === tpl.id ? updatedTpl : t));
+        }
+        return [updatedTpl, ...prev];
+      });
+      if (isCloudMode) {
+        void apiFetch('/api/v2/templates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template: updatedTpl }),
+        }).catch(() => {});
       }
-      return [{ ...tpl, isSystemReference: false, updatedAt: now }, ...prev];
-    });
-  }, []);
+    },
+    [isCloudMode]
+  );
 
   const duplicateTemplate = useCallback(
     (templateId: string) => {
@@ -460,18 +664,34 @@ export function useV2Store() {
         id: `tpl-custom-${Date.now()}`,
         name: `${found.name} (Copy)`,
         isSystemReference: false,
+        visibility: 'company',
         createdAt: now,
         updatedAt: now,
       };
       setCustomTemplates(prev => [copy, ...prev]);
+      if (isCloudMode) {
+        void apiFetch('/api/v2/templates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template: copy }),
+        }).catch(() => {});
+      }
       return copy;
     },
-    [allTemplates]
+    [allTemplates, isCloudMode]
   );
 
-  const deleteTemplate = useCallback((templateId: string) => {
-    setCustomTemplates(prev => prev.filter(t => t.id !== templateId));
-  }, []);
+  const deleteTemplate = useCallback(
+    (templateId: string) => {
+      setCustomTemplates(prev => prev.filter(t => t.id !== templateId));
+      if (isCloudMode) {
+        void apiFetch(`/api/v2/templates/${encodeURIComponent(templateId)}`, {
+          method: 'DELETE',
+        }).catch(() => {});
+      }
+    },
+    [isCloudMode]
+  );
 
   const exportWorkspaceJson = useCallback(() => {
     const payload = {
@@ -491,25 +711,45 @@ export function useV2Store() {
     URL.revokeObjectURL(url);
   }, [projects, customTemplates]);
 
-  const importWorkspaceJson = useCallback((rawJson: string) => {
-    const parsed = JSON.parse(rawJson);
-    if (Array.isArray(parsed?.projects)) {
-      setProjects(prev => {
-        const ids = new Set(prev.map(p => p.id));
-        const incoming = parsed.projects
-          .filter((p: any) => p && p.id && !ids.has(p.id))
-          .map(normalizeProjectSchema);
-        return [...incoming, ...prev];
-      });
-    }
-    if (Array.isArray(parsed?.customTemplates)) {
-      setCustomTemplates(prev => {
-        const ids = new Set(prev.map(t => t.id));
-        const incoming = parsed.customTemplates.filter((t: CourseTemplate) => t.id && !ids.has(t.id));
-        return [...incoming, ...prev];
-      });
-    }
-  }, []);
+  const importWorkspaceJson = useCallback(
+    (rawJson: string) => {
+      const parsed = JSON.parse(rawJson);
+      const importedProjects: CourseProject[] = [];
+      const importedTemplates: CourseTemplate[] = [];
+
+      if (Array.isArray(parsed?.projects)) {
+        setProjects(prev => {
+          const ids = new Set(prev.map(p => p.id));
+          const incoming = parsed.projects
+            .filter((p: any) => p && p.id && !ids.has(p.id))
+            .map(normalizeProjectSchema);
+          importedProjects.push(...incoming);
+          return [...incoming, ...prev];
+        });
+      }
+      if (Array.isArray(parsed?.customTemplates)) {
+        setCustomTemplates(prev => {
+          const ids = new Set(prev.map(t => t.id));
+          const incoming = parsed.customTemplates.filter(
+            (t: CourseTemplate) => t.id && !ids.has(t.id)
+          );
+          importedTemplates.push(...incoming);
+          return [...incoming, ...prev];
+        });
+      }
+      if (isCloudMode && (importedProjects.length > 0 || importedTemplates.length > 0)) {
+        void apiFetch('/api/v2/courses/migrate-local', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projects: importedProjects,
+            customTemplates: importedTemplates,
+          }),
+        }).then(() => reloadCloudWorkspace());
+      }
+    },
+    [isCloudMode, reloadCloudWorkspace]
+  );
 
   return {
     projects,
@@ -522,6 +762,8 @@ export function useV2Store() {
     saveState,
     lastSavedAt,
     saveError,
+    pendingLocalMigrationCount,
+    reloadCloudWorkspace,
     flushSaveNow,
     selectedProvider,
     selectedModel,

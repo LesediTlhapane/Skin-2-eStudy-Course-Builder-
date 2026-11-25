@@ -19,7 +19,7 @@ export type CourseLifecycleStatus =
   | 'revision_required'
   | 'completed';
 
-export type CourseCreationMode = 'copilot' | 'brief' | 'source' | 'improve';
+export type CourseCreationMode = 'copilot' | 'brief' | 'source' | 'improve' | 'filled_template';
 
 export type WorkflowStage = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -73,6 +73,9 @@ export interface CourseTemplate {
   defaultAiMode: 'none' | 'optional' | 'core';
   qualityRules: string[];
   sections: TemplateSection[];
+  companyId?: string | null;
+  visibility?: 'system' | 'company';
+  localSourceId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -96,6 +99,9 @@ export interface SourceDocument {
   verificationNotes?: string;
   summary?: string;
   keyTopics?: string[];
+  storagePath?: string;
+  fileSizeBytes?: number;
+  cloudDocumentId?: string;
   addedAt: string;
 }
 
@@ -632,6 +638,9 @@ export interface CopilotMessage {
 
 export interface CourseProject {
   id: string;
+  companyId?: string;
+  createdBy?: string;
+  localSourceId?: string;
   templateId: string;
   templateName: string;
   creationMode: CourseCreationMode;
@@ -651,3 +660,62 @@ export interface CourseProject {
   latestQA?: QAEvaluationReport;
   versions: CourseVersionSnapshot[];
 }
+
+/* ---------------- MULTI-TENANT SAAS WORKSPACE TYPES ---------------- */
+
+export type CompanyRole = 'company_admin' | 'author' | 'reviewer' | 'viewer';
+
+export type MembershipStatus = 'active' | 'invited' | 'suspended';
+
+export interface CompanyWorkspace {
+  id: string;
+  companyName: string;
+  companySlug: string;
+  logoUrl?: string | null;
+  primaryColour: string;
+  secondaryColour: string;
+  subscriptionStatus: 'trialing' | 'active' | 'past_due' | 'suspended' | 'cancelled' | string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserProfile {
+  id: string;
+  fullName: string;
+  email: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CompanyMembership {
+  id: string;
+  companyId: string;
+  userId: string;
+  role: CompanyRole;
+  membershipStatus: MembershipStatus;
+  createdAt: string;
+  company?: CompanyWorkspace;
+  profile?: UserProfile;
+}
+
+export interface AiUsageRecord {
+  id: string;
+  companyId: string;
+  userId?: string | null;
+  provider: string;
+  model: string;
+  operation: string;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+  createdAt: string;
+}
+
+export interface AiUsageSummary {
+  totalCalls: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalEstimatedCost: number;
+  recentRecords: AiUsageRecord[];
+}
+

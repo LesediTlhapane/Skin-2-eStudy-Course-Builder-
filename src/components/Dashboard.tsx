@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
+  CloudUpload,
   Copy,
   Download,
   FilePlus2,
@@ -10,11 +11,19 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import type { CourseLifecycleStatus, CourseProject, CourseTemplate } from '../types';
+import type {
+  CompanyWorkspace,
+  CourseLifecycleStatus,
+  CourseProject,
+  CourseTemplate,
+} from '../types';
 
 interface DashboardProps {
   projects: CourseProject[];
   templates: CourseTemplate[];
+  activeCompany?: CompanyWorkspace | null;
+  pendingLocalMigrationCount?: number;
+  onOpenLocalMigration?: () => void;
   onOpenProject: (projectId: string) => void;
   onCreateNewCourse: () => void;
   onDuplicateProject: (projectId: string) => void;
@@ -45,6 +54,9 @@ const STATUS_LABELS: Record<CourseLifecycleStatus, string> = {
 export const Dashboard: React.FC<DashboardProps> = ({
   projects,
   templates,
+  activeCompany,
+  pendingLocalMigrationCount = 0,
+  onOpenLocalMigration,
   onOpenProject,
   onCreateNewCourse,
   onDuplicateProject,
@@ -58,6 +70,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [importFeedback, setImportFeedback] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const primaryColour = activeCompany?.primaryColour || '#052B66';
+  const secondaryColour = activeCompany?.secondaryColour || '#45CC42';
+  const brandTitle = activeCompany?.companyName || 'eStudy South Africa';
 
   const counts = useMemo(() => {
     const map = {
@@ -104,10 +120,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Hero Workspace Banner */}
-      <section className="bg-[#052B66] rounded-xl p-6 sm:p-8 text-white border border-[#042150] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+      <section
+        className="rounded-xl p-6 sm:p-8 text-white border border-slate-900/15 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6"
+        style={{ backgroundColor: primaryColour }}
+      >
         <div className="max-w-2xl space-y-2.5">
-          <p className="text-xs font-semibold text-[#45CC42] uppercase tracking-wider">
-            eStudy South Africa · Instructional Design Platform V2
+          <p
+            className="text-xs font-semibold uppercase tracking-wider"
+            style={{ color: secondaryColour }}
+          >
+            {brandTitle} · Instructional Design Platform V2
           </p>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
             Course Development Workspace
@@ -121,7 +143,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <button
             type="button"
             onClick={onCreateNewCourse}
-            className="px-5 py-3 rounded-lg bg-[#45CC42] hover:bg-[#3ab837] text-[#052B66] font-bold text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer transition-colors"
+            className="px-5 py-3 rounded-lg font-bold text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-95"
+            style={{ backgroundColor: secondaryColour, color: primaryColour }}
           >
             <FilePlus2 className="w-4 h-4" />
             <span>Create New Course</span>
@@ -131,11 +154,31 @@ export const Dashboard: React.FC<DashboardProps> = ({
             onClick={onOpenTemplates}
             className="px-4 py-3 rounded-lg bg-white/10 hover:bg-white/15 border border-white/20 text-white font-semibold text-sm flex items-center gap-2 whitespace-nowrap cursor-pointer transition-colors"
           >
-            <Layers className="w-4 h-4 text-[#45CC42]" />
+            <Layers className="w-4 h-4" style={{ color: secondaryColour }} />
             <span>Manage Templates ({counts.templates})</span>
           </button>
         </div>
       </section>
+
+      {pendingLocalMigrationCount > 0 && onOpenLocalMigration && (
+        <section className="bg-white border border-amber-300 rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs text-slate-700">
+            <strong className="text-[#052B66]">
+              {pendingLocalMigrationCount} local browser course project(s)
+            </strong>{' '}
+            were detected from previous local storage and have not yet been copied into{' '}
+            <strong>{brandTitle}</strong>.
+          </div>
+          <button
+            type="button"
+            onClick={onOpenLocalMigration}
+            className="px-3.5 py-1.5 rounded-lg bg-[#052B66] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+          >
+            <CloudUpload className="w-3.5 h-3.5 text-[#45CC42]" />
+            <span>Migrate Local Courses</span>
+          </button>
+        </section>
+      )}
 
       {/* Practical Overview Strip */}
       <section className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">

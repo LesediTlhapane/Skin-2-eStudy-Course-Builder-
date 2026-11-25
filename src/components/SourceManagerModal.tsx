@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   FileUp,
   Loader2,
   Plus,
@@ -14,7 +15,7 @@ import type {
   SourceDocument,
   SourceVerificationStatus,
 } from '../types';
-import { compactSourcesForApi, parseApiJson } from '../utils/apiClient';
+import { apiFetch, compactSourcesForApi, parseApiJson } from '../utils/apiClient';
 
 interface SourceManagerModalProps {
   isOpen: boolean;
@@ -66,7 +67,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
         });
       }
 
-      const res = await fetch('/api/v2/sources/analyse', {
+      const res = await apiFetch('/api/v2/sources/analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -84,9 +85,35 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
         throw new Error(data.error || 'Failed to analyse source.');
       }
 
+      // Upload original file securely into private per-company Supabase Storage bucket
+      let storagePath: string | undefined;
+      let cloudDocumentId: string | undefined;
+      try {
+        const uploadRes = await apiFetch('/api/v2/sources/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: file.name,
+            mimeType: file.type || 'text/plain',
+            base64Data,
+            rawText,
+            courseId: project.id,
+            extractedText: data.extractedText || rawText || '',
+            metadata: data.metadata || {},
+          }),
+        });
+        const uploadData = await parseApiJson<any>(uploadRes);
+        if (uploadRes.ok && uploadData.success) {
+          storagePath = uploadData.storagePath;
+          cloudDocumentId = uploadData.sourceId;
+        }
+      } catch {
+        // Keep extracted analysis even if storage upload is unconfigured/unavailable
+      }
+
       // All uploaded / AI-parsed sources MUST start as NEEDS REVIEW until human verification.
       const newSource: SourceDocument = {
-        id: `src-${Date.now()}`,
+        id: cloudDocumentId || `src-${Date.now()}`,
         title: data.metadata?.title || file.name,
         authorOrOrganisation: data.metadata?.authorOrOrganisation || 'To Be Confirmed',
         publicationDate: data.metadata?.publicationDate || 'To Be Confirmed',
@@ -94,6 +121,9 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
         referenceOrUrl: data.metadata?.referenceOrUrl || file.name,
         fileName: file.name,
         mimeType: file.type,
+        fileSizeBytes: file.size,
+        storagePath,
+        cloudDocumentId,
         extractedText: data.extractedText || rawText || '',
         relevantSections: data.metadata?.relevantSections || [],
         verificationStatus: 'NEEDS REVIEW',
@@ -322,14 +352,50 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
                       <option value="VERIFIED">VERIFIED</option>
                       <option value="UNSUPPORTED">UNSUPPORTED</option>
                     </select>
+                    {src.cloudDocumentId && (
+                      <button
+                        type="button"
+                        title="Download Private File via Short-Lived Signed URL"
+                        onClick={async () => {
+                          setErrorMsg(null);
+                          try {
+                            const res = await apiFetch(
+                              `/api/v2/sources/${encodeURIComponent(src.cloudDocumentId!)}/signed-url`
+                            );
+                            const d = await parseApiJson<any>(res);
+                            if (!res.ok || !d.signedUrl) {
+                              throw new Error(d.error || 'Could not generate download link.');
+                            }
+                            const a = document.createElement('a');
+                            a.href = d.signedUrl;
+                            a.download = d.fileName || src.fileName || 'source-document';
+                            a.rel = 'noopener noreferrer';
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                          } catch (err: any) {
+                            setErrorMsg(err?.message || 'Failed to download private file.');
+                          }
+                        }}
+                        className="px-2 py-1 text-[11px] font-semibold text-[#052B66] bg-[#F5F7FA] hover:bg-slate-200 border border-slate-200 rounded flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Download</span>
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        if (src.cloudDocumentId) {
+                          void apiFetch(`/api/v2/sources/${encodeURIComponent(src.cloudDocumentId)}`, {
+                            method: 'DELETE',
+                          }).catch(() => {});
+                        }
                         onUpdateProject(prev => ({
                           ...prev,
                           sources: prev.sources.filter(s => s.id !== src.id),
-                        }))
-                      }
+                        }));
+                      }}
                       className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />

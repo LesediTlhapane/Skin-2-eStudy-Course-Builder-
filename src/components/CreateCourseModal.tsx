@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Download,
   FileText,
   FileUp,
   Loader2,
@@ -20,7 +21,11 @@ import type {
   SourceDocument,
 } from '../types';
 import { BENCHMARK_PRESETS, createEmptyCourseProject } from '../data/benchmarks';
-import { parseApiJson } from '../utils/apiClient';
+import { apiFetch, parseApiJson } from '../utils/apiClient';
+import {
+  exportTemplateAsDocx,
+  uploadAndParseFilledTemplateFile,
+} from '../utils/templateDocx';
 
 interface CreateCourseModalProps {
   isOpen: boolean;
@@ -67,9 +72,12 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
   const [presetId, setPresetId] = useState<string>('');
   const [rawText, setRawText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filledDocFile, setFilledDocFile] = useState<File | null>(null);
+  const [isDownloadingDocx, setIsDownloadingDocx] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const filledDocRef = useRef<HTMLInputElement>(null);
 
   // Copilot Guided Onboarding State
   const [copilotPrompt, setCopilotPrompt] = useState('');
@@ -127,7 +135,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
     setErrorMsg(null);
 
     try {
-      const res = await fetch('/api/v2/copilot/draft-course', {
+      const res = await apiFetch('/api/v2/copilot/draft-course', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -260,7 +268,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
       }
 
       if (mode === 'source') {
-        const res = await fetch('/api/v2/sources/analyse', {
+        const res = await apiFetch('/api/v2/sources/analyse', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -309,7 +317,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
         onCreateProject(project);
         onClose();
       } else {
-        const res = await fetch('/api/v2/improve/diagnose', {
+        const res = await apiFetch('/api/v2/improve/diagnose', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -364,6 +372,49 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
     }
   };
 
+  const handleDownloadSelectedTemplateDocx = async () => {
+    if (!selectedTemplate) return;
+    setIsDownloadingDocx(true);
+    setErrorMsg(null);
+    try {
+      await exportTemplateAsDocx(selectedTemplate);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not generate Word template.');
+    } finally {
+      setIsDownloadingDocx(false);
+    }
+  };
+
+  const handleFilledTemplateUpload = async () => {
+    if (!filledDocFile) {
+      setErrorMsg('Please select a filled Word (.docx), PDF, or text template file to upload.');
+      return;
+    }
+    setIsProcessing(true);
+    setErrorMsg(null);
+    try {
+      const outcome = await uploadAndParseFilledTemplateFile({
+        file: filledDocFile,
+        templates,
+        fallbackTemplateId: selectedTemplate?.id,
+        provider: selectedProvider,
+        model: selectedModel,
+      });
+      if (outcome.populatedFieldCount === 0 && outcome.suggestedModules.length === 0) {
+        throw new Error(
+          'No filled values were detected in this file. Replace the placeholder text inside the right-hand cells before uploading.'
+        );
+      }
+      setFilledDocFile(null);
+      onCreateProject(outcome.project);
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Could not import filled Word template.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl border border-slate-200 max-w-4xl w-full max-h-[92vh] flex flex-col shadow-xl overflow-hidden">
@@ -384,32 +435,38 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
         </div>
 
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
-          {/* 4 Creation Modes */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* 5 Creation Modes */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
             {[
               {
                 id: 'copilot' as const,
                 title: '1. Course Copilot',
-                desc: 'Prompt Copilot to fill Stage 1 & template placeholders.',
+                desc: 'Prompt Copilot to fill Stage 1 & placeholders.',
                 icon: Sparkles,
                 accent: true,
               },
               {
+                id: 'filled_template' as const,
+                title: '2. Filled Word (.docx)',
+                desc: 'Download Word form, fill offline & upload back.',
+                icon: Download,
+              },
+              {
                 id: 'brief' as const,
-                title: '2. Blank / Preset Brief',
-                desc: 'Fill fields manually or load a benchmark brief.',
+                title: '3. Blank / Preset Brief',
+                desc: 'Fill fields manually or load a starter brief.',
                 icon: FileText,
               },
               {
                 id: 'source' as const,
-                title: '3. From Source File',
+                title: '4. From Source File',
                 desc: 'Upload manuals or policies for AI analysis.',
                 icon: FileUp,
               },
               {
                 id: 'improve' as const,
-                title: '4. Improve Course',
-                desc: 'Diagnose an existing course while preserving structure.',
+                title: '5. Improve Course',
+                desc: 'Diagnose an existing course & keep structure.',
                 icon: Wrench,
               },
             ].map(item => {
@@ -447,7 +504,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
           {/* Template Selection */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-            <div className="md:col-span-7 space-y-1">
+            <div className="md:col-span-6 space-y-1">
               <label className="block text-xs font-bold text-[#052B66]">
                 Course Template
               </label>
@@ -463,8 +520,23 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                 ))}
               </select>
             </div>
-            <div className="md:col-span-5 text-[11px] text-slate-500 pb-1.5">
-              {selectedTemplate?.sections.length || 0} template sections · {templateFields.length} custom placeholders
+            <div className="md:col-span-3 text-[11px] text-slate-500 pb-2">
+              {selectedTemplate?.sections.length || 0} sections · {templateFields.length} fields
+            </div>
+            <div className="md:col-span-3 flex justify-end">
+              <button
+                type="button"
+                disabled={isDownloadingDocx || !selectedTemplate}
+                onClick={() => void handleDownloadSelectedTemplateDocx()}
+                className="w-full md:w-auto px-3 py-2 text-xs font-bold bg-[#F5F7FA] border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+              >
+                {isDownloadingDocx ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span>Download Word (.docx)</span>
+              </button>
             </div>
           </div>
 
@@ -709,6 +781,61 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
             </div>
           )}
 
+          {mode === 'filled_template' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl border border-[#052B66]/20 bg-[#F5F7FA] space-y-2.5">
+                <div className="text-xs font-bold text-[#052B66]">
+                  Step 1: Download "{selectedTemplate?.name}" as a Fillable Word Document
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Download the selected template as a structured Word (.docx) document, fill in your course details inside the right-hand cells offline in Microsoft Word or Google Docs, and upload it back below.
+                </p>
+                <button
+                  type="button"
+                  disabled={isDownloadingDocx || !selectedTemplate}
+                  onClick={() => void handleDownloadSelectedTemplateDocx()}
+                  className="px-4 py-2 text-xs font-bold bg-white border border-[#052B66] text-[#052B66] hover:bg-slate-50 rounded-lg inline-flex items-center gap-2 cursor-pointer"
+                >
+                  {isDownloadingDocx ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  <span>Download "{selectedTemplate?.name}" (.docx)</span>
+                </button>
+              </div>
+
+              <div className="border border-dashed border-slate-300 rounded-xl p-5 bg-white space-y-3">
+                <div className="text-xs font-bold text-[#052B66]">
+                  Step 2: Upload Your Filled Word Template (.docx)
+                </div>
+                <input
+                  ref={filledDocRef}
+                  type="file"
+                  accept=".docx,.pdf,.txt,.md"
+                  onChange={e => setFilledDocFile(e.target.files?.[0] || null)}
+                  className="hidden"
+                />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-slate-600">
+                    {filledDocFile ? (
+                      <span className="font-semibold text-[#052B66]">{filledDocFile.name}</span>
+                    ) : (
+                      'Select the filled .docx Word template (or any filled course brief document)'
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => filledDocRef.current?.click()}
+                    className="px-3.5 py-2 text-xs font-bold bg-[#F5F7FA] border border-slate-300 rounded-lg hover:border-[#052B66] text-[#052B66] cursor-pointer"
+                  >
+                    Choose Filled File
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {mode === 'brief' && (
             <div className="space-y-2">
               <label className="block text-xs font-bold text-[#052B66]">
@@ -815,6 +942,25 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Create Course with Drafted Fields</span>
+              </button>
+            ) : mode === 'filled_template' ? (
+              <button
+                type="button"
+                disabled={isProcessing || !filledDocFile}
+                onClick={() => void handleFilledTemplateUpload()}
+                className="px-5 py-2.5 rounded-lg bg-[#45CC42] hover:bg-[#3ab837] disabled:opacity-50 text-[#052B66] text-xs font-bold flex items-center gap-2 cursor-pointer"
+              >
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Importing Filled Template...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileUp className="w-4 h-4" />
+                    <span>Import Word & Create Course</span>
+                  </>
+                )}
               </button>
             ) : mode === 'brief' ? (
               <button

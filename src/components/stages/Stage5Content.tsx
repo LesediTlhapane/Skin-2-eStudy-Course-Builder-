@@ -15,7 +15,7 @@ import type {
   GeneratedModuleContent,
   SourceVerificationStatus,
 } from '../../types';
-import { compactProjectForApi, compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
+import { apiFetch, compactProjectForApi, compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
 
 interface Stage5ContentProps {
   project: CourseProject;
@@ -126,7 +126,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       setGeneratingStatus(
         `Module ${modPlan.order}/${plannedModules.length}: Drafting overview, scenarios & knowledge checks...`
       );
-      const scaffoldRes = await fetch('/api/v2/content/generate-module-scaffold', {
+      const scaffoldRes = await apiFetch('/api/v2/content/generate-module-scaffold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -169,7 +169,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         `Module ${modPlan.order}/${plannedModules.length} · Writing Lesson ${lIdx + 1}/${plannedLessons.length}: ${lp.title}...`
       );
 
-      const lessonRes = await fetch('/api/v2/content/generate-lesson', {
+      const lessonRes = await apiFetch('/api/v2/content/generate-lesson', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -269,7 +269,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     setErrorMsg(null);
     setRegenSuccessMsg(null);
     try {
-      const res = await fetch('/api/v2/content/regenerate', {
+      const res = await apiFetch('/api/v2/content/regenerate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

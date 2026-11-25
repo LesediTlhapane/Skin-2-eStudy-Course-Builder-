@@ -5,15 +5,177 @@ export const MAX_INFLATE_BYTES = 4 * 1024 * 1024;
 export const MAX_ZIP_ENTRIES = 250;
 export const MAX_EXTRACTED_CHARS = 200_000;
 
+interface ZipEntryRecord {
+  name: string;
+  compressionMethod: number;
+  compressedSize: number;
+  uncompressedSize: number;
+  localHeaderOffset: number;
+}
+
+function xmlToReadableText(xmlContent: string): string {
+  return xmlContent
+    .replace(/<\/w:p>\s*<\/w:tc>/g, '\t|\t')
+    .replace(/<\/w:tc>/g, '\t|\t')
+    .replace(/<\/w:tr>/g, '\n')
+    .replace(/<w:br[^>]*\/>/g, '\n')
+    .replace(/<\/w:p>/g, '\n')
+    .replace(/<w:tab\/>/g, '\t')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/\r\n/g, '\n')
+    .replace(/ +\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\s+|\n+$/g, '');
+}
+
+function isWordTextEntry(entryName: string): boolean {
+  return (
+    entryName === 'word/document.xml' ||
+    entryName.startsWith('word/header') ||
+    entryName.startsWith('word/footer')
+  );
+}
+
+function findCentralDirectoryEntries(buffer: Buffer): ZipEntryRecord[] | null {
+  const minEocdSearch = Math.max(0, buffer.length - 65_557);
+  let eocdOffset = -1;
+
+  for (let i = buffer.length - 22; i >= minEocdSearch; i--) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset < 0) return null;
+
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  const centralDirSize = buffer.readUInt32LE(eocdOffset + 12);
+  const centralDirOffset = buffer.readUInt32LE(eocdOffset + 16);
+
+  if (
+    totalEntries > MAX_ZIP_ENTRIES * 4 ||
+    centralDirOffset + centralDirSize > buffer.length
+  ) {
+    return null;
+  }
+
+  const entries: ZipEntryRecord[] = [];
+  let cursor = centralDirOffset;
+  let parsed = 0;
+
+  while (cursor + 46 <= buffer.length && parsed < totalEntries) {
+    if (buffer.readUInt32LE(cursor) !== 0x02014b50) break;
+    parsed++;
+    if (parsed > MAX_ZIP_ENTRIES) {
+      throw new Error('Invalid request: ZIP/DOCX archive contains too many entries.');
+    }
+
+    const compressionMethod = buffer.readUInt16LE(cursor + 10);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+    const fileNameLength = buffer.readUInt16LE(cursor + 28);
+    const extraFieldLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const localHeaderOffset = buffer.readUInt32LE(cursor + 42);
+
+    const nameStart = cursor + 46;
+    if (nameStart + fileNameLength > buffer.length) break;
+    const name = buffer.subarray(nameStart, nameStart + fileNameLength).toString('utf8');
+
+    entries.push({
+      name,
+      compressionMethod,
+      compressedSize,
+      uncompressedSize,
+      localHeaderOffset,
+    });
+
+    cursor = nameStart + fileNameLength + extraFieldLength + commentLength;
+  }
+
+  return entries.length > 0 ? entries : null;
+}
+
+function inflateZipSlice(
+  compressedSlice: Buffer,
+  compressionMethod: number
+): string {
+  if (compressionMethod === 0) {
+    if (compressedSlice.length > MAX_INFLATE_BYTES) {
+      throw new Error('Invalid request: uncompressed XML entry exceeds safe limit.');
+    }
+    return compressedSlice.toString('utf8');
+  }
+  if (compressionMethod === 8) {
+    try {
+      return zlib
+        .inflateRawSync(compressedSlice, { maxOutputLength: MAX_INFLATE_BYTES })
+        .toString('utf8');
+    } catch (inflateErr: any) {
+      if (String(inflateErr?.code) === 'ERR_BUFFER_TOO_LARGE') {
+        throw new Error('Invalid request: DOCX content exceeds safe decompression limit.');
+      }
+      return '';
+    }
+  }
+  return '';
+}
+
 export function extractTextFromDocxBuffer(buffer: Buffer): string {
   try {
     if (buffer.length > MAX_UPLOAD_BYTES) {
       throw new Error('Uploaded DOCX exceeds the 4.5 MB size limit.');
     }
-    let offset = 0;
-    let entryCount = 0;
+
     const textParts: string[] = [];
 
+    // Strategy 1: Authoritative ZIP Central Directory lookup (handles JSZip/Word data descriptors cleanly)
+    const centralEntries = findCentralDirectoryEntries(buffer);
+    if (centralEntries && centralEntries.length > 0) {
+      // Order document.xml first, then headers/footers
+      const wordEntries = centralEntries
+        .filter(e => isWordTextEntry(e.name))
+        .sort((a, b) => {
+          if (a.name === 'word/document.xml') return -1;
+          if (b.name === 'word/document.xml') return 1;
+          return a.name.localeCompare(b.name);
+        });
+
+      for (const entry of wordEntries) {
+        if (entry.uncompressedSize > MAX_INFLATE_BYTES) {
+          throw new Error('Invalid request: archive entry exceeds safe uncompressed size limit.');
+        }
+        const loc = entry.localHeaderOffset;
+        if (loc + 30 > buffer.length || buffer.readUInt32LE(loc) !== 0x04034b50) {
+          continue;
+        }
+        const localNameLen = buffer.readUInt16LE(loc + 26);
+        const localExtraLen = buffer.readUInt16LE(loc + 28);
+        const dataStart = loc + 30 + localNameLen + localExtraLen;
+        if (dataStart > buffer.length) continue;
+
+        const dataEnd = Math.min(buffer.length, dataStart + entry.compressedSize);
+        const slice = buffer.subarray(dataStart, dataEnd);
+        const xmlContent = inflateZipSlice(slice, entry.compressionMethod);
+        if (xmlContent) {
+          const plain = xmlToReadableText(xmlContent);
+          if (plain) textParts.push(plain);
+        }
+      }
+
+      if (textParts.length > 0) {
+        return textParts.join('\n\n').trim().slice(0, MAX_EXTRACTED_CHARS);
+      }
+    }
+
+    // Strategy 2: Linear Local File Header scan fallback (if Central Directory is damaged/absent)
+    let offset = 0;
+    let entryCount = 0;
     while (offset + 30 <= buffer.length) {
       const signature = buffer.readUInt32LE(offset);
       if (signature !== 0x04034b50) {
@@ -41,67 +203,32 @@ export function extractTextFromDocxBuffer(buffer: Buffer): string {
         .subarray(offset + 30, offset + 30 + fileNameLength)
         .toString('utf8');
 
-      if (
-        entryName === 'word/document.xml' ||
-        entryName.startsWith('word/header') ||
-        entryName.startsWith('word/footer')
-      ) {
+      if (isWordTextEntry(entryName)) {
         let compressedSlice = buffer.subarray(
           dataStart,
           Math.min(buffer.length, dataStart + (compressedSize || buffer.length - dataStart))
         );
         if (compressedSize === 0) {
-          const nextPk = buffer.indexOf(Buffer.from([0x50, 0x4b]), dataStart);
-          if (nextPk > dataStart) {
-            compressedSlice = buffer.subarray(dataStart, nextPk);
+          const nextPk = buffer.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]), dataStart);
+          const nextCd = buffer.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]), dataStart);
+          const candidates = [nextPk, nextCd].filter(x => x > dataStart);
+          if (candidates.length > 0) {
+            compressedSlice = buffer.subarray(dataStart, Math.min(...candidates));
           }
         }
 
-        let xmlContent = '';
-        if (compressionMethod === 0) {
-          if (compressedSlice.length > MAX_INFLATE_BYTES) {
-            throw new Error('Invalid request: uncompressed XML entry exceeds safe limit.');
-          }
-          xmlContent = compressedSlice.toString('utf8');
-        } else if (compressionMethod === 8) {
-          try {
-            xmlContent = zlib
-              .inflateRawSync(compressedSlice, { maxOutputLength: MAX_INFLATE_BYTES })
-              .toString('utf8');
-          } catch (inflateErr: any) {
-            if (String(inflateErr?.code) === 'ERR_BUFFER_TOO_LARGE') {
-              throw new Error('Invalid request: DOCX content exceeds safe decompression limit.');
-            }
-            const nextHeader = buffer.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]), dataStart);
-            const endIdx = nextHeader > dataStart ? nextHeader : buffer.length;
-            for (let trim = 0; trim <= 24 && endIdx - trim > dataStart; trim++) {
-              try {
-                xmlContent = zlib
-                  .inflateRawSync(buffer.subarray(dataStart, endIdx - trim), {
-                    maxOutputLength: MAX_INFLATE_BYTES,
-                  })
-                  .toString('utf8');
-                break;
-              } catch {
-                // continue scanning
-              }
-            }
+        let xmlContent = inflateZipSlice(compressedSlice, compressionMethod);
+        if (!xmlContent && compressionMethod === 8) {
+          const nextHeader = buffer.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]), dataStart);
+          const endIdx = nextHeader > dataStart ? nextHeader : buffer.length;
+          for (let trim = 0; trim <= 24 && endIdx - trim > dataStart; trim++) {
+            xmlContent = inflateZipSlice(buffer.subarray(dataStart, endIdx - trim), 8);
+            if (xmlContent) break;
           }
         }
 
         if (xmlContent) {
-          const plain = xmlContent
-            .replace(/<\/w:p>/g, '\n')
-            .replace(/<\/w:tr>/g, '\n')
-            .replace(/<w:tab\/>/g, '\t')
-            .replace(/<[^>]+>/g, '')
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'")
-            .replace(/\n{3,}/g, '\n\n')
-            .trim();
+          const plain = xmlToReadableText(xmlContent);
           if (plain) textParts.push(plain);
         }
       }

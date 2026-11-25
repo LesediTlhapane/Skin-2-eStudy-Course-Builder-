@@ -16,7 +16,7 @@ import type {
   CourseProject,
 } from '../../types';
 import { computeFullAlignmentReport } from '../../utils/alignmentHelpers';
-import { parseApiJson } from '../../utils/apiClient';
+import { apiFetch, parseApiJson } from '../../utils/apiClient';
 
 interface Stage4AssessmentsProps {
   project: CourseProject;
@@ -143,7 +143,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
     setIsDesigning(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/v2/assessments/design', {
+      const res = await apiFetch('/api/v2/assessments/design', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

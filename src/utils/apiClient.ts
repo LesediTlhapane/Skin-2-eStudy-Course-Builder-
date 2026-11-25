@@ -1,5 +1,44 @@
 import type { CourseProject, SourceDocument } from '../types';
 
+let authGetters: {
+  getAccessToken: () => string | null;
+  getCompanyId: () => string | null;
+} = {
+  getAccessToken: () => null,
+  getCompanyId: () => null,
+};
+
+export function setApiAuthContext(getters: {
+  getAccessToken: () => string | null;
+  getCompanyId: () => string | null;
+}): void {
+  authGetters = getters;
+}
+
+export function buildTenantHeaders(extraHeaders?: HeadersInit): Headers {
+  const headers = new Headers(extraHeaders || {});
+  const token = authGetters.getAccessToken();
+  const companyId = authGetters.getCompanyId();
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  if (companyId && !headers.has('X-Company-Id')) {
+    headers.set('X-Company-Id', companyId);
+  }
+  return headers;
+}
+
+export async function apiFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {}
+): Promise<Response> {
+  const headers = buildTenantHeaders(init.headers);
+  return fetch(input, {
+    ...init,
+    headers,
+  });
+}
+
 export function compactSourcesForApi(sources: SourceDocument[] = []): SourceDocument[] {
   return sources.slice(0, 6).map(s => ({
     ...s,

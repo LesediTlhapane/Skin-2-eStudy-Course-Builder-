@@ -15,7 +15,7 @@ import type {
   CourseProject,
   CurriculumModulePlan,
 } from '../../types';
-import { compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
+import { apiFetch, compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
 
 interface Stage2CurriculumProps {
   project: CourseProject;
@@ -63,7 +63,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
     setIsProposing(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/v2/curriculum/propose', {
+      const res = await apiFetch('/api/v2/curriculum/propose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -97,7 +97,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
     setIsAuditing(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/v2/curriculum/check-coverage', {
+      const res = await apiFetch('/api/v2/curriculum/check-coverage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

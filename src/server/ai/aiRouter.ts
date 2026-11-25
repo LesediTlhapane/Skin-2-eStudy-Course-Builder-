@@ -2,6 +2,7 @@ import type { AIProvider } from '../../types.js';
 import type { AIProviderAdapter, AIRequest, AIResponse } from './types.js';
 import { groqProvider } from './groqProvider.js';
 import { getDefaultModelForProvider, getRegisteredModels } from './modelRegistry.js';
+import { aiUsageContextStorage, recordAiUsage } from '../supabaseAdmin.js';
 
 class AIRouter {
   private adapters: Map<AIProvider, AIProviderAdapter> = new Map();
@@ -31,11 +32,26 @@ class AIRouter {
         ? request.model.trim()
         : getDefaultModelForProvider(provider);
 
-    return adapter.execute({
+    const response = await adapter.execute({
       ...request,
       provider,
       model,
     });
+
+    const usageCtx = aiUsageContextStorage.getStore();
+    if (usageCtx?.companyId) {
+      void recordAiUsage({
+        companyId: usageCtx.companyId,
+        userId: usageCtx.userId,
+        provider: response.provider,
+        model: response.model,
+        operation: usageCtx.operation,
+        inputTokens: response.usage?.inputTokens,
+        outputTokens: response.usage?.outputTokens,
+      });
+    }
+
+    return response;
   }
 }
 
