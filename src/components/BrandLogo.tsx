@@ -58,12 +58,20 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       .join('');
 
     return (
-      <div className={`inline-flex items-center gap-2 shrink-0 select-none ${className}`}>
+      <div className={`inline-flex items-center gap-2.5 shrink-0 select-none ${className}`}>
         <span
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-extrabold text-white shrink-0"
-          style={{ backgroundColor: primaryColour, borderBottom: `2px solid ${secondaryColour}` }}
+          className="relative w-8 h-8 rounded-lg flex items-center justify-center text-xs font-extrabold shrink-0 shadow-xs"
+          style={{
+            backgroundColor: primaryColour,
+            color: 'var(--brand-primary-contrast, #FFFFFF)',
+            border: `2px solid ${secondaryColour}`,
+          }}
         >
-          {initials || 'CS'}
+          <span>{initials || 'CS'}</span>
+          <span
+            className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white"
+            style={{ backgroundColor: secondaryColour }}
+          />
         </span>
         {variant === 'full' && (
           <span

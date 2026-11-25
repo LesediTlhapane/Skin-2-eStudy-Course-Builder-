@@ -417,10 +417,10 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl border border-slate-200 max-w-4xl w-full max-h-[92vh] flex flex-col shadow-xl overflow-hidden">
+      <div className="bg-white rounded-xl border border-slate-200 border-t-[3px] border-t-accent max-w-4xl w-full max-h-[92vh] flex flex-col shadow-xl overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-[#052B66]">Start a New Course Project</h2>
+            <h2 className="text-lg font-bold text-primary">Start a New Course Project</h2>
             <p className="text-xs text-slate-500">
               Use Course Copilot to populate brief & template placeholders from a prompt, or start from a blank brief or document.
             </p>
@@ -482,20 +482,16 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                   }}
                   className={`p-3 rounded-lg border text-left transition-colors cursor-pointer ${
                     active
-                      ? 'border-[#052B66] bg-[#052B66]/5 ring-1 ring-[#052B66]/20'
-                      : 'border-slate-200 hover:border-slate-300'
+                      ? 'border-accent bg-accent-tint/65 border-t-[3px] border-t-accent ring-1 ring-accent/25'
+                      : 'border-slate-200 hover:border-accent-border'
                   }`}
                 >
                   <Icon
                     className={`w-4 h-4 mb-1.5 ${
-                      active
-                        ? item.accent
-                          ? 'text-[#45CC42]'
-                          : 'text-[#052B66]'
-                        : 'text-slate-500'
+                      active ? 'text-accent-ink' : 'text-slate-500'
                     }`}
                   />
-                  <div className="text-xs font-bold text-[#052B66]">{item.title}</div>
+                  <div className="text-xs font-bold text-primary">{item.title}</div>
                   <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{item.desc}</div>
                 </button>
               );
@@ -505,13 +501,13 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
           {/* Template Selection */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
             <div className="md:col-span-6 space-y-1">
-              <label className="block text-xs font-bold text-[#052B66]">
+              <label className="block text-xs font-bold text-primary">
                 Course Template
               </label>
               <select
                 value={templateId}
                 onChange={e => setTemplateId(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-[#F5F7FA] focus:bg-white focus:outline-none focus:border-[#052B66]"
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-surface focus:bg-white focus:outline-none focus:border-accent"
               >
                 {templates.map(tpl => (
                   <option key={tpl.id} value={tpl.id}>
@@ -528,12 +524,12 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                 type="button"
                 disabled={isDownloadingDocx || !selectedTemplate}
                 onClick={() => void handleDownloadSelectedTemplateDocx()}
-                className="w-full md:w-auto px-3 py-2 text-xs font-bold bg-[#F5F7FA] border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                className="w-full md:w-auto px-3 py-2 text-xs font-bold bg-surface border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
               >
                 {isDownloadingDocx ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Download className="w-3.5 h-3.5" />
+                  <Download className="w-3.5 h-3.5 text-accent-ink" />
                 )}
                 <span>Download Word (.docx)</span>
               </button>
@@ -543,13 +539,13 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
           {mode === 'copilot' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
               {/* Left: Copilot Prompt & Conversation */}
-              <div className="lg:col-span-6 border border-slate-200 rounded-xl flex flex-col bg-[#F5F7FA] overflow-hidden min-h-[340px]">
-                <div className="px-4 py-2.5 bg-[#052B66] text-white flex items-center justify-between">
+              <div className="lg:col-span-6 border border-slate-200 rounded-xl flex flex-col bg-surface overflow-hidden min-h-[340px]">
+                <div className="px-4 py-2.5 bg-brand-gradient text-primary-contrast border-b-2 border-accent flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-[#45CC42]" />
+                    <Sparkles className="w-4 h-4 text-accent" />
                     <span className="text-xs font-bold">Course Onboarding Copilot</span>
                   </div>
-                  <span className="text-[11px] text-slate-300">Auto-fills placeholders</span>
+                  <span className="text-[11px] opacity-80">Auto-fills placeholders</span>
                 </div>
 
                 <div className="flex-1 p-3.5 space-y-3 overflow-y-auto max-h-[260px]">
@@ -561,7 +557,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                       <div
                         className={`inline-block max-w-[94%] rounded-lg px-3 py-2 text-xs leading-relaxed ${
                           turn.role === 'user'
-                            ? 'bg-[#052B66] text-white text-left'
+                            ? 'bg-primary text-primary-contrast text-left'
                             : 'bg-white border border-slate-200 text-slate-800'
                         }`}
                       >
@@ -575,7 +571,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                               type="button"
                               disabled={isProcessing}
                               onClick={() => handleCopilotDraft(s)}
-                              className="px-2.5 py-1 text-[11px] font-medium bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-md text-left cursor-pointer disabled:opacity-50"
+                              className="px-2.5 py-1 text-[11px] font-medium bg-white border border-slate-200 hover:border-accent-border hover:bg-accent-tint/50 text-primary rounded-md text-left cursor-pointer disabled:opacity-50"
                             >
                               {s}
                             </button>
@@ -586,7 +582,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                   ))}
                   {isProcessing && (
                     <div className="flex items-center gap-2 text-xs text-slate-600">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#052B66]" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-ink" />
                       <span>Drafting course brief, placeholders & module outline...</span>
                     </div>
                   )}
@@ -610,7 +606,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                       }
                     }}
                     placeholder="e.g. Create a 6-module GEN AI course for non-technical managers, 8 hours, with practical prompt exercises..."
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
                   />
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] text-slate-500">
@@ -619,12 +615,12 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                     <button
                       type="submit"
                       disabled={isProcessing || !copilotPrompt.trim()}
-                      className="px-3.5 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      className="px-3.5 py-1.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                     >
                       {isProcessing ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       ) : (
-                        <Send className="w-3.5 h-3.5 text-[#45CC42]" />
+                        <Send className="w-3.5 h-3.5 text-accent" />
                       )}
                       <span>{draftedBrief ? 'Refine Draft' : 'Draft Fields'}</span>
                     </button>
@@ -634,8 +630,8 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
               {/* Right: Live Populated Placeholders Preview */}
               <div className="lg:col-span-6 border border-slate-200 rounded-xl bg-white flex flex-col overflow-hidden min-h-[340px]">
-                <div className="px-4 py-2.5 border-b border-slate-200 bg-[#F5F7FA] flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#052B66]">
+                <div className="px-4 py-2.5 border-b border-slate-200 bg-surface flex items-center justify-between">
+                  <span className="text-xs font-bold text-primary">
                     Drafted Brief & Placeholder Preview
                   </span>
                   {draftedBrief && (
@@ -648,7 +644,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
                 {!draftedBrief ? (
                   <div className="flex-1 p-5 flex flex-col justify-center space-y-3 text-xs text-slate-600">
-                    <p className="font-bold text-[#052B66]">
+                    <p className="font-bold text-primary">
                       Copilot will automatically populate these fields for you:
                     </p>
                     <ul className="space-y-1.5 list-disc pl-4">
@@ -665,7 +661,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                   </div>
                 ) : (
                   <div className="flex-1 p-4 space-y-3 overflow-y-auto max-h-[340px] text-xs">
-                    <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200 space-y-2">
+                    <div className="p-3 rounded-lg bg-surface border border-slate-200 space-y-2">
                       <div className="flex items-center justify-between gap-2">
                         <input
                           type="text"
@@ -674,7 +670,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                             setDraftedBrief(prev => ({ ...(prev || {}), title: e.target.value }))
                           }
                           placeholder="Course Title"
-                          className="flex-1 px-2.5 py-1 text-sm font-bold text-[#052B66] bg-white border border-slate-200 rounded"
+                          className="flex-1 px-2.5 py-1 text-sm font-bold text-primary bg-white border border-slate-200 rounded"
                         />
                         <span className="text-[11px] font-mono text-slate-600 bg-white px-2 py-1 border border-slate-200 rounded">
                           {draftedBrief.code || 'Code TBC'}
@@ -700,7 +696,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                     </div>
 
                     <div className="space-y-1">
-                      <div className="text-[11px] font-bold text-[#052B66]">
+                      <div className="text-[11px] font-bold text-primary">
                         Purpose & Workplace Need
                       </div>
                       <p className="text-[11px] text-slate-700 leading-relaxed">
@@ -715,10 +711,10 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
                     {draftedBrief.subjectTopicsInput && (
                       <div className="space-y-1">
-                        <div className="text-[11px] font-bold text-[#052B66]">
+                        <div className="text-[11px] font-bold text-primary">
                           Mandatory Subject Topics
                         </div>
-                        <div className="p-2.5 rounded bg-[#F5F7FA] border border-slate-200 text-[11px] text-slate-700 whitespace-pre-line">
+                        <div className="p-2.5 rounded bg-surface border border-slate-200 text-[11px] text-slate-700 whitespace-pre-line">
                           {draftedBrief.subjectTopicsInput}
                         </div>
                       </div>
@@ -726,7 +722,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
                     {templateFields.length > 0 && (
                       <div className="space-y-1.5">
-                        <div className="text-[11px] font-bold text-[#052B66]">
+                        <div className="text-[11px] font-bold text-primary">
                           Template Placeholders Filled ({templateFields.length})
                         </div>
                         <div className="space-y-1.5">
@@ -750,7 +746,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
                     {draftedModules.length > 0 && (
                       <div className="space-y-1.5 pt-1 border-t border-slate-200">
-                        <label className="flex items-center justify-between text-[11px] font-bold text-[#052B66] cursor-pointer">
+                        <label className="flex items-center justify-between text-[11px] font-bold text-primary cursor-pointer">
                           <span>
                             Starter Curriculum Outline ({draftedModules.length} Modules)
                           </span>
@@ -767,9 +763,9 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                           {draftedModules.map(m => (
                             <div
                               key={m.id}
-                              className="px-2.5 py-1.5 rounded bg-[#F5F7FA] border border-slate-200 text-[11px] text-slate-800"
+                              className="px-2.5 py-1.5 rounded bg-surface border border-slate-200 text-[11px] text-slate-800"
                             >
-                              <strong className="text-[#052B66]">M{m.order}:</strong> {m.title}
+                              <strong className="text-primary">M{m.order}:</strong> {m.title}
                             </div>
                           ))}
                         </div>
@@ -783,8 +779,8 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
           {mode === 'filled_template' && (
             <div className="space-y-4">
-              <div className="p-4 rounded-xl border border-[#052B66]/20 bg-[#F5F7FA] space-y-2.5">
-                <div className="text-xs font-bold text-[#052B66]">
+              <div className="p-4 rounded-xl border border-accent-border bg-accent-tint/45 space-y-2.5">
+                <div className="text-xs font-bold text-primary">
                   Step 1: Download "{selectedTemplate?.name}" as a Fillable Word Document
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
@@ -794,19 +790,19 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                   type="button"
                   disabled={isDownloadingDocx || !selectedTemplate}
                   onClick={() => void handleDownloadSelectedTemplateDocx()}
-                  className="px-4 py-2 text-xs font-bold bg-white border border-[#052B66] text-[#052B66] hover:bg-slate-50 rounded-lg inline-flex items-center gap-2 cursor-pointer"
+                  className="px-4 py-2 text-xs font-bold bg-white border border-primary text-primary hover:bg-slate-50 rounded-lg inline-flex items-center gap-2 cursor-pointer"
                 >
                   {isDownloadingDocx ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
-                    <Download className="w-3.5 h-3.5" />
+                    <Download className="w-3.5 h-3.5 text-accent-ink" />
                   )}
                   <span>Download "{selectedTemplate?.name}" (.docx)</span>
                 </button>
               </div>
 
               <div className="border border-dashed border-slate-300 rounded-xl p-5 bg-white space-y-3">
-                <div className="text-xs font-bold text-[#052B66]">
+                <div className="text-xs font-bold text-primary">
                   Step 2: Upload Your Filled Word Template (.docx)
                 </div>
                 <input
@@ -819,7 +815,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="text-xs text-slate-600">
                     {filledDocFile ? (
-                      <span className="font-semibold text-[#052B66]">{filledDocFile.name}</span>
+                      <span className="font-semibold text-primary">{filledDocFile.name}</span>
                     ) : (
                       'Select the filled .docx Word template (or any filled course brief document)'
                     )}
@@ -827,7 +823,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                   <button
                     type="button"
                     onClick={() => filledDocRef.current?.click()}
-                    className="px-3.5 py-2 text-xs font-bold bg-[#F5F7FA] border border-slate-300 rounded-lg hover:border-[#052B66] text-[#052B66] cursor-pointer"
+                    className="px-3.5 py-2 text-xs font-bold bg-surface border border-slate-300 rounded-lg hover:border-accent-border text-primary cursor-pointer"
                   >
                     Choose Filled File
                   </button>
@@ -838,13 +834,13 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
           {mode === 'brief' && (
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-[#052B66]">
+              <label className="block text-xs font-bold text-primary">
                 Optional Benchmark Starter Brief (for rapid testing)
               </label>
               <select
                 value={presetId}
                 onChange={e => setPresetId(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-[#F5F7FA] focus:bg-white focus:outline-none focus:border-[#052B66]"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-surface focus:bg-white focus:outline-none focus:border-accent"
               >
                 <option value="">Start with a blank Stage 1 Course Brief</option>
                 {BENCHMARK_PRESETS.map(b => (
@@ -858,7 +854,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
 
           {(mode === 'source' || mode === 'improve') && (
             <div className="space-y-3">
-              <div className="border border-dashed border-slate-300 rounded-lg p-4 bg-[#F5F7FA] space-y-2">
+              <div className="border border-dashed border-slate-300 rounded-lg p-4 bg-surface space-y-2">
                 <input
                   ref={fileRef}
                   type="file"
@@ -869,7 +865,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-slate-600">
                     {selectedFile ? (
-                      <span className="font-semibold text-[#052B66]">{selectedFile.name}</span>
+                      <span className="font-semibold text-primary">{selectedFile.name}</span>
                     ) : (
                       'Upload PDF, DOCX, TXT, or Markdown document'
                     )}
@@ -897,7 +893,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                       ? 'Paste policy text, technical manual excerpt, or legislation...'
                       : 'Paste existing course outline, outcomes, and module content to audit...'
                   }
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
                 />
               </div>
             </div>
@@ -911,13 +907,13 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
           )}
         </div>
 
-        <div className="px-6 py-4 border-t border-slate-200 bg-[#F5F7FA] flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div className="px-6 py-4 border-t border-slate-200 bg-surface flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div>
             {mode === 'copilot' && (
               <button
                 type="button"
                 onClick={handleStartBriefMode}
-                className="text-xs font-semibold text-[#052B66] hover:underline cursor-pointer"
+                className="text-xs font-semibold text-primary hover:underline cursor-pointer"
               >
                 Or open blank Stage 1 Brief without Copilot
               </button>
@@ -938,7 +934,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                 type="button"
                 disabled={!draftedBrief}
                 onClick={handleCreateFromCopilot}
-                className="px-5 py-2.5 rounded-lg bg-[#45CC42] hover:bg-[#3ab837] disabled:opacity-50 text-[#052B66] text-xs font-bold flex items-center gap-2 cursor-pointer"
+                className="px-5 py-2.5 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-50 text-accent-contrast text-xs font-bold flex items-center gap-2 cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Create Course with Drafted Fields</span>
@@ -948,7 +944,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                 type="button"
                 disabled={isProcessing || !filledDocFile}
                 onClick={() => void handleFilledTemplateUpload()}
-                className="px-5 py-2.5 rounded-lg bg-[#45CC42] hover:bg-[#3ab837] disabled:opacity-50 text-[#052B66] text-xs font-bold flex items-center gap-2 cursor-pointer"
+                className="px-5 py-2.5 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-50 text-accent-contrast text-xs font-bold flex items-center gap-2 cursor-pointer"
               >
                 {isProcessing ? (
                   <>
@@ -966,7 +962,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
               <button
                 type="button"
                 onClick={handleStartBriefMode}
-                className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+                className="px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold flex items-center gap-2 cursor-pointer"
               >
                 <span>Open Course Brief</span>
               </button>
@@ -975,7 +971,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                 type="button"
                 disabled={isProcessing}
                 onClick={handleSourceOrImproveMode}
-                className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+                className="px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-60 text-primary-contrast text-xs font-bold flex items-center gap-2 cursor-pointer"
               >
                 {isProcessing ? (
                   <>
@@ -984,7 +980,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4 text-[#45CC42]" />
+                    <Sparkles className="w-4 h-4 text-accent" />
                     <span>{mode === 'source' ? 'Analyse Source & Start' : 'Run Diagnosis & Start'}</span>
                   </>
                 )}

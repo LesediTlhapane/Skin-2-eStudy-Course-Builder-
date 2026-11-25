@@ -244,7 +244,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h2 className="text-xl font-bold text-[#052B66]">
+          <h2 className="text-xl font-bold text-primary">
             Stage 4: Assessment Design & 3-Way Alignment Engine
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -257,12 +257,12 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
             type="button"
             disabled={isDesigning || allOutcomes.length === 0}
             onClick={() => handleDesignWithAI(false)}
-            className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
             {isDesigning ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
+              <Sparkles className="w-3.5 h-3.5" />
             )}
             <span>
               {assessments.items.length > 0
@@ -306,13 +306,13 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
 
       {/* Strategy & Weightings */}
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-        <h3 className="text-sm font-bold text-[#052B66]">Assessment Strategy & Pass Rules</h3>
+        <h3 className="text-sm font-bold text-primary">Assessment Strategy & Pass Rules</h3>
         <textarea
           rows={2}
           value={assessments.strategySummary}
           onChange={e => updateAssessments({ strategySummary: e.target.value })}
           placeholder="Describe balance between knowledge checks, practical tasks, formative coaching, and summative evaluation..."
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
         />
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
@@ -358,10 +358,10 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
       </section>
 
       {/* 3-Way Alignment Score & Constructive Alignment Matrix */}
-      <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+      <section className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div>
-            <h3 className="text-sm font-bold text-[#052B66]">
+            <h3 className="text-sm font-bold text-primary">
               3-Way Constructive Alignment Matrix & Score
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">{alignmentReport.explanation}</p>
@@ -385,7 +385,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
             <button
               type="button"
               onClick={() => setShowLessonLinker(v => !v)}
-              className="px-3 py-2 text-xs font-bold border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg cursor-pointer"
+              className="px-3 py-2 text-xs font-bold border border-slate-200 hover:border-accent text-primary rounded-lg cursor-pointer"
             >
               {showLessonLinker ? 'Hide Lesson Links' : 'Edit Lesson-to-Outcome Links'}
             </button>
@@ -394,8 +394,8 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
 
         {/* Optional Lesson-to-Outcome Linker Panel */}
         {showLessonLinker && (
-          <div className="p-4 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-3">
-            <div className="text-xs font-bold text-[#052B66]">
+          <div className="p-4 bg-surface border border-slate-200 rounded-lg space-y-3">
+            <div className="text-xs font-bold text-primary">
               Map Planned Lessons / Learning Activities to Outcomes
             </div>
             <div className="space-y-2.5">
@@ -460,7 +460,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
               {alignmentReport.rows.map(row => (
                 <tr key={row.outcomeId}>
                   <td className="py-2.5 pr-3 font-medium text-slate-800">
-                    <span className="font-mono font-bold text-[#052B66]">
+                    <span className="font-mono font-bold text-primary">
                       {row.outcomeCode}
                     </span>{' '}
                     — {row.outcomeStatement}
@@ -518,15 +518,15 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
       {/* Assessment Items List with Complete Inline Editors */}
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-[#052B66]">
+          <h3 className="text-sm font-bold text-primary">
             Assessment Instruments ({assessments.items.length})
           </h3>
           <button
             type="button"
             onClick={addAssessmentItem}
-            className="px-3 py-1.5 text-xs font-bold bg-[#F5F7FA] border border-slate-200 rounded-lg flex items-center gap-1 cursor-pointer"
+            className="px-3 py-1.5 text-xs font-bold bg-accent-tint hover:bg-accent-soft border border-accent-border text-primary rounded-lg flex items-center gap-1 cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 text-accent-ink" />
             <span>Add Assessment Item</span>
           </button>
         </div>
@@ -543,13 +543,13 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
             const showSequenceEditor = item.type === 'sequencing';
 
             return (
-              <div key={item.id} className="border border-slate-200 rounded-lg p-4 space-y-3">
+              <div key={item.id} className="border border-slate-200 border-t-[3px] border-t-accent/70 rounded-lg p-4 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     type="text"
                     value={item.title}
                     onChange={e => updateItem(item.id, { title: e.target.value })}
-                    className="flex-1 min-w-[200px] px-2.5 py-1.5 text-sm font-bold text-[#052B66] border border-slate-200 rounded"
+                    className="flex-1 min-w-[200px] px-2.5 py-1.5 text-sm font-bold text-primary border border-slate-200 rounded focus:outline-none focus:border-accent"
                   />
                   <select
                     value={item.type}
@@ -569,7 +569,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                     onChange={e =>
                       updateItem(item.id, { assessmentDomain: e.target.value as any })
                     }
-                    className="px-2 py-1.5 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                    className="px-2 py-1.5 text-xs border border-slate-200 rounded bg-surface"
                   >
                     <option value="knowledge">Knowledge</option>
                     <option value="practical">Practical Competence</option>
@@ -579,7 +579,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                     onChange={e =>
                       updateItem(item.id, { classification: e.target.value as any })
                     }
-                    className="px-2 py-1.5 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                    className="px-2 py-1.5 text-xs border border-slate-200 rounded bg-surface"
                   >
                     <option value="formative">Formative</option>
                     <option value="summative">Summative</option>
@@ -598,7 +598,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                     onClick={() =>
                       setExpandedItems(prev => ({ ...prev, [item.id]: !isExpanded }))
                     }
-                    className="p-1.5 text-slate-500 hover:text-[#052B66] cursor-pointer"
+                    className="p-1.5 text-slate-500 hover:text-primary cursor-pointer"
                     title={isExpanded ? 'Collapse Details' : 'Expand Details'}
                   >
                     {isExpanded ? (
@@ -686,9 +686,9 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
 
                     {/* MCQ / Multiple Response Options & Key Editor */}
                     {showOptionsEditor && (
-                      <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-2">
+                      <div className="p-3 bg-surface border border-slate-200 rounded-lg space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-bold text-[#052B66]">
+                          <span className="text-[11px] font-bold text-primary">
                             Answer Options & Correct Answer Key ({item.type === 'mcq' ? 'Single Correct' : 'Multi-Select'})
                           </span>
                           <button
@@ -698,7 +698,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                                 options: [...(item.options || []), `Option ${(item.options?.length || 0) + 1}`],
                               })
                             }
-                            className="text-[11px] font-bold text-[#052B66] hover:underline cursor-pointer"
+                            className="text-[11px] font-bold text-accent-ink hover:underline cursor-pointer"
                           >
                             + Add Option
                           </button>
@@ -762,9 +762,9 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
 
                     {/* Matching Pairs Editor */}
                     {showMatchingEditor && (
-                      <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-2">
+                      <div className="p-3 bg-surface border border-slate-200 rounded-lg space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-bold text-[#052B66]">Matching Pairs</span>
+                          <span className="text-[11px] font-bold text-primary">Matching Pairs</span>
                           <button
                             type="button"
                             onClick={() =>
@@ -775,7 +775,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                                 ],
                               })
                             }
-                            className="text-[11px] font-bold text-[#052B66] hover:underline cursor-pointer"
+                            className="text-[11px] font-bold text-accent-ink hover:underline cursor-pointer"
                           >
                             + Add Pair
                           </button>
@@ -826,9 +826,9 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
 
                     {/* Sequencing Steps Editor */}
                     {showSequenceEditor && (
-                      <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-2">
+                      <div className="p-3 bg-surface border border-slate-200 rounded-lg space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-bold text-[#052B66]">
+                          <span className="text-[11px] font-bold text-primary">
                             Correct Sequence Order
                           </span>
                           <button
@@ -841,7 +841,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                                 ],
                               })
                             }
-                            className="text-[11px] font-bold text-[#052B66] hover:underline cursor-pointer"
+                            className="text-[11px] font-bold text-accent-ink hover:underline cursor-pointer"
                           >
                             + Add Step
                           </button>
@@ -931,9 +931,9 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                     </div>
 
                     {/* Inline Rubric Criteria Editor */}
-                    <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-2">
+                    <div className="p-3 bg-surface border border-slate-200 rounded-lg space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-[#052B66]">
+                        <span className="text-[11px] font-bold text-primary">
                           Evaluation Rubric ({(item.rubric || []).length} criteria · Total Weight:{' '}
                           {rubricTotal}%)
                         </span>
@@ -952,7 +952,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                               ],
                             })
                           }
-                          className="text-[11px] font-bold text-[#052B66] hover:underline cursor-pointer"
+                          className="text-[11px] font-bold text-accent-ink hover:underline cursor-pointer"
                         >
                           + Add Rubric Criterion
                         </button>
@@ -1043,7 +1043,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
         </div>
       </section>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="text-xs text-slate-600">
           {criticalFlags.length > 0
             ? 'Resolve all critical 3-way alignment flags before proceeding to content generation.'
@@ -1072,9 +1072,9 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
             );
             onApproveAndContinue();
           }}
-          className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+          className="px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center gap-2 cursor-pointer"
         >
-          <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
+          <CheckCircle2 className="w-4 h-4 text-accent" />
           <span>Approve Assessments & Continue to Stage 5</span>
         </button>
       </div>

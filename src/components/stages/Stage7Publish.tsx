@@ -120,7 +120,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h2 className="text-xl font-bold text-[#052B66]">
+          <h2 className="text-xl font-bold text-primary">
             Stage 7: Publish & Export Deliverables
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -133,15 +133,15 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
             <button
               type="button"
               onClick={() => onJumpToStage(6)}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-[#052B66] text-[#052B66] text-xs font-bold flex items-center gap-1 cursor-pointer"
+              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center gap-1 cursor-pointer"
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
+              <ArrowLeft className="w-3.5 h-3.5 text-accent-ink" />
               <span>Return to Stage 6 QA</span>
             </button>
             <button
               type="button"
               onClick={() => onJumpToStage(1)}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-[#052B66] text-slate-700 text-xs font-semibold cursor-pointer"
+              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-primary text-slate-700 text-xs font-semibold cursor-pointer"
             >
               Edit Stage 1 Brief
             </button>
@@ -150,9 +150,9 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
       </div>
 
       {/* Pre-Publish Governance & Placeholder Audit Summary */}
-      <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
+      <section className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-bold text-[#052B66]">
+          <h3 className="text-sm font-bold text-primary">
             Pre-Publish Readiness & Integrity Summary
           </h3>
           <span className="text-[11px] text-slate-500">
@@ -161,9 +161,9 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-          <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200">
+          <div className="p-3 rounded-lg bg-surface border border-slate-200">
             <div className="text-[11px] text-slate-500">QA Evaluation</div>
-            <div className="font-bold text-[#052B66] mt-0.5">
+            <div className="font-bold text-primary mt-0.5">
               {qa ? `${qa.verdict} (${qa.weightedScore}%)` : 'Not Run'}
             </div>
             {isQaStale && (
@@ -172,14 +172,14 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
               </div>
             )}
           </div>
-          <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200">
+          <div className="p-3 rounded-lg bg-surface border border-slate-200">
             <div className="text-[11px] text-slate-500">Multi-Role Sign-Off</div>
             <div
               className={`font-bold mt-0.5 ${
                 allRolesSigned && !hasProvisionalAiSignOff
                   ? 'text-emerald-700'
                   : allRolesSigned
-                  ? 'text-[#052B66]'
+                  ? 'text-primary'
                   : 'text-amber-700'
               }`}
             >
@@ -190,7 +190,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
                 : 'Provisional / Optional'}
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200">
+          <div className="p-3 rounded-lg bg-surface border border-slate-200">
             <div className="text-[11px] text-slate-500">Unresolved Placeholders</div>
             <div
               className={`font-bold mt-0.5 ${
@@ -204,9 +204,9 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
                 : `${structuralAudit.unresolvedPlaceholders.length} Remaining`}
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200">
+          <div className="p-3 rounded-lg bg-accent-tint/55 border border-accent-border">
             <div className="text-[11px] text-slate-500">Course Scope Ready</div>
-            <div className="font-bold text-[#052B66] mt-0.5">
+            <div className="font-bold text-primary mt-0.5">
               {project.content.modules.length} Modules · {project.assessments.items.length} Assessments
             </div>
           </div>
@@ -226,7 +226,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
               <button
                 type="button"
                 onClick={() => onJumpToStage(6)}
-                className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-[#052B66] font-bold shrink-0 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-primary font-bold shrink-0 cursor-pointer"
               >
                 Re-verify in Stage 6 QA
               </button>
@@ -237,7 +237,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
 
       {/* Non-accreditation safeguard notice */}
       <div className="p-4 bg-white border border-slate-200 rounded-xl flex items-start gap-3 text-xs text-slate-700">
-        <ShieldAlert className="w-4 h-4 text-[#052B66] shrink-0 mt-0.5" />
+        <ShieldAlert className="w-4 h-4 text-primary shrink-0 mt-0.5" />
         <div>
           <strong>Standards & Accreditation Notice:</strong> Aligning a programme to NQF, SAQA, QCTO, SETA, or CPD guidelines prepares the programme for formal review and does not declare formal accreditation.
         </div>
@@ -254,10 +254,10 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
         {DELIVERABLES.map(item => (
           <div
             key={item.type}
-            className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-4"
+            className="bg-white border border-slate-200 border-t-[3px] border-t-accent/70 hover:border-t-primary rounded-xl p-5 flex flex-col justify-between gap-4 transition-colors"
           >
             <div className="space-y-1.5">
-              <h3 className="text-sm font-bold text-[#052B66]">{item.title}</h3>
+              <h3 className="text-sm font-bold text-primary">{item.title}</h3>
               <p className="text-xs text-slate-600 leading-relaxed">{item.description}</p>
             </div>
 
@@ -266,17 +266,17 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
                 <button
                   type="button"
                   onClick={handleScormZip}
-                  className="w-full py-2 px-3 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full py-2 px-3 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <Archive className="w-3.5 h-3.5 text-[#45CC42]" />
+                  <Archive className="w-3.5 h-3.5" />
                   <span>SCORM 1.2 Package (.zip)</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleLmsJson}
-                  className="w-full py-2 px-3 rounded-lg border border-slate-200 hover:border-[#052B66] text-[#052B66] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full py-2 px-3 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <FileCode className="w-3.5 h-3.5" />
+                  <FileCode className="w-3.5 h-3.5 text-accent-ink" />
                   <span>LMS Data Export (.json)</span>
                 </button>
               </div>
@@ -286,15 +286,15 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
                   type="button"
                   disabled={busyType === item.type}
                   onClick={() => handleDocx(item.type)}
-                  className="flex-1 py-2 px-3 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 py-2 px-3 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <Download className="w-3.5 h-3.5 text-[#45CC42]" />
+                  <Download className="w-3.5 h-3.5 text-accent" />
                   <span>{busyType === item.type ? 'Exporting...' : 'Word (.docx)'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => exportDeliverableHtmlOrPrint(project, item.type, 'print')}
-                  className="py-2 px-3 rounded-lg border border-slate-200 hover:border-[#052B66] text-[#052B66] text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
+                  className="py-2 px-3 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
                   title="Print or Save as PDF"
                 >
                   <Printer className="w-3.5 h-3.5" />
@@ -306,7 +306,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
                     exportDeliverableHtmlOrPrint(project, item.type, 'download_html');
                     setExportNotice(`Downloaded ${item.title} HTML file.`);
                   }}
-                  className="py-2 px-2.5 rounded-lg border border-slate-200 hover:border-[#052B66] text-slate-700 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
+                  className="py-2 px-2.5 rounded-lg border border-slate-200 hover:border-accent text-slate-700 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
                   title="Download standalone HTML"
                 >
                   <FileText className="w-3.5 h-3.5" />

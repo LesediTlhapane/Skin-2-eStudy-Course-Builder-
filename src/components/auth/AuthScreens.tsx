@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { parseApiJson } from '../../utils/apiClient';
+import { BRAND_THEME_PRESETS, getContrastText } from '../../utils/brandTheme';
 import { BrandLogo } from '../BrandLogo';
 
 type AuthTab = 'login' | 'register_company' | 'register_user' | 'forgot_password';
@@ -236,11 +237,11 @@ export const AuthScreens: React.FC = () => {
   // Show password reset view whenever recovery mode is triggered by Supabase recovery link
   if (isPasswordRecoveryMode) {
     return (
-      <div className="min-h-screen bg-[#F5F7FA] flex items-center justify-center p-4">
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm max-w-md w-full p-6 sm:p-8 space-y-6">
+      <div className="min-h-screen bg-surface flex items-center justify-center p-4">
+        <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl shadow-sm max-w-md w-full p-6 sm:p-8 space-y-6">
           <div className="space-y-2">
             <BrandLogo size="md" />
-            <h1 className="text-xl font-bold text-[#052B66] pt-2">Set New Password</h1>
+            <h1 className="text-xl font-bold text-primary pt-2">Set New Password</h1>
             <p className="text-xs text-slate-600">
               Choose a new password (minimum 8 characters) for your account.
             </p>
@@ -266,7 +267,7 @@ export const AuthScreens: React.FC = () => {
                 minLength={8}
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
                 placeholder="At least 8 characters"
               />
             </label>
@@ -278,15 +279,15 @@ export const AuthScreens: React.FC = () => {
                 minLength={8}
                 value={confirmNewPassword}
                 onChange={e => setConfirmNewPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
               />
             </label>
             <button
               type="submit"
               disabled={busy}
-              className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
             >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4 text-[#45CC42]" />}
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4 text-accent" />}
               <span>Update Password</span>
             </button>
           </form>
@@ -298,12 +299,12 @@ export const AuthScreens: React.FC = () => {
   // User is signed in via Supabase Auth, but has no active company memberships yet
   if (session) {
     return (
-      <div className="min-h-screen bg-[#F5F7FA] flex items-center justify-center p-4">
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm max-w-lg w-full p-6 sm:p-8 space-y-6">
+      <div className="min-h-screen bg-surface flex items-center justify-center p-4">
+        <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl shadow-sm max-w-lg w-full p-6 sm:p-8 space-y-6">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1.5">
               <BrandLogo size="md" />
-              <h1 className="text-xl font-bold text-[#052B66] pt-2">
+              <h1 className="text-xl font-bold text-primary pt-2">
                 Complete Workspace Onboarding
               </h1>
               <p className="text-xs text-slate-600">
@@ -314,7 +315,7 @@ export const AuthScreens: React.FC = () => {
             <button
               type="button"
               onClick={() => void signOut()}
-              className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-[#052B66] border border-slate-200 rounded-lg flex items-center gap-1.5 cursor-pointer shrink-0"
+              className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-primary border border-slate-200 rounded-lg flex items-center gap-1.5 cursor-pointer shrink-0"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Sign Out</span>
@@ -337,7 +338,7 @@ export const AuthScreens: React.FC = () => {
                 value={companyName}
                 onChange={e => setCompanyName(e.target.value)}
                 placeholder="e.g. Meridian Technical Training"
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
               />
             </label>
 
@@ -381,9 +382,14 @@ export const AuthScreens: React.FC = () => {
             <button
               type="submit"
               disabled={busy}
-              className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-opacity hover:opacity-95"
+              style={{
+                backgroundColor: primaryColour,
+                color: getContrastText(primaryColour),
+                borderBottom: `3px solid ${secondaryColour}`,
+              }}
             >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4 text-[#45CC42]" />}
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" style={{ color: secondaryColour }} />}
               <span>Create Company Workspace</span>
             </button>
           </form>
@@ -393,15 +399,15 @@ export const AuthScreens: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F7FA] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm max-w-lg w-full overflow-hidden">
-        <div className="bg-[#052B66] px-6 py-5 text-white space-y-1">
+        <div className="bg-brand-gradient border-b-[3px] border-b-accent px-6 py-5 text-primary-contrast space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-[#45CC42]">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-accent">
               Multi-Tenant SaaS Platform
             </span>
             <span className="inline-flex items-center gap-1 text-[11px] text-slate-200">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#45CC42]" />
+              <ShieldCheck className="w-3.5 h-3.5 text-accent" />
               <span>Supabase Auth + RLS</span>
             </span>
           </div>
@@ -453,7 +459,7 @@ export const AuthScreens: React.FC = () => {
               }}
               className={`px-3 py-2 text-xs font-bold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
                 tab === item.id
-                  ? 'border-[#052B66] text-[#052B66] bg-white rounded-t-md'
+                  ? 'border-accent text-primary bg-white rounded-t-md'
                   : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
@@ -487,7 +493,7 @@ export const AuthScreens: React.FC = () => {
                   value={loginEmail}
                   onChange={e => setLoginEmail(e.target.value)}
                   placeholder="name@company.com"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
                 />
               </label>
               <label className="block space-y-1 text-xs font-semibold text-slate-700">
@@ -498,15 +504,15 @@ export const AuthScreens: React.FC = () => {
                   value={loginPassword}
                   onChange={e => setLoginPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
                 />
               </label>
               <button
                 type="submit"
                 disabled={busy || !isClientSupabaseConfigured}
-                className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4 text-[#45CC42]" />}
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4 text-accent" />}
                 <span>Sign In to Workspace</span>
               </button>
             </form>
@@ -573,6 +579,40 @@ export const AuthScreens: React.FC = () => {
                   />
                 </label>
               </div>
+              <div className="space-y-1.5 pt-1">
+                <span className="block text-xs font-semibold text-slate-700">
+                  Quick Theme Presets
+                </span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {BRAND_THEME_PRESETS.slice(0, 3).map(preset => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => {
+                        setPrimaryColour(preset.primaryColour);
+                        setSecondaryColour(preset.secondaryColour);
+                      }}
+                      className={`px-2 py-1.5 rounded border text-left text-[10px] font-semibold flex items-center gap-1.5 cursor-pointer ${
+                        primaryColour.toUpperCase() === preset.primaryColour &&
+                        secondaryColour.toUpperCase() === preset.secondaryColour
+                          ? 'border-primary bg-accent-tint/60'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <span
+                        className="w-3 h-3 rounded-xs shrink-0"
+                        style={{ backgroundColor: preset.primaryColour }}
+                      />
+                      <span
+                        className="w-3 h-3 rounded-xs shrink-0"
+                        style={{ backgroundColor: preset.secondaryColour }}
+                      />
+                      <span className="truncate">{preset.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3 pt-1">
                 <label className="block space-y-1 text-xs font-semibold text-slate-700">
                   <span>Primary Colour</span>
@@ -612,9 +652,14 @@ export const AuthScreens: React.FC = () => {
               <button
                 type="submit"
                 disabled={busy || !isClientSupabaseConfigured}
-                className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-opacity hover:opacity-95 disabled:opacity-50"
+                style={{
+                  backgroundColor: primaryColour,
+                  color: getContrastText(primaryColour),
+                  borderBottom: `3px solid ${secondaryColour}`,
+                }}
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4 text-[#45CC42]" />}
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" style={{ color: secondaryColour }} />}
                 <span>Create Organisation & Admin Account</span>
               </button>
             </form>
@@ -633,7 +678,7 @@ export const AuthScreens: React.FC = () => {
                   required
                   value={userFullName}
                   onChange={e => setUserFullName(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
                 />
               </label>
               <label className="block space-y-1 text-xs font-semibold text-slate-700">
@@ -643,7 +688,7 @@ export const AuthScreens: React.FC = () => {
                   required
                   value={userEmail}
                   onChange={e => setUserEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
                 />
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -655,7 +700,7 @@ export const AuthScreens: React.FC = () => {
                     minLength={8}
                     value={userPassword}
                     onChange={e => setUserPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
                   />
                 </label>
                 <label className="block space-y-1 text-xs font-semibold text-slate-700">
@@ -666,16 +711,16 @@ export const AuthScreens: React.FC = () => {
                     minLength={8}
                     value={userConfirmPassword}
                     onChange={e => setUserConfirmPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
                   />
                 </label>
               </div>
               <button
                 type="submit"
                 disabled={busy || !isClientSupabaseConfigured}
-                className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4 text-[#45CC42]" />}
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4 text-accent" />}
                 <span>Create User Account</span>
               </button>
             </form>
@@ -694,15 +739,15 @@ export const AuthScreens: React.FC = () => {
                   value={forgotEmail}
                   onChange={e => setForgotEmail(e.target.value)}
                   placeholder="name@company.com"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
                 />
               </label>
               <button
                 type="submit"
                 disabled={busy || !isClientSupabaseConfigured}
-                className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4 text-[#45CC42]" />}
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4 text-accent" />}
                 <span>Send Recovery Email</span>
               </button>
             </form>

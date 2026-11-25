@@ -177,7 +177,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h2 className="text-xl font-bold text-[#052B66]">
+          <h2 className="text-xl font-bold text-primary">
             Stage 2: Curriculum Architecture & Preservation
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -193,15 +193,15 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
             value={desiredCount}
             onChange={e => setDesiredCount(e.target.value)}
             placeholder="Modules (auto)"
-            className="w-32 px-2.5 py-2 text-xs bg-white border border-slate-200 rounded-lg"
+            className="w-32 px-2.5 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
           />
           <button
             type="button"
             disabled={isProposing}
             onClick={() => handleProposeCurriculum(false)}
-            className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
-            {isProposing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />}
+            {isProposing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             <span>{curriculum.modules.length > 0 ? 'Regenerate Proposal' : 'Propose Curriculum'}</span>
           </button>
         </div>
@@ -241,20 +241,20 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
       {/* Rationale & Add Module */}
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-[#052B66]">
+          <h3 className="text-sm font-bold text-primary">
             Curriculum Structure ({curriculum.modules.length} Modules)
           </h3>
           <button
             type="button"
             onClick={addModule}
-            className="px-3 py-1.5 text-xs font-bold bg-[#F5F7FA] hover:bg-slate-200/70 border border-slate-200 text-[#052B66] rounded-lg flex items-center gap-1 cursor-pointer"
+            className="px-3 py-1.5 text-xs font-bold bg-accent-tint hover:bg-accent-soft border border-accent-border text-primary rounded-lg flex items-center gap-1 cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 text-accent-ink" />
             <span>Add Module</span>
           </button>
         </div>
         {curriculum.rationale && (
-          <p className="text-xs text-slate-600 bg-[#F5F7FA] p-3 rounded-lg border border-slate-200">
+          <p className="text-xs text-slate-600 bg-surface p-3 rounded-lg border border-slate-200">
             {curriculum.rationale}
           </p>
         )}
@@ -266,20 +266,20 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
         ) : (
           <div className="space-y-4">
             {curriculum.modules.map((mod, mIdx) => (
-              <div key={mod.id} className="border border-slate-200 rounded-lg p-4 space-y-3">
+              <div key={mod.id} className="border border-slate-200 border-t-[3px] border-t-accent rounded-lg p-4 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-mono font-bold text-[#052B66]">M{mod.order}</span>
+                  <span className="text-xs font-mono font-bold text-accent-ink bg-accent-tint px-1.5 py-0.5 rounded">M{mod.order}</span>
                   <input
                     type="text"
                     value={mod.title}
                     onChange={e => updateModule(mIdx, { title: e.target.value })}
-                    className="flex-1 min-w-[200px] px-3 py-1.5 text-sm font-bold text-[#052B66] border border-slate-200 rounded"
+                    className="flex-1 min-w-[200px] px-3 py-1.5 text-sm font-bold text-primary border border-slate-200 rounded focus:outline-none focus:border-accent"
                   />
                   {project.brief.saCompliance.qctoModulePattern && (
                     <select
                       value={mod.qctoModuleType || 'Knowledge Module'}
                       onChange={e => updateModule(mIdx, { qctoModuleType: e.target.value as any })}
-                      className="px-2 py-1.5 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                      className="px-2 py-1.5 text-xs border border-slate-200 rounded bg-surface"
                     >
                       <option value="Knowledge Module">Knowledge Module</option>
                       <option value="Practical Skill Module">Practical Skill Module</option>
@@ -289,7 +289,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                   <button
                     type="button"
                     onClick={() => moveModule(mIdx, -1)}
-                    className="p-1.5 text-slate-500 hover:text-[#052B66] cursor-pointer"
+                    className="p-1.5 text-slate-500 hover:text-primary cursor-pointer"
                     title="Move Up"
                   >
                     <ArrowUp className="w-3.5 h-3.5" />
@@ -297,7 +297,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                   <button
                     type="button"
                     onClick={() => moveModule(mIdx, 1)}
-                    className="p-1.5 text-slate-500 hover:text-[#052B66] cursor-pointer"
+                    className="p-1.5 text-slate-500 hover:text-primary cursor-pointer"
                     title="Move Down"
                   >
                     <ArrowDown className="w-3.5 h-3.5" />
@@ -348,7 +348,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#052B66]">
+                      <span className="text-xs font-bold text-primary">
                         Topics & Subtopics ({mod.topics.length})
                       </span>
                       <button
@@ -361,13 +361,13 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                             ],
                           })
                         }
-                        className="text-[11px] font-semibold text-[#052B66] hover:underline cursor-pointer"
+                        className="text-[11px] font-semibold text-accent-ink hover:underline cursor-pointer"
                       >
                         + Add Topic
                       </button>
                     </div>
                     {mod.topics.map((top, tIdx) => (
-                      <div key={top.id} className="bg-[#F5F7FA] p-2.5 rounded border border-slate-200 space-y-1.5">
+                      <div key={top.id} className="bg-surface p-2.5 rounded border border-slate-200 space-y-1.5">
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
@@ -418,7 +418,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
 
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#052B66]">
+                      <span className="text-xs font-bold text-primary">
                         Lessons ({mod.lessons.length})
                       </span>
                       <button
@@ -437,13 +437,13 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                             ],
                           })
                         }
-                        className="text-[11px] font-semibold text-[#052B66] hover:underline cursor-pointer"
+                        className="text-[11px] font-semibold text-accent-ink hover:underline cursor-pointer"
                       >
                         + Add Lesson
                       </button>
                     </div>
                     {mod.lessons.map((les, lIdx) => (
-                      <div key={les.id} className="bg-[#F5F7FA] p-2.5 rounded border border-slate-200 space-y-1.5">
+                      <div key={les.id} className="bg-surface p-2.5 rounded border border-slate-200 space-y-1.5">
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
@@ -506,7 +506,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-[#052B66]">
+            <h3 className="text-sm font-bold text-primary">
               Curriculum Coverage & Preservation Checker
             </h3>
             <p className="text-xs text-slate-500">
@@ -517,9 +517,9 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
             type="button"
             disabled={isAuditing || curriculum.modules.length === 0}
             onClick={handleCheckCoverage}
-            className="px-3.5 py-2 text-xs font-bold border border-[#052B66] text-[#052B66] hover:bg-[#052B66]/5 disabled:opacity-50 rounded-lg flex items-center gap-1.5 cursor-pointer"
+            className="px-3.5 py-2 text-xs font-bold border border-primary/30 text-primary hover:bg-accent-tint/50 disabled:opacity-50 rounded-lg flex items-center gap-1.5 cursor-pointer"
           >
-            {isAuditing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            {isAuditing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 text-accent-ink" />}
             <span>Re-run Coverage Check</span>
           </button>
         </div>
@@ -548,7 +548,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                             ? 'text-red-700'
                             : item.status === 'generalised' || item.status === 'clarification_needed'
                             ? 'text-amber-700'
-                            : 'text-[#052B66]'
+                            : 'text-primary'
                         }`}
                       >
                         {item.status.replace(/_/g, ' ')}
@@ -610,7 +610,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
       </section>
 
       {/* Approval Gate */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="text-xs text-slate-600">
           {omittedCount > 0
             ? `${omittedCount} omitted topic(s) must be mapped before approving.`
@@ -639,9 +639,9 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
             );
             onApproveAndContinue();
           }}
-          className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+          className="px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center gap-2 cursor-pointer"
         >
-          <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
+          <CheckCircle2 className="w-4 h-4 text-accent" />
           <span>Approve Curriculum & Continue to Stage 3</span>
         </button>
       </div>

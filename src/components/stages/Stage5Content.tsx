@@ -376,7 +376,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h2 className="text-xl font-bold text-[#052B66]">
+          <h2 className="text-xl font-bold text-primary">
             Stage 5: Learning Content Generation & Editing
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -389,12 +389,12 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
             type="button"
             disabled={Boolean(generatingStatus) || plannedModules.length === 0}
             onClick={handleGenerateMissingModules}
-            className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
             {generatingStatus ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
+              <Sparkles className="w-3.5 h-3.5" />
             )}
             <span>
               {allModulesGenerated
@@ -406,8 +406,8 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       </div>
 
       {generatingStatus && (
-        <div className="p-3 bg-[#052B66] text-white rounded-lg text-xs font-semibold flex items-center gap-2">
-          <Loader2 className="w-4 h-4 animate-spin text-[#45CC42]" />
+        <div className="p-3 bg-primary text-primary-contrast border-b-2 border-accent rounded-lg text-xs font-semibold flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-accent" />
           <span>{generatingStatus}</span>
         </div>
       )}
@@ -439,8 +439,8 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
               onClick={() => setActiveModIdx(idx)}
               className={`px-3.5 py-2 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 border transition-colors cursor-pointer ${
                 isCurrent
-                  ? 'bg-[#052B66] text-white border-[#052B66]'
-                  : 'bg-white text-slate-700 border-slate-200 hover:border-[#052B66]'
+                  ? 'bg-primary text-primary-contrast border-primary border-b-2 border-b-accent'
+                  : 'bg-white text-slate-700 border-slate-200 hover:border-accent'
               }`}
             >
               M{pm.order}: {pm.title} {isDone ? '✓' : hasPartial ? '…' : ''}
@@ -450,8 +450,8 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       </div>
 
       {activePlan && !activeGenerated ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-10 text-center space-y-3">
-          <h3 className="text-base font-bold text-[#052B66]">
+        <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-10 text-center space-y-3">
+          <h3 className="text-base font-bold text-primary">
             Module {activePlan.order}: {activePlan.title}
           </h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
@@ -461,7 +461,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
             type="button"
             disabled={Boolean(generatingStatus)}
             onClick={() => handleRegenerateCurrentModule(true)}
-            className="px-4 py-2 rounded-lg bg-[#052B66] text-white text-xs font-bold cursor-pointer"
+            className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold cursor-pointer"
           >
             Generate Module {activePlan.order}
           </button>
@@ -476,15 +476,15 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                 value={regenPrompt}
                 onChange={e => setRegenPrompt(e.target.value)}
                 placeholder="Optional guidance before clicking Regenerate on any lesson, scenario, case study, or quiz..."
-                className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg"
+                className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
               />
               <button
                 type="button"
                 disabled={Boolean(generatingStatus)}
                 onClick={() => handleRegenerateCurrentModule(false)}
-                className="px-3.5 py-1.5 text-xs font-bold border border-[#052B66] text-[#052B66] hover:bg-[#052B66]/5 rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
+                className="px-3.5 py-1.5 text-xs font-bold border border-primary/30 text-primary hover:bg-accent-tint/50 rounded-lg flex items-center gap-1.5 shrink-0 cursor-pointer"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
+                <RefreshCw className="w-3.5 h-3.5 text-accent-ink" />
                 <span>Regenerate Full Module</span>
               </button>
             </div>
@@ -516,7 +516,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           {/* Module Intro & Objectives */}
           <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-[#052B66]">
+              <h3 className="text-sm font-bold text-primary">
                 Module {activeGenerated.moduleNumber}: {activeGenerated.title}
               </h3>
               <span className="text-xs text-slate-500">
@@ -547,7 +547,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                       learningObjectives: [...activeGenerated.learningObjectives, ''],
                     })
                   }
-                  className="text-[11px] font-bold text-[#052B66] hover:underline cursor-pointer"
+                  className="text-[11px] font-bold text-accent-ink hover:underline cursor-pointer"
                 >
                   + Add Objective
                 </button>
@@ -594,18 +594,18 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
             return (
               <section
                 key={lesson.id}
-                className="bg-white border border-slate-200 rounded-xl p-5 space-y-4"
+                className="bg-white border border-slate-200 border-t-[3px] border-t-accent/70 rounded-xl p-5 space-y-4"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
                   <div className="flex flex-wrap items-center gap-2 flex-1">
-                    <span className="text-xs font-mono font-bold text-[#052B66]">
+                    <span className="text-xs font-mono font-bold text-accent-ink bg-accent-tint px-1.5 py-0.5 rounded">
                       L{idx + 1}
                     </span>
                     <input
                       type="text"
                       value={lesson.title}
                       onChange={e => updateLesson(lesson.id, { title: e.target.value })}
-                      className="flex-1 min-w-[200px] px-2.5 py-1 text-sm font-bold text-[#052B66] border border-slate-200 rounded"
+                      className="flex-1 min-w-[200px] px-2.5 py-1 text-sm font-bold text-primary border border-slate-200 rounded focus:outline-none focus:border-accent"
                     />
                     <input
                       type="number"
@@ -625,12 +625,12 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                     type="button"
                     disabled={regenBusyKey === `lesson-${lesson.id}`}
                     onClick={() => handleSelectiveRegen('lesson', lesson.id)}
-                    className="px-3 py-1.5 text-xs font-bold border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer"
+                    className="px-3 py-1.5 text-xs font-bold border border-slate-200 hover:border-accent text-primary rounded-lg flex items-center gap-1.5 cursor-pointer"
                   >
                     {regenBusyKey === `lesson-${lesson.id}` ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <RefreshCw className="w-3.5 h-3.5" />
+                      <RefreshCw className="w-3.5 h-3.5 text-accent-ink" />
                     )}
                     <span>Regenerate Lesson</span>
                   </button>
@@ -675,14 +675,14 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                       rows={7}
                       value={lesson.explanation}
                       onChange={e => updateLesson(lesson.id, { explanation: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg leading-relaxed"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg leading-relaxed focus:outline-none focus:border-accent"
                     />
                   </div>
 
                   {/* Key Terminology Editor */}
-                  <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-2">
+                  <div className="p-3 bg-surface border border-slate-200 rounded-lg space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#052B66]">
+                      <span className="text-xs font-bold text-primary">
                         Key Terminology ({lesson.keyTerminology.length})
                       </span>
                       <button
@@ -695,7 +695,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                             ],
                           })
                         }
-                        className="text-[11px] font-bold text-[#052B66] hover:underline cursor-pointer"
+                        className="text-[11px] font-bold text-accent-ink hover:underline cursor-pointer"
                       >
                         + Add Term
                       </button>
@@ -742,9 +742,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                   </div>
 
                   {/* Worked Examples Editor */}
-                  <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-2">
+                  <div className="p-3 bg-surface border border-slate-200 rounded-lg space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#052B66]">
+                      <span className="text-xs font-bold text-primary">
                         Worked Examples ({lesson.workedExamples.length})
                       </span>
                       <button
@@ -754,7 +754,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                             workedExamples: [...lesson.workedExamples, ''],
                           })
                         }
-                        className="text-[11px] font-bold text-[#052B66] hover:underline cursor-pointer"
+                        className="text-[11px] font-bold text-accent-ink hover:underline cursor-pointer"
                       >
                         + Add Worked Example
                       </button>
@@ -817,9 +817,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                   </div>
 
                   {/* Source Claims Grounding & Manual SME Status Override */}
-                  <div className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200 space-y-2">
+                  <div className="p-3 rounded-lg bg-surface border border-slate-200 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#052B66]">
+                      <span className="text-xs font-bold text-primary">
                         Source Grounding & Claim Verification ({lesson.sourceClaims?.length || 0})
                       </span>
                       <button
@@ -837,7 +837,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                             ],
                           })
                         }
-                        className="text-[11px] font-bold text-[#052B66] hover:underline cursor-pointer"
+                        className="text-[11px] font-bold text-accent-ink hover:underline cursor-pointer"
                       >
                         + Add Claim Reference
                       </button>
@@ -918,7 +918,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           {/* Workplace Case Studies (Full Inline Editor + Selective Regen) */}
           <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-[#052B66]">
+              <h4 className="text-sm font-bold text-primary">
                 Workplace Case Studies ({activeGenerated.workplaceCaseStudies.length})
               </h4>
               <button
@@ -937,9 +937,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                     ],
                   })
                 }
-                className="px-3 py-1 text-xs font-bold bg-[#F5F7FA] border border-slate-200 rounded-lg flex items-center gap-1 cursor-pointer"
+                className="px-3 py-1 text-xs font-bold bg-accent-tint hover:bg-accent-soft border border-accent-border text-primary rounded-lg flex items-center gap-1 cursor-pointer"
               >
-                <Plus className="w-3 h-3" />
+                <Plus className="w-3 h-3 text-accent-ink" />
                 <span>Add Case Study</span>
               </button>
             </div>
@@ -957,15 +957,15 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                         ),
                       })
                     }
-                    className="flex-1 px-2.5 py-1 text-xs font-bold text-[#052B66] border border-slate-200 rounded"
+                    className="flex-1 px-2.5 py-1 text-xs font-bold text-primary border border-slate-200 rounded"
                   />
                   <button
                     type="button"
                     disabled={regenBusyKey === `case_study-${cs.id}`}
                     onClick={() => handleSelectiveRegen('case_study', cs.id)}
-                    className="px-2.5 py-1 text-xs font-semibold border border-slate-200 rounded flex items-center gap-1 cursor-pointer"
+                    className="px-2.5 py-1 text-xs font-semibold border border-slate-200 hover:border-accent rounded flex items-center gap-1 cursor-pointer"
                   >
-                    <RefreshCw className="w-3 h-3" />
+                    <RefreshCw className="w-3 h-3 text-accent-ink" />
                     <span>Regenerate Case Study</span>
                   </button>
                   <button
@@ -1031,7 +1031,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                         ),
                       })
                     }
-                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-surface"
                   />
                 </div>
               </div>
@@ -1041,7 +1041,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           {/* Scenarios (All Fields Editable) */}
           {activeGenerated.scenarios.length > 0 && (
             <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-              <h4 className="text-sm font-bold text-[#052B66]">
+              <h4 className="text-sm font-bold text-primary">
                 Workplace Scenarios ({activeGenerated.scenarios.length})
               </h4>
               {activeGenerated.scenarios.map(sc => (
@@ -1057,7 +1057,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                           ),
                         })
                       }
-                      className="flex-1 min-w-[180px] px-2.5 py-1 text-xs font-bold text-[#052B66] border border-slate-200 rounded"
+                      className="flex-1 min-w-[180px] px-2.5 py-1 text-xs font-bold text-primary border border-slate-200 rounded"
                     />
                     <select
                       value={sc.contextType}
@@ -1068,7 +1068,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                           ),
                         })
                       }
-                      className="px-2 py-1 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                      className="px-2 py-1 text-xs border border-slate-200 rounded bg-surface"
                     >
                       <option value="Workplace">Workplace</option>
                       <option value="Branching / Decision">Branching / Decision</option>
@@ -1078,9 +1078,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                       type="button"
                       disabled={regenBusyKey === `scenario-${sc.id}`}
                       onClick={() => handleSelectiveRegen('scenario', sc.id)}
-                      className="px-2.5 py-1 text-xs font-semibold border border-slate-200 rounded flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 text-xs font-semibold border border-slate-200 hover:border-accent rounded flex items-center gap-1 cursor-pointer"
                     >
-                      <RefreshCw className="w-3 h-3" />
+                      <RefreshCw className="w-3 h-3 text-accent-ink" />
                       <span>Regenerate Scenario</span>
                     </button>
                   </div>
@@ -1152,7 +1152,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                             ),
                           })
                         }
-                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-surface"
                       />
                     </div>
                     <div>
@@ -1169,7 +1169,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                             ),
                           })
                         }
-                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                        className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded bg-surface"
                       />
                     </div>
                   </div>
@@ -1181,7 +1181,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           {/* Knowledge Checks (Full Inline Editor) & Summary */}
           <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-[#052B66]">
+              <h4 className="text-sm font-bold text-primary">
                 Module Knowledge Checks ({activeGenerated.knowledgeChecks.length}) & Summary
               </h4>
               <button
@@ -1201,9 +1201,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                     ],
                   })
                 }
-                className="px-3 py-1 text-xs font-bold bg-[#F5F7FA] border border-slate-200 rounded-lg flex items-center gap-1 cursor-pointer"
+                className="px-3 py-1 text-xs font-bold bg-accent-tint hover:bg-accent-soft border border-accent-border text-primary rounded-lg flex items-center gap-1 cursor-pointer"
               >
-                <Plus className="w-3 h-3" />
+                <Plus className="w-3 h-3 text-accent-ink" />
                 <span>Add Knowledge Check</span>
               </button>
             </div>
@@ -1211,10 +1211,10 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
             {activeGenerated.knowledgeChecks.map((kc, kIdx) => (
               <div
                 key={kc.id}
-                className="p-3.5 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-2.5 text-xs"
+                className="p-3.5 bg-surface border border-slate-200 rounded-lg space-y-2.5 text-xs"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono font-bold text-[#052B66]">Q{kIdx + 1}</span>
+                  <span className="font-mono font-bold text-primary">Q{kIdx + 1}</span>
                   <input
                     type="text"
                     value={kc.outcomeCode}
@@ -1349,7 +1349,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         </div>
       ) : null}
 
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="text-xs text-slate-600">
           {allModulesGenerated
             ? 'All planned modules have generated content. Proceed to Quality Assurance.'
@@ -1377,9 +1377,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
             );
             onApproveAndContinue();
           }}
-          className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+          className="px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center gap-2 cursor-pointer"
         >
-          <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
+          <CheckCircle2 className="w-4 h-4 text-accent" />
           <span>Approve Content & Continue to Stage 6 QA</span>
         </button>
       </div>

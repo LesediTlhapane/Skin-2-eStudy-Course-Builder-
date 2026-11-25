@@ -148,7 +148,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h2 className="text-xl font-bold text-[#052B66]">
+          <h2 className="text-xl font-bold text-primary">
             Stage 3: Measurable Learning Outcomes
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -160,9 +160,9 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
           type="button"
           disabled={isGenerating || project.curriculum.modules.length === 0}
           onClick={() => handleGenerateOutcomes(false)}
-          className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+          className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
         >
-          {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />}
+          {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
           <span>
             {outcomes.courseOutcomes.length > 0 || outcomes.moduleOutcomes.length > 0
               ? 'Regenerate Outcomes with AI'
@@ -205,15 +205,15 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
       {/* Course-Level Outcomes */}
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-[#052B66]">
+          <h3 className="text-sm font-bold text-primary">
             Course-Level Outcomes ({outcomes.courseOutcomes.length})
           </h3>
           <button
             type="button"
             onClick={() => addOutcome('course')}
-            className="px-3 py-1.5 text-xs font-bold bg-[#F5F7FA] border border-slate-200 rounded-lg flex items-center gap-1 cursor-pointer"
+            className="px-3 py-1.5 text-xs font-bold bg-accent-tint hover:bg-accent-soft border border-accent-border text-primary rounded-lg flex items-center gap-1 cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 text-accent-ink" />
             <span>Add Course Outcome</span>
           </button>
         </div>
@@ -227,12 +227,12 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
                   type="text"
                   value={out.code}
                   onChange={e => updateItem('course', out.id, { code: e.target.value })}
-                  className="w-20 px-2 py-1 text-xs font-mono font-bold border border-slate-200 rounded"
+                  className="w-20 px-2 py-1 text-xs font-mono font-bold text-primary bg-accent-tint/50 border border-accent-border rounded"
                 />
                 <select
                   value={out.bloomLevel}
                   onChange={e => updateItem('course', out.id, { bloomLevel: e.target.value as BloomLevel })}
-                  className="px-2 py-1 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                  className="px-2 py-1 text-xs border border-slate-200 rounded bg-surface"
                 >
                   {BLOOM_LEVELS.map(b => (
                     <option key={b} value={b}>{b}</option>
@@ -258,14 +258,14 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
                 value={out.statement}
                 onChange={e => updateItem('course', out.id, { statement: e.target.value })}
                 placeholder="Measurable outcome statement..."
-                className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded"
+                className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-accent"
               />
               <input
                 type="text"
                 value={out.workplacePerformance}
                 onChange={e => updateItem('course', out.id, { workplacePerformance: e.target.value })}
                 placeholder="Workplace performance demonstration..."
-                className="w-full px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded bg-[#F5F7FA]"
+                className="w-full px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded bg-surface"
               />
               {vague && (
                 <p className="text-xs text-amber-700 font-medium">{vague}</p>
@@ -278,15 +278,15 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
       {/* Module-Level Outcomes */}
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-[#052B66]">
+          <h3 className="text-sm font-bold text-primary">
             Module-Level Outcomes ({outcomes.moduleOutcomes.length})
           </h3>
           <button
             type="button"
             onClick={() => addOutcome('module', project.curriculum.modules[0]?.id)}
-            className="px-3 py-1.5 text-xs font-bold bg-[#F5F7FA] border border-slate-200 rounded-lg flex items-center gap-1 cursor-pointer"
+            className="px-3 py-1.5 text-xs font-bold bg-accent-tint hover:bg-accent-soft border border-accent-border text-primary rounded-lg flex items-center gap-1 cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 text-accent-ink" />
             <span>Add Module Outcome</span>
           </button>
         </div>
@@ -300,7 +300,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
                   type="text"
                   value={out.code}
                   onChange={e => updateItem('module', out.id, { code: e.target.value })}
-                  className="w-24 px-2 py-1 text-xs font-mono font-bold border border-slate-200 rounded"
+                  className="w-24 px-2 py-1 text-xs font-mono font-bold text-primary bg-accent-tint/50 border border-accent-border rounded"
                 />
                 <select
                   value={out.moduleId || ''}
@@ -316,7 +316,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
                 <select
                   value={out.bloomLevel}
                   onChange={e => updateItem('module', out.id, { bloomLevel: e.target.value as BloomLevel })}
-                  className="px-2 py-1 text-xs border border-slate-200 rounded bg-[#F5F7FA]"
+                  className="px-2 py-1 text-xs border border-slate-200 rounded bg-surface"
                 >
                   {BLOOM_LEVELS.map(b => (
                     <option key={b} value={b}>{b}</option>
@@ -335,14 +335,14 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
                 value={out.statement}
                 onChange={e => updateItem('module', out.id, { statement: e.target.value })}
                 placeholder="Measurable module outcome..."
-                className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded"
+                className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:border-accent"
               />
               <input
                 type="text"
                 value={out.workplacePerformance}
                 onChange={e => updateItem('module', out.id, { workplacePerformance: e.target.value })}
                 placeholder="Observable workplace application..."
-                className="w-full px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded bg-[#F5F7FA]"
+                className="w-full px-3 py-1.5 text-xs text-slate-600 border border-slate-200 rounded bg-surface"
               />
               {vague && (
                 <p className="text-xs text-amber-700 font-medium">{vague}</p>
@@ -363,7 +363,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
         </section>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="text-xs text-slate-600">
           {vagueWarnings.length > 0
             ? `${vagueWarnings.length} outcome(s) contain vague verbs (e.g. "understand"). Replace with measurable verbs.`
@@ -390,9 +390,9 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
             );
             onApproveAndContinue();
           }}
-          className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+          className="px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center gap-2 cursor-pointer"
         >
-          <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
+          <CheckCircle2 className="w-4 h-4 text-accent" />
           <span>Approve Outcomes & Continue to Stage 4</span>
         </button>
       </div>

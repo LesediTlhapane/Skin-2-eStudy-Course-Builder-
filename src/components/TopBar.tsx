@@ -70,12 +70,15 @@ export const TopBar: React.FC<TopBarProps> = ({
   const secondaryColour = activeCompany?.secondaryColour || '#45CC42';
 
   return (
-    <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-4 sm:px-6 h-16 flex items-center justify-between gap-4 sm:gap-6">
+    <header
+      className="sticky top-0 z-30 bg-white border-b border-slate-200 px-4 sm:px-6 h-16 flex items-center justify-between gap-4 sm:gap-6"
+      style={{ borderTop: '3px solid var(--brand-secondary)' }}
+    >
       {/* Zone 1: Brand Title */}
       <button
         type="button"
         onClick={() => onNavigate('dashboard')}
-        className="flex items-center gap-3 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#052B66] rounded"
+        className="flex items-center gap-3 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary rounded"
       >
         <BrandLogo
           size="md"
@@ -87,36 +90,26 @@ export const TopBar: React.FC<TopBarProps> = ({
       </button>
 
       {/* Zone 2: Clean Single-Line Nav Links */}
-      <nav className="flex items-center gap-5 overflow-x-auto">
+      <nav className="flex items-center gap-2 sm:gap-3 overflow-x-auto">
         <button
           type="button"
           onClick={() => onNavigate('dashboard')}
-          className={`text-sm font-semibold whitespace-nowrap shrink-0 pb-0.5 transition-colors cursor-pointer ${
+          className={`px-2.5 py-1.5 rounded-md text-sm font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
             route === 'dashboard'
-              ? 'border-b-2 text-[#052B66]'
-              : 'text-slate-600 hover:text-[#052B66]'
+              ? 'bg-accent-tint text-primary border-b-2 border-accent'
+              : 'text-slate-600 hover:text-primary hover:bg-slate-50'
           }`}
-          style={
-            route === 'dashboard'
-              ? { color: primaryColour, borderColor: secondaryColour }
-              : undefined
-          }
         >
           Dashboard
         </button>
         <button
           type="button"
           onClick={() => onNavigate('templates')}
-          className={`text-sm font-semibold whitespace-nowrap shrink-0 pb-0.5 transition-colors cursor-pointer ${
+          className={`px-2.5 py-1.5 rounded-md text-sm font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
             route === 'templates'
-              ? 'border-b-2 text-[#052B66]'
-              : 'text-slate-600 hover:text-[#052B66]'
+              ? 'bg-accent-tint text-primary border-b-2 border-accent'
+              : 'text-slate-600 hover:text-primary hover:bg-slate-50'
           }`}
-          style={
-            route === 'templates'
-              ? { color: primaryColour, borderColor: secondaryColour }
-              : undefined
-          }
         >
           Templates
         </button>
@@ -124,16 +117,11 @@ export const TopBar: React.FC<TopBarProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('workspace')}
-            className={`text-sm font-semibold whitespace-nowrap shrink-0 pb-0.5 transition-colors cursor-pointer max-w-[200px] truncate ${
+            className={`px-2.5 py-1.5 rounded-md text-sm font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer max-w-[200px] truncate ${
               route === 'workspace'
-                ? 'border-b-2 text-[#052B66]'
-                : 'text-slate-600 hover:text-[#052B66]'
+                ? 'bg-accent-tint text-primary border-b-2 border-accent'
+                : 'text-slate-600 hover:text-primary hover:bg-slate-50'
             }`}
-            style={
-              route === 'workspace'
-                ? { color: primaryColour, borderColor: secondaryColour }
-                : undefined
-            }
           >
             Workspace: {activeProject.brief.title || 'Untitled'}
           </button>
@@ -143,13 +131,13 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Zone 3: Company Switcher, Groq Selector, New Course, Account Menu */}
       <div className="flex items-center gap-2.5 shrink-0">
         {memberships.length > 1 && activeCompany && onSwitchCompany && (
-          <div className="hidden xl:flex items-center gap-1.5 bg-[#F5F7FA] border border-slate-200 rounded-lg px-2 py-1.5">
-            <Building2 className="w-3.5 h-3.5 text-[#052B66]" />
+          <div className="hidden xl:flex items-center gap-1.5 bg-surface border border-slate-200 hover:border-accent-border rounded-lg px-2 py-1.5 transition-colors">
+            <Building2 className="w-3.5 h-3.5 text-accent-ink" />
             <select
               aria-label="Switch Company Workspace"
               value={activeCompany.id}
               onChange={e => onSwitchCompany(e.target.value)}
-              className="text-xs font-semibold text-[#052B66] bg-transparent focus:outline-none max-w-[140px] truncate cursor-pointer"
+              className="text-xs font-semibold text-primary bg-transparent focus:outline-none max-w-[140px] truncate cursor-pointer"
             >
               {memberships.map(m => (
                 <option key={m.companyId} value={m.companyId}>
@@ -160,9 +148,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         )}
 
-        <div className="hidden lg:flex items-center gap-2 bg-[#F5F7FA] border border-slate-200 rounded-lg px-2.5 py-1.5">
-          <Cpu className="w-3.5 h-3.5 text-[#052B66] shrink-0" />
-          <span className="text-xs font-semibold text-[#052B66] whitespace-nowrap">
+        <div className="hidden lg:flex items-center gap-2 bg-surface border border-slate-200 rounded-lg px-2.5 py-1.5">
+          <Cpu className="w-3.5 h-3.5 text-accent-ink shrink-0" />
+          <span className="text-xs font-semibold text-primary whitespace-nowrap">
             Groq {!keysStatus.groq ? '(No key)' : ''}
           </span>
           <span className="text-slate-300">|</span>
@@ -187,10 +175,9 @@ export const TopBar: React.FC<TopBarProps> = ({
         <button
           type="button"
           onClick={onOpenNewCourse}
-          className="px-3.5 py-2 rounded-lg text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
-          style={{ backgroundColor: primaryColour }}
+          className="px-3.5 py-2 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer shadow-xs"
         >
-          <Plus className="w-4 h-4" style={{ color: secondaryColour }} />
+          <Plus className="w-4 h-4" />
           <span>New Course</span>
         </button>
 
@@ -199,9 +186,9 @@ export const TopBar: React.FC<TopBarProps> = ({
             <button
               type="button"
               onClick={() => setMenuOpen(v => !v)}
-              className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 bg-[#F5F7FA] text-xs font-semibold text-[#052B66] flex items-center gap-1.5 cursor-pointer"
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-accent-border bg-surface text-xs font-semibold text-primary flex items-center gap-1.5 cursor-pointer transition-colors"
             >
-              <User className="w-3.5 h-3.5" />
+              <User className="w-3.5 h-3.5 text-accent-ink" />
               <span className="hidden sm:inline max-w-[110px] truncate">
                 {profile.fullName || profile.email}
               </span>
@@ -214,14 +201,14 @@ export const TopBar: React.FC<TopBarProps> = ({
                   className="fixed inset-0 z-40"
                   onClick={() => setMenuOpen(false)}
                 />
-                <div className="absolute right-0 mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1.5 text-xs">
-                  <div className="px-3.5 py-2 border-b border-slate-100">
-                    <div className="font-bold text-[#052B66] truncate">
+                <div className="absolute right-0 mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1.5 text-xs overflow-hidden">
+                  <div className="px-3.5 py-2 border-b border-slate-100 bg-accent-tint/50">
+                    <div className="font-bold text-primary truncate">
                       {profile.fullName || 'Workspace User'}
                     </div>
                     <div className="text-slate-500 truncate">{profile.email}</div>
                     {activeCompany && (
-                      <div className="mt-1 text-[11px] font-semibold text-slate-600">
+                      <div className="mt-1 text-[11px] font-semibold text-accent-ink">
                         {activeCompany.companyName} · {activeRole}
                       </div>
                     )}
@@ -256,10 +243,10 @@ export const TopBar: React.FC<TopBarProps> = ({
                         setMenuOpen(false);
                         onOpenCompanySettings();
                       }}
-                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 text-slate-700 font-medium cursor-pointer"
+                      className="w-full px-3.5 py-2 text-left hover:bg-accent-tint/50 flex items-center gap-2 text-slate-700 font-medium cursor-pointer"
                     >
-                      <Settings className="w-3.5 h-3.5 text-[#052B66]" />
-                      <span>Organisation Settings & Team</span>
+                      <Settings className="w-3.5 h-3.5 text-accent-ink" />
+                      <span>Organisation Branding & Team</span>
                     </button>
                   )}
 
@@ -270,10 +257,10 @@ export const TopBar: React.FC<TopBarProps> = ({
                         setMenuOpen(false);
                         onOpenLocalMigration();
                       }}
-                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center justify-between gap-2 text-slate-700 font-medium cursor-pointer"
+                      className="w-full px-3.5 py-2 text-left hover:bg-accent-tint/50 flex items-center justify-between gap-2 text-slate-700 font-medium cursor-pointer"
                     >
                       <span className="flex items-center gap-2">
-                        <CloudUpload className="w-3.5 h-3.5 text-[#052B66]" />
+                        <CloudUpload className="w-3.5 h-3.5 text-primary" />
                         <span>Migrate Local Courses</span>
                       </span>
                       {pendingLocalMigrationCount > 0 && (

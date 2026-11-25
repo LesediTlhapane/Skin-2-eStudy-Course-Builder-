@@ -328,22 +328,22 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   return (
     <div className="flex-1 flex flex-col lg:flex-row min-h-[calc(100vh-4rem)]">
       {/* Left Guided Stage Rail */}
-      <aside className="w-full lg:w-64 bg-[#052B66] text-white shrink-0 flex flex-col justify-between border-r border-[#042150]">
+      <aside className="w-full lg:w-64 bg-brand-gradient text-primary-contrast shrink-0 flex flex-col justify-between border-r border-primary-dark">
         <div className="p-4 space-y-5">
           <button
             type="button"
             onClick={onBackToDashboard}
-            className="text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-1.5 cursor-pointer"
+            className="text-xs font-semibold opacity-80 hover:opacity-100 flex items-center gap-1.5 cursor-pointer"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
+            <ArrowLeft className="w-3.5 h-3.5 text-accent" />
             <span>Back to Dashboard</span>
           </button>
 
-          <div className="space-y-1.5">
-            <div className="text-sm font-bold text-white truncate">
+          <div className="space-y-1.5 pb-3 border-b border-white/15">
+            <div className="text-sm font-bold truncate">
               {project.brief.title || 'Untitled Course'}
             </div>
-            <div className="flex items-center justify-between gap-2 text-[11px] text-slate-300">
+            <div className="flex items-center justify-between gap-2 text-[11px] opacity-80">
               <span className="truncate">
                 {project.brief.code || 'Code TBC'} ·{' '}
                 {saveState === 'saving'
@@ -356,10 +356,10 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                 <button
                   type="button"
                   onClick={() => void onFlushSaveNow()}
-                  title="Flush workspace to browser storage immediately"
-                  className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-semibold text-white flex items-center gap-1 shrink-0 cursor-pointer"
+                  title="Flush workspace to cloud storage immediately"
+                  className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
                 >
-                  <Save className="w-2.5 h-2.5 text-[#45CC42]" />
+                  <Save className="w-2.5 h-2.5 text-accent" />
                   <span>Save</span>
                 </button>
               )}
@@ -384,22 +384,24 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                   title={lockedStage7 ? getStage7BlockReason() : st.desc}
                   className={`text-left px-3 py-2.5 rounded-lg transition-colors flex items-center justify-between gap-2 shrink-0 cursor-pointer ${
                     active
-                      ? 'bg-white/15 text-white font-bold'
+                      ? 'bg-accent-soft border-l-[3px] border-l-accent font-bold shadow-xs'
                       : lockedStage7
-                      ? 'text-slate-400 hover:bg-white/5'
-                      : 'text-slate-200 hover:bg-white/5 hover:text-white'
+                      ? 'opacity-55 hover:bg-white/5'
+                      : 'opacity-85 hover:bg-white/10 hover:opacity-100'
                   }`}
                 >
                   <div className="min-w-0">
                     <div className="text-xs whitespace-nowrap">{st.label}</div>
-                    <div className="text-[10px] text-slate-300 hidden lg:block truncate">
+                    <div className="text-[10px] opacity-75 hidden lg:block truncate">
                       {st.desc}
                     </div>
                   </div>
                   {lockedStage7 ? (
-                    <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <Lock className="w-3.5 h-3.5 opacity-60 shrink-0" />
                   ) : approved ? (
-                    <Check className="w-3.5 h-3.5 text-[#45CC42] shrink-0" />
+                    <span className="w-5 h-5 rounded-full bg-accent text-accent-contrast flex items-center justify-center shrink-0">
+                      <Check className="w-3 h-3 stroke-[2.5]" />
+                    </span>
                   ) : null}
                 </button>
               );
@@ -408,33 +410,33 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
         </div>
 
         {/* Workspace Utility Buttons */}
-        <div className="p-4 bg-[#042150] border-t border-white/10 space-y-2">
+        <div className="p-4 bg-black/20 border-t border-white/15 space-y-2">
           <button
             type="button"
             onClick={() => setIsSourcesOpen(true)}
-            className="w-full py-2 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-semibold flex items-center justify-between cursor-pointer"
+            className="w-full py-2 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors"
           >
             <span className="flex items-center gap-2">
-              <FileText className="w-3.5 h-3.5 text-[#45CC42]" />
+              <FileText className="w-3.5 h-3.5 text-accent" />
               <span>Source Register</span>
             </span>
-            <span className="font-mono">{project.sources.length}</span>
+            <span className="font-mono text-accent font-bold tabular-nums">{project.sources.length}</span>
           </button>
           <button
             type="button"
             onClick={() => setIsVersionsOpen(true)}
-            className="w-full py-2 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-semibold flex items-center justify-between cursor-pointer"
+            className="w-full py-2 px-3 rounded-lg bg-white/10 hover:bg-white/15 text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors"
           >
             <span className="flex items-center gap-2">
-              <History className="w-3.5 h-3.5 text-[#45CC42]" />
+              <History className="w-3.5 h-3.5 text-accent" />
               <span>Version History</span>
             </span>
-            <span className="font-mono">{project.versions.length}</span>
+            <span className="font-mono text-accent font-bold tabular-nums">{project.versions.length}</span>
           </button>
           <button
             type="button"
             onClick={() => setIsCopilotOpen(!isCopilotOpen)}
-            className="w-full py-2 px-3 rounded-lg bg-[#45CC42] hover:bg-[#3ab837] text-[#052B66] text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full py-2.5 px-3 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-xs"
           >
             <MessageSquare className="w-3.5 h-3.5" />
             <span>{isCopilotOpen ? 'Hide Course Copilot' : 'Open Course Copilot'}</span>
@@ -477,7 +479,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() => setStage(6)}
-                    className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold cursor-pointer"
                   >
                     ← Back to Stage 6 QA
                   </button>
@@ -485,7 +487,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsCopilotOpen(true)}
-                    className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold cursor-pointer"
                   >
                     Open Copilot
                   </button>
@@ -571,8 +573,8 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
 
         {/* Floating Selection Action Bar for Highlighted Workspace Text */}
         {pendingSelectionText.length >= 10 && (
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 max-w-[94vw] bg-[#052B66] text-white px-3 py-2 rounded-xl shadow-2xl border border-white/15 flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="inline-flex items-center gap-1 font-bold text-[#45CC42] pr-1.5 border-r border-white/20">
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 max-w-[94vw] bg-primary text-primary-contrast px-3 py-2 rounded-xl shadow-2xl border border-accent/60 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="inline-flex items-center gap-1 font-bold text-accent pr-1.5 border-r border-white/20">
               <Sparkles className="w-3.5 h-3.5" />
               <span>
                 {project.currentStage >= 6

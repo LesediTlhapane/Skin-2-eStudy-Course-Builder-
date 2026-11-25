@@ -571,3 +571,43 @@ create policy "audit_logs_insert_member"
     public.is_company_member(company_id)
     and (user_id is null or user_id = auth.uid())
   );
+
+-- ----------------------------------------------------------------------------
+-- 7. Role Grants (Required so PostgREST service_role & authenticated access
+--    tables under RLS policies)
+-- ----------------------------------------------------------------------------
+
+grant usage on schema public to anon, authenticated, service_role;
+
+grant all privileges on table
+  public.companies,
+  public.user_profiles,
+  public.company_memberships,
+  public.courses,
+  public.course_versions,
+  public.templates,
+  public.source_documents,
+  public.course_approvals,
+  public.ai_usage_records,
+  public.audit_logs
+to service_role;
+
+grant select, insert, update, delete on table
+  public.companies,
+  public.user_profiles,
+  public.company_memberships,
+  public.courses,
+  public.course_versions,
+  public.templates,
+  public.source_documents,
+  public.course_approvals,
+  public.ai_usage_records,
+  public.audit_logs
+to authenticated;
+
+grant all on all sequences in schema public to service_role;
+grant usage, select on all sequences in schema public to authenticated;
+grant execute on function public.create_company_workspace(text, text, text, text, text) to authenticated, service_role;
+
+notify pgrst, 'reload schema';
+

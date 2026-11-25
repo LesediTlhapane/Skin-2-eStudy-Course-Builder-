@@ -23,6 +23,8 @@ import {
   parseFilledCourseBriefWithAI,
 } from './ai/index.js';
 import {
+  createTenantAuthMiddleware,
+  requireCompanyRole,
   type AuthenticatedRequest,
 } from './authMiddleware.js';
 import { aiUsageContextStorage, isSupabaseServerConfigured } from './supabaseAdmin.js';
@@ -188,9 +190,14 @@ export function createApiRouter(options?: {
   // Attach multi-tenant onboarding, workspace, RBAC, storage, and persistence routes
   attachTenantRoutes(router, options?.tenantDeps);
 
-  // Authoring, QA, Copilot, Source analysis, and Template round-trip endpoints (open in local-first mode)
+  const requireTenantAuth = createTenantAuthMiddleware(options?.tenantDeps?.authVerifier);
+  const requireEditorRole = requireCompanyRole(['company_admin', 'author', 'reviewer']);
+
+  // Tenant-authenticated AI authoring, QA, Copilot, Source analysis, and Template round-trip endpoints
   router.post(
     '/v2/sources/analyse',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, existingSources, provider, model } = req.body || {};
@@ -233,6 +240,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/improve/diagnose',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, provider, model } = req.body || {};
@@ -271,6 +280,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/templates/extract',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, provider, model } = req.body || {};
@@ -306,6 +317,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/templates/parse-filled',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, template, provider, model } = req.body || {};
@@ -364,6 +377,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/brief/analyse',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, sources, provider, model } = req.body || {};
@@ -382,6 +397,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/curriculum/propose',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, sources, desiredModuleCount, existingModules, provider, model } = req.body || {};
@@ -407,6 +424,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/curriculum/check-coverage',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, sources, curriculum, provider, model } = req.body || {};
@@ -429,6 +448,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/outcomes/generate',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, curriculum, provider, model } = req.body || {};
@@ -445,6 +466,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/assessments/design',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, curriculum, outcomes, provider, model } = req.body || {};
@@ -463,6 +486,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/content/generate-module',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, modulePlan, allModules, outcomes, assessments, sources, provider, model } = req.body || {};
@@ -490,6 +515,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/content/generate-module-scaffold',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, modulePlan, allModules, outcomes, assessments, sources, provider, model } = req.body || {};
@@ -517,6 +544,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/content/generate-lesson',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, modulePlan, lessonPlan, lessonIndex, outcomes, sources, provider, model } = req.body || {};
@@ -544,6 +573,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/content/regenerate',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { project, targetType, moduleId, targetId, instruction, provider, model } = req.body || {};
@@ -570,6 +601,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/qa/evaluate',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { project, weights, provider, model } = req.body || {};
@@ -588,6 +621,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/copilot/chat',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { project, messages, userMessage, selectedTextContext, activeModuleId, provider, model } = req.body || {};
@@ -614,6 +649,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/copilot/draft-course',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { prompt, template, currentBrief, currentModules, messages, provider, model } = req.body || {};
@@ -640,6 +677,8 @@ export function createApiRouter(options?: {
 
   router.post(
     '/v2/templates/copilot-draft',
+    requireTenantAuth,
+    requireEditorRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { prompt, currentTemplate, messages, provider, model } = req.body || {};

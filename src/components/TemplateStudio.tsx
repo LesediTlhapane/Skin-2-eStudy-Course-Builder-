@@ -321,9 +321,9 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
 
   return (
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h1 className="text-2xl font-bold text-[#052B66]">Course Template Studio</h1>
+          <h1 className="text-2xl font-bold text-primary">Course Template Studio</h1>
           <p className="text-sm text-slate-500">
             Create, upload, edit, reorder, preview, and duplicate reusable instructional-design templates separate from active courses.
           </p>
@@ -349,7 +349,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
               type="button"
               disabled={isImportingFilled}
               onClick={() => filledDocRef.current?.click()}
-              className="px-3.5 py-2 text-xs font-bold bg-[#45CC42] hover:bg-[#3ab837] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              className="px-3.5 py-2 text-xs font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shadow-xs transition-colors"
             >
               {isImportingFilled ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -363,25 +363,25 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
             type="button"
             disabled={isUploading}
             onClick={() => fileRef.current?.click()}
-            className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer"
+            className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
           >
-            {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5" />}
+            {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5 text-accent-ink" />}
             <span>Import Structure</span>
           </button>
           <button
             type="button"
             onClick={() => setIsCopilotOpen(!isCopilotOpen)}
-            className="px-3.5 py-2 text-xs font-bold bg-[#052B66] hover:bg-[#042150] text-white rounded-lg flex items-center gap-1.5 cursor-pointer"
+            className="px-3.5 py-2 text-xs font-bold bg-primary hover:bg-primary-dark text-primary-contrast rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
           >
-            <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
+            <Sparkles className="w-3.5 h-3.5 text-accent" />
             <span>Template Copilot</span>
           </button>
           <button
             type="button"
             onClick={handleCreateBlank}
-            className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer"
+            className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
           >
-            <Plus className="w-3.5 h-3.5 text-[#052B66]" />
+            <Plus className="w-3.5 h-3.5 text-accent-ink" />
             <span>New Template</span>
           </button>
         </div>
@@ -393,7 +393,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
         </div>
       )}
       {saveNotice && (
-        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800">
+        <div className="p-3 bg-accent-tint border border-accent-border rounded-lg text-xs text-primary">
           {saveNotice}
         </div>
       )}
@@ -413,13 +413,13 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                 }}
                 className={`p-4 rounded-xl border cursor-pointer transition-colors ${
                   isActive
-                    ? 'bg-white border-[#052B66] ring-1 ring-[#052B66]/20'
-                    : 'bg-white border-slate-200 hover:border-slate-300'
+                    ? 'bg-accent-tint/55 border-accent border-t-[3px] border-t-accent ring-1 ring-accent/25'
+                    : 'bg-white border-slate-200 hover:border-accent-border'
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="text-sm font-bold text-[#052B66] truncate">{tpl.name}</div>
+                    <div className="text-sm font-bold text-primary truncate">{tpl.name}</div>
                     <div className="text-xs text-slate-500 mt-0.5">
                       {tpl.category} · {tpl.version} · {tpl.sections.length} sections
                     </div>
@@ -433,7 +433,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                       e.stopPropagation();
                       onUseTemplate(tpl.id);
                     }}
-                    className="px-2.5 py-1 text-[11px] font-bold bg-[#45CC42] text-[#052B66] rounded hover:bg-[#3ab837] cursor-pointer"
+                    className="px-2.5 py-1 text-[11px] font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded cursor-pointer transition-colors"
                   >
                     Use Template
                   </button>
@@ -444,13 +444,13 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                       e.stopPropagation();
                       void handleDownloadDocx(tpl);
                     }}
-                    className="px-2.5 py-1 text-[11px] font-semibold bg-[#F5F7FA] border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                    className="px-2.5 py-1 text-[11px] font-semibold bg-surface border border-slate-200 hover:border-accent-border text-primary rounded flex items-center gap-1 cursor-pointer disabled:opacity-60"
                     title="Download fillable Word (.docx) template"
                   >
                     {downloadingId === tpl.id ? (
                       <Loader2 className="w-3 h-3 animate-spin" />
                     ) : (
-                      <Download className="w-3 h-3" />
+                      <Download className="w-3 h-3 text-accent-ink" />
                     )}
                     <span>Word (.docx)</span>
                   </button>
@@ -464,7 +464,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                         setDraft(copy);
                       }
                     }}
-                    className="px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-[#052B66] flex items-center gap-1 cursor-pointer"
+                    className="px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-primary flex items-center gap-1 cursor-pointer"
                   >
                     <Copy className="w-3 h-3" />
                     <span>Duplicate</span>
@@ -489,12 +489,12 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
         </aside>
 
         {/* Template Viewer / Editor */}
-        <section className="lg:col-span-8 bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+        <section className="lg:col-span-8 bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-6 space-y-6">
           {activeTemplate && (
             <>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200">
                 <div>
-                  <h2 className="text-lg font-bold text-[#052B66]">
+                  <h2 className="text-lg font-bold text-primary">
                     {draft ? `Editing: ${draft.name}` : activeTemplate.name}
                   </h2>
                   <p className="text-xs text-slate-500">
@@ -509,12 +509,12 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                     type="button"
                     disabled={downloadingId === activeTemplate.id}
                     onClick={() => void handleDownloadDocx(activeTemplate)}
-                    className="px-3 py-1.5 text-xs font-bold border border-[#052B66]/30 bg-[#F5F7FA] hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    className="px-3 py-1.5 text-xs font-bold border border-accent-border bg-surface hover:border-accent text-primary rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                   >
                     {downloadingId === activeTemplate.id ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <Download className="w-3.5 h-3.5" />
+                      <Download className="w-3.5 h-3.5 text-accent-ink" />
                     )}
                     <span>Download Word (.docx)</span>
                   </button>
@@ -530,7 +530,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                     <button
                       type="button"
                       onClick={() => beginEdit(activeTemplate)}
-                      className="px-3.5 py-1.5 text-xs font-bold bg-[#052B66] text-white rounded-lg cursor-pointer"
+                      className="px-3.5 py-1.5 text-xs font-bold bg-primary hover:bg-primary-dark text-primary-contrast rounded-lg cursor-pointer"
                     >
                       {activeTemplate.isSystemReference ? 'Edit Copy' : 'Edit Template'}
                     </button>
@@ -546,7 +546,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                       <button
                         type="button"
                         onClick={handleSave}
-                        className="px-4 py-1.5 text-xs font-bold bg-[#45CC42] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer"
+                        className="px-4 py-1.5 text-xs font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded-lg flex items-center gap-1.5 cursor-pointer"
                       >
                         <Save className="w-3.5 h-3.5" />
                         <span>Save Template</span>
@@ -623,48 +623,48 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                 <div className="space-y-5">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold text-[#052B66] mb-1">
+                      <label className="block text-xs font-bold text-primary mb-1">
                         Template Name
                       </label>
                       <input
                         type="text"
                         value={draft.name}
                         onChange={e => setDraft({ ...draft, name: e.target.value })}
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-[#052B66] mb-1">
+                      <label className="block text-xs font-bold text-primary mb-1">
                         Category
                       </label>
                       <input
                         type="text"
                         value={draft.category}
                         onChange={e => setDraft({ ...draft, category: e.target.value })}
-                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-[#052B66] mb-1">
+                    <label className="block text-xs font-bold text-primary mb-1">
                       Description
                     </label>
                     <textarea
                       rows={2}
                       value={draft.description}
                       onChange={e => setDraft({ ...draft, description: e.target.value })}
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
                     />
                   </div>
 
                   <div className="flex items-center justify-between pt-2">
-                    <h3 className="text-sm font-bold text-[#052B66]">
+                    <h3 className="text-sm font-bold text-primary">
                       Template Sections ({draft.sections.length})
                     </h3>
                     <button
                       type="button"
                       onClick={addSection}
-                      className="px-3 py-1.5 text-xs font-bold bg-[#F5F7FA] border border-slate-200 rounded-lg hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
+                      className="px-3 py-1.5 text-xs font-bold bg-accent-tint/60 text-accent-ink border border-accent-border rounded-lg hover:bg-accent-tint flex items-center gap-1 cursor-pointer transition-colors"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add Section</span>
@@ -673,13 +673,13 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
 
                   <div className="space-y-4">
                     {draft.sections.map((sec, sIdx) => (
-                      <div key={sec.id} className="border border-slate-200 rounded-lg p-4 space-y-3 bg-[#F5F7FA]/60">
+                      <div key={sec.id} className="border border-slate-200 border-l-[3px] border-l-accent rounded-lg p-4 space-y-3 bg-surface/70">
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
                             value={sec.title}
                             onChange={e => updateSection(sIdx, { title: e.target.value })}
-                            className="flex-1 px-3 py-1.5 text-sm font-bold text-[#052B66] bg-white border border-slate-200 rounded"
+                            className="flex-1 px-3 py-1.5 text-sm font-bold text-primary bg-white border border-slate-200 rounded focus:outline-none focus:border-accent"
                           />
                           <label className="flex items-center gap-1.5 text-xs text-slate-700">
                             <input
@@ -692,7 +692,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                           <button
                             type="button"
                             onClick={() => moveSection(sIdx, -1)}
-                            className="p-1.5 text-slate-500 hover:text-[#052B66] cursor-pointer"
+                            className="p-1.5 text-slate-500 hover:text-primary cursor-pointer"
                             title="Move Up"
                           >
                             <ArrowUp className="w-3.5 h-3.5" />
@@ -700,7 +700,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                           <button
                             type="button"
                             onClick={() => moveSection(sIdx, 1)}
-                            className="p-1.5 text-slate-500 hover:text-[#052B66] cursor-pointer"
+                            className="p-1.5 text-slate-500 hover:text-primary cursor-pointer"
                             title="Move Down"
                           >
                             <ArrowDown className="w-3.5 h-3.5" />
@@ -715,7 +715,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                           </button>
                         </div>
 
-                        <div className="space-y-2 pl-2 border-l border-slate-300">
+                        <div className="space-y-2 pl-2 border-l border-accent-border">
                           {sec.fields.map((fld, fIdx) => (
                             <div key={fld.id} className="bg-white border border-slate-200 rounded p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
                               <input
@@ -723,14 +723,14 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                                 value={fld.label}
                                 onChange={e => updateField(sIdx, fIdx, { label: e.target.value })}
                                 placeholder="Field label"
-                                className="sm:col-span-4 px-2 py-1 text-xs border border-slate-200 rounded"
+                                className="sm:col-span-4 px-2 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:border-accent"
                               />
                               <input
                                 type="text"
                                 value={fld.placeholder}
                                 onChange={e => updateField(sIdx, fIdx, { placeholder: e.target.value })}
                                 placeholder="{{Placeholder}}"
-                                className="sm:col-span-5 px-2 py-1 text-xs font-mono border border-slate-200 rounded"
+                                className="sm:col-span-5 px-2 py-1 text-xs font-mono border border-slate-200 rounded focus:outline-none focus:border-accent"
                               />
                               <label className="sm:col-span-2 flex items-center gap-1 text-xs text-slate-600">
                                 <input
@@ -752,7 +752,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                           <button
                             type="button"
                             onClick={() => addField(sIdx)}
-                            className="text-xs font-semibold text-[#052B66] hover:underline cursor-pointer"
+                            className="text-xs font-semibold text-accent-ink hover:underline cursor-pointer"
                           >
                             + Add Field / Placeholder
                           </button>
@@ -765,7 +765,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                 <div className="space-y-4">
                   <p className="text-sm text-slate-600">{activeTemplate.description}</p>
                   <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-[#052B66] uppercase tracking-wider">
+                    <h3 className="text-xs font-bold text-primary uppercase tracking-wider">
                       Quality Rules
                     </h3>
                     <ul className="list-disc pl-5 text-xs text-slate-600 space-y-1">
@@ -775,13 +775,13 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                     </ul>
                   </div>
                   <div className="space-y-2.5">
-                    <h3 className="text-xs font-bold text-[#052B66] uppercase tracking-wider">
+                    <h3 className="text-xs font-bold text-primary uppercase tracking-wider">
                       Template Sections ({activeTemplate.sections.length})
                     </h3>
                     {activeTemplate.sections.map(sec => (
-                      <div key={sec.id} className="border border-slate-200 rounded-lg p-3.5">
+                      <div key={sec.id} className="border border-slate-200 border-l-[3px] border-l-accent rounded-lg p-3.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-bold text-[#052B66]">{sec.title}</span>
+                          <span className="text-sm font-bold text-primary">{sec.title}</span>
                           <span className="text-xs text-slate-500">
                             {sec.required ? 'Required' : 'Optional'} · {sec.fields.length} field(s)
                           </span>

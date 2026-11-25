@@ -6,7 +6,9 @@ import {
   CheckCircle2,
   Loader2,
   Palette,
+  RotateCcw,
   Save,
+  Sparkles,
   UserPlus,
   Users,
   X,
@@ -19,6 +21,11 @@ import type {
 } from '../types';
 import { useTenant } from '../context/TenantContext';
 import { apiFetch, parseApiJson } from '../utils/apiClient';
+import {
+  BRAND_THEME_PRESETS,
+  computeBrandThemeTokens,
+  type BrandSurfaceMode,
+} from '../utils/brandTheme';
 
 interface CompanySettingsModalProps {
   isOpen: boolean;
@@ -31,7 +38,15 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const { activeCompany, activeRole, updateLocalActiveCompany } = useTenant();
+  const {
+    activeCompany,
+    activeRole,
+    surfaceMode,
+    setSurfaceMode,
+    previewTheme,
+    resetThemePreview,
+    updateLocalActiveCompany,
+  } = useTenant();
   const isAdmin = activeRole === 'company_admin';
 
   const [tab, setTab] = useState<TabKey>('branding');
@@ -41,6 +56,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
   const [secondaryColour, setSecondaryColour] = useState(
     activeCompany?.secondaryColour || '#45CC42'
   );
+  const [draftSurfaceMode, setDraftSurfaceMode] = useState<BrandSurfaceMode>(surfaceMode);
 
   const [members, setMembers] = useState<CompanyMembership[]>([]);
   const [usage, setUsage] = useState<AiUsageSummary | null>(null);
@@ -60,9 +76,18 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
     setLogoUrl(activeCompany.logoUrl || '');
     setPrimaryColour(activeCompany.primaryColour || '#052B66');
     setSecondaryColour(activeCompany.secondaryColour || '#45CC42');
+    setDraftSurfaceMode(surfaceMode);
     setNotice(null);
     setErrorMsg(null);
-  }, [isOpen, activeCompany]);
+  }, [isOpen, activeCompany, surfaceMode]);
+
+  // Live preview adjustments across the workspace while editing in the modal
+  useEffect(() => {
+    if (!isOpen || !activeCompany || tab !== 'branding') return;
+    if (/^#[0-9A-Fa-f]{6}$/.test(primaryColour) && /^#[0-9A-Fa-f]{6}$/.test(secondaryColour)) {
+      previewTheme(primaryColour, secondaryColour, draftSurfaceMode);
+    }
+  }, [isOpen, activeCompany, tab, primaryColour, secondaryColour, draftSurfaceMode, previewTheme]);
 
   useEffect(() => {
     if (!isOpen || !activeCompany) return;
@@ -107,13 +132,25 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
         throw new Error(data.error || 'Failed to save company branding.');
       }
       updateLocalActiveCompany(data.company);
-      setNotice('Company branding and settings updated.');
+      setSurfaceMode(draftSurfaceMode);
+      setNotice('Company branding and theme settings saved across your workspace.');
     } catch (err: any) {
       setErrorMsg(err?.message || 'Unable to update company settings.');
     } finally {
       setBusy(false);
     }
   };
+
+  const handleCloseModal = () => {
+    resetThemePreview();
+    onClose();
+  };
+
+  const previewTokens = computeBrandThemeTokens(
+    primaryColour,
+    secondaryColour,
+    draftSurfaceMode
+  );
 
   const handleInviteMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -177,23 +214,23 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl border border-slate-200 max-w-3xl w-full max-h-[90vh] flex flex-col shadow-xl">
+      <div className="bg-white rounded-xl border border-slate-200 border-t-[3px] border-t-accent max-w-3xl w-full max-h-[90vh] flex flex-col shadow-xl overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <Building2 className="w-5 h-5 text-[#052B66]" />
+            <Building2 className="w-5 h-5 text-accent-ink" />
             <div>
-              <h2 className="text-base font-bold text-[#052B66]">
+              <h2 className="text-base font-bold text-primary">
                 {activeCompany.companyName} · Organisation Settings
               </h2>
               <p className="text-xs text-slate-500">
                 Slug: <span className="font-mono">{activeCompany.companySlug}</span> · Your role:{' '}
-                <span className="font-semibold text-[#052B66]">{activeRole}</span>
+                <span className="font-semibold text-primary">{activeRole}</span>
               </p>
             </div>
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleCloseModal}
             className="p-1.5 text-slate-400 hover:text-slate-700 cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -202,7 +239,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
 
         <div className="flex border-b border-slate-200 px-6 gap-2 bg-slate-50">
           {[
-            { id: 'branding' as const, label: 'Branding & Profile', icon: Palette },
+            { id: 'branding' as const, label: 'Branding & Theme', icon: Palette },
             { id: 'team' as const, label: 'Team & Roles', icon: Users },
             { id: 'usage' as const, label: 'AI Usage', icon: BarChart3 },
           ].map(item => {
@@ -216,13 +253,13 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                   setNotice(null);
                   setErrorMsg(null);
                 }}
-                className={`px-3 py-2.5 text-xs font-bold flex items-center gap-1.5 border-b-2 cursor-pointer ${
+                className={`px-3 py-2.5 text-xs font-bold flex items-center gap-1.5 border-b-2 cursor-pointer transition-colors ${
                   tab === item.id
-                    ? 'border-[#052B66] text-[#052B66]'
+                    ? 'border-accent text-primary bg-white'
                     : 'border-transparent text-slate-500 hover:text-slate-800'
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <Icon className={`w-3.5 h-3.5 ${tab === item.id ? 'text-accent-ink' : ''}`} />
                 <span>{item.label}</span>
               </button>
             );
@@ -244,36 +281,105 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
           )}
 
           {tab === 'branding' && (
-            <form onSubmit={handleSaveBranding} className="space-y-4">
+            <form onSubmit={handleSaveBranding} className="space-y-5">
               {!isAdmin && (
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600">
-                  Only a <strong className="text-[#052B66]">company_admin</strong> can edit company
-                  branding settings.
+                  Only a <strong className="text-primary">company_admin</strong> can permanently
+                  save company branding colours, though you can adjust your workspace theme mode below.
                 </div>
               )}
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                <span>Company Display Name</span>
-                <input
-                  type="text"
-                  disabled={!isAdmin}
-                  value={companyName}
-                  onChange={e => setCompanyName(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50"
-                />
-              </label>
 
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                <span>Company Logo URL (https://...)</span>
-                <input
-                  type="url"
-                  disabled={!isAdmin}
-                  value={logoUrl}
-                  onChange={e => setLogoUrl(e.target.value)}
-                  placeholder="https://cdn.yourcompany.com/logo.png (leave blank for default monogram)"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50"
-                />
-              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                  <span>Company Display Name</span>
+                  <input
+                    type="text"
+                    disabled={!isAdmin}
+                    value={companyName}
+                    onChange={e => setCompanyName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50"
+                  />
+                </label>
 
+                <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                  <span>Company Logo URL (https://...)</span>
+                  <input
+                    type="url"
+                    disabled={!isAdmin}
+                    value={logoUrl}
+                    onChange={e => setLogoUrl(e.target.value)}
+                    placeholder="https://cdn.yourcompany.com/logo.png"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50"
+                  />
+                </label>
+              </div>
+
+              {/* Curated Brand Theme Presets */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-primary flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-accent-ink" />
+                    <span>Curated Theme Presets</span>
+                  </span>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrimaryColour('#052B66');
+                        setSecondaryColour('#45CC42');
+                        setDraftSurfaceMode('vibrant');
+                      }}
+                      className="text-[11px] font-semibold text-slate-500 hover:text-primary flex items-center gap-1 cursor-pointer"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Reset Default</span>
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {BRAND_THEME_PRESETS.map(preset => {
+                    const selected =
+                      primaryColour.toUpperCase() === preset.primaryColour &&
+                      secondaryColour.toUpperCase() === preset.secondaryColour;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() => {
+                          setPrimaryColour(preset.primaryColour);
+                          setSecondaryColour(preset.secondaryColour);
+                          setDraftSurfaceMode(preset.recommendedMode);
+                        }}
+                        className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer disabled:opacity-60 ${
+                          selected
+                            ? 'border-primary ring-2 ring-accent/40 bg-accent-tint/50'
+                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span
+                            className="w-4 h-4 rounded-sm border border-black/10 shrink-0"
+                            style={{ backgroundColor: preset.primaryColour }}
+                          />
+                          <span
+                            className="w-4 h-4 rounded-sm border border-black/10 shrink-0"
+                            style={{ backgroundColor: preset.secondaryColour }}
+                          />
+                          <span className="text-[11px] font-bold text-slate-900 truncate">
+                            {preset.name}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 line-clamp-1">
+                          {preset.description}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Custom Primary & Secondary Pickers */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <label className="block space-y-1 text-xs font-semibold text-slate-700">
                   <span>Primary Brand Colour</span>
@@ -316,15 +422,183 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                 </label>
               </div>
 
-              {isAdmin && (
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              {/* Workspace Surface & Secondary Impact Mode */}
+              <div className="space-y-2">
+                <span className="block text-xs font-bold text-primary">
+                  Workspace Surface & Secondary Impact Style
+                </span>
+                <div className="grid grid-cols-3 gap-2.5">
+                  {(
+                    [
+                      {
+                        id: 'classic',
+                        title: 'Crisp Classic',
+                        desc: 'Neutral slate canvas with clean accent triggers',
+                      },
+                      {
+                        id: 'tinted',
+                        title: 'Tinted Executive',
+                        desc: 'Subtle brand-washed canvas and gradient headers',
+                      },
+                      {
+                        id: 'vibrant',
+                        title: 'High-Impact Accent',
+                        desc: 'Strong secondary cards, bars, and workspace focus',
+                      },
+                    ] as const
+                  ).map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        setDraftSurfaceMode(opt.id);
+                        if (!isAdmin) setSurfaceMode(opt.id);
+                      }}
+                      className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                        draftSurfaceMode === opt.id
+                          ? 'border-accent bg-accent-tint text-primary'
+                          : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{opt.title}</div>
+                      <div className="text-[10px] text-slate-500 mt-0.5 leading-snug">
+                        {opt.desc}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Live Theme Preview Card */}
+              <div
+                className="rounded-xl border border-slate-200 overflow-hidden"
+                style={{ backgroundColor: previewTokens.surface }}
+              >
+                <div
+                  className="bg-white px-4 py-2 border-b border-slate-200 flex items-center justify-between"
+                  style={{ borderTop: `3px solid ${previewTokens.secondary}` }}
                 >
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5 text-[#45CC42]" />}
-                  <span>Save Branding & Settings</span>
-                </button>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-5 h-5 rounded text-[10px] font-extrabold flex items-center justify-center"
+                      style={{
+                        backgroundColor: previewTokens.primary,
+                        color: previewTokens.primaryContrast,
+                        border: `1.5px solid ${previewTokens.secondary}`,
+                      }}
+                    >
+                      {(companyName || activeCompany.companyName).slice(0, 2).toUpperCase()}
+                    </span>
+                    <span
+                      className="text-xs font-bold"
+                      style={{ color: previewTokens.primary }}
+                    >
+                      Live Theme Preview · {companyName || activeCompany.companyName}
+                    </span>
+                  </div>
+                  <span
+                    className="px-2.5 py-1 rounded text-[10px] font-bold"
+                    style={{
+                      backgroundColor: previewTokens.secondary,
+                      color: previewTokens.secondaryContrast,
+                    }}
+                  >
+                    + New Course
+                  </span>
+                </div>
+                <div className="p-3.5 space-y-2.5">
+                  <div
+                    className="rounded-lg p-3 flex flex-wrap items-center justify-between gap-2"
+                    style={{
+                      background: previewTokens.gradient,
+                      color: previewTokens.primaryContrast,
+                      borderBottom: `3px solid ${previewTokens.secondary}`,
+                    }}
+                  >
+                    <div className="text-[11px] font-bold">
+                      Hero & Navigation Gradient Preview
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="px-2 py-0.5 rounded text-[10px] font-bold"
+                        style={{
+                          backgroundColor: previewTokens.secondary,
+                          color: previewTokens.secondaryContrast,
+                        }}
+                      >
+                        Primary CTA
+                      </span>
+                      <span
+                        className="px-2 py-0.5 rounded text-[10px] font-semibold border"
+                        style={{ borderColor: previewTokens.secondary }}
+                      >
+                        Secondary Outline
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5 text-[11px]">
+                    <div
+                      className="rounded-lg p-2.5 border"
+                      style={{
+                        backgroundColor: previewTokens.secondaryTint,
+                        borderColor: previewTokens.secondaryBorder,
+                        borderTop: `2.5px solid ${previewTokens.secondary}`,
+                      }}
+                    >
+                      <div className="text-[10px] text-slate-600">Highlighted Metric</div>
+                      <div
+                        className="text-sm font-bold tabular-nums"
+                        style={{ color: previewTokens.secondaryInk }}
+                      >
+                        86% Aligned
+                      </div>
+                    </div>
+                    <div className="rounded-lg p-2.5 bg-white border border-slate-200 space-y-1.5">
+                      <div className="flex justify-between text-[10px] text-slate-600">
+                        <span>Stage Progress</span>
+                        <span
+                          className="font-bold tabular-nums"
+                          style={{ color: previewTokens.secondaryInk }}
+                        >
+                          75%
+                        </span>
+                      </div>
+                      <div
+                        className="w-full h-1.5 rounded-full overflow-hidden"
+                        style={{ backgroundColor: previewTokens.primarySoft }}
+                      >
+                        <div
+                          className="h-full w-3/4"
+                          style={{ backgroundColor: previewTokens.secondary }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {isAdmin && (
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    type="button"
+                    onClick={handleCloseModal}
+                    className="px-3.5 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {busy ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Save className="w-3.5 h-3.5 text-accent" />
+                    )}
+                    <span>Save Branding & Theme</span>
+                  </button>
+                </div>
               )}
             </form>
           )}
@@ -334,10 +608,10 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
               {isAdmin && (
                 <form
                   onSubmit={handleInviteMember}
-                  className="p-4 bg-[#F5F7FA] border border-slate-200 rounded-lg space-y-3"
+                  className="p-4 bg-surface border border-slate-200 rounded-lg space-y-3"
                 >
-                  <div className="text-xs font-bold text-[#052B66] flex items-center gap-1.5">
-                    <UserPlus className="w-4 h-4 text-[#45CC42]" />
+                  <div className="text-xs font-bold text-primary flex items-center gap-1.5">
+                    <UserPlus className="w-4 h-4 text-accent-ink" />
                     <span>Add or Invite Team Member</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -377,7 +651,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                   <button
                     type="submit"
                     disabled={busy}
-                    className="px-3.5 py-1.5 rounded bg-[#052B66] text-white text-xs font-bold cursor-pointer"
+                    className="px-3.5 py-1.5 rounded bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold cursor-pointer"
                   >
                     Add Member
                   </button>
@@ -385,7 +659,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
               )}
 
               <div className="space-y-2">
-                <h3 className="text-xs font-bold text-[#052B66]">
+                <h3 className="text-xs font-bold text-primary">
                   Active & Invited Members ({members.length})
                 </h3>
                 {members.map(m => (
@@ -394,7 +668,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                     className="p-3 border border-slate-200 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs"
                   >
                     <div>
-                      <div className="font-bold text-[#052B66]">
+                      <div className="font-bold text-primary">
                         {m.profile?.fullName || m.profile?.email || m.userId}
                       </div>
                       <div className="text-slate-500">{m.profile?.email}</div>
@@ -447,33 +721,33 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
               {usage ? (
                 <>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg">
+                    <div className="p-3 bg-surface border border-slate-200 border-t-2 border-t-accent rounded-lg">
                       <div className="text-[11px] text-slate-500">AI Requests</div>
-                      <div className="text-lg font-bold text-[#052B66] tabular-nums">
+                      <div className="text-lg font-bold text-primary tabular-nums">
                         {usage.totalCalls}
                       </div>
                     </div>
-                    <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg">
+                    <div className="p-3 bg-surface border border-slate-200 border-t-2 border-t-accent rounded-lg">
                       <div className="text-[11px] text-slate-500">Input Tokens</div>
-                      <div className="text-lg font-bold text-[#052B66] tabular-nums">
+                      <div className="text-lg font-bold text-primary tabular-nums">
                         {usage.totalInputTokens.toLocaleString()}
                       </div>
                     </div>
-                    <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg">
+                    <div className="p-3 bg-surface border border-slate-200 border-t-2 border-t-accent rounded-lg">
                       <div className="text-[11px] text-slate-500">Output Tokens</div>
-                      <div className="text-lg font-bold text-[#052B66] tabular-nums">
+                      <div className="text-lg font-bold text-primary tabular-nums">
                         {usage.totalOutputTokens.toLocaleString()}
                       </div>
                     </div>
-                    <div className="p-3 bg-[#F5F7FA] border border-slate-200 rounded-lg">
+                    <div className="p-3 bg-surface border border-slate-200 border-t-2 border-t-accent rounded-lg">
                       <div className="text-[11px] text-slate-500">Est. Cost (USD)</div>
-                      <div className="text-lg font-bold text-[#052B66] tabular-nums">
+                      <div className="text-lg font-bold text-primary tabular-nums">
                         ${usage.totalEstimatedCost.toFixed(4)}
                       </div>
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <h4 className="text-xs font-bold text-[#052B66]">Recent AI Operations</h4>
+                    <h4 className="text-xs font-bold text-primary">Recent AI Operations</h4>
                     {usage.recentRecords.length === 0 ? (
                       <p className="text-xs text-slate-500">
                         No recorded Groq AI calls for this workspace yet.
@@ -486,7 +760,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                             className="px-3 py-2 flex items-center justify-between gap-2"
                           >
                             <div>
-                              <span className="font-semibold text-[#052B66]">{rec.operation}</span>
+                              <span className="font-semibold text-primary">{rec.operation}</span>
                               <span className="text-slate-400 ml-2">{rec.model}</span>
                             </div>
                             <div className="tabular-nums text-slate-600">

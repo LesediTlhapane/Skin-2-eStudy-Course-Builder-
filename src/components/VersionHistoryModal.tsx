@@ -26,8 +26,8 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
       <div className="bg-white rounded-xl border border-slate-200 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-xl">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <History className="w-4 h-4 text-[#052B66]" />
-            <h2 className="text-base font-bold text-[#052B66]">
+            <History className="w-4 h-4 text-accent-ink" />
+            <h2 className="text-base font-bold text-primary">
               Version History & Stage Records
             </h2>
           </div>
@@ -43,7 +43,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
               value={note}
               onChange={e => setNote(e.target.value)}
               placeholder="Snapshot note (e.g. 'Before SME curriculum review')..."
-              className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg"
+              className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
             />
             <button
               type="button"
@@ -51,9 +51,9 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                 onSaveSnapshot(note.trim() || 'Manual developer snapshot');
                 setNote('');
               }}
-              className="px-3.5 py-2 rounded-lg bg-[#052B66] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-2 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
             >
-              <Save className="w-3.5 h-3.5 text-[#45CC42]" />
+              <Save className="w-3.5 h-3.5 text-accent" />
               <span>Save Snapshot</span>
             </button>
           </div>
@@ -70,7 +70,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                   className="p-3.5 border border-slate-200 rounded-lg flex items-center justify-between gap-3"
                 >
                   <div className="space-y-0.5 min-w-0">
-                    <div className="text-xs font-bold text-[#052B66]">
+                    <div className="text-xs font-bold text-primary">
                       v{ver.versionNumber} · {ver.summary}
                     </div>
                     <div className="text-[11px] text-slate-500 tabular-nums">
@@ -84,9 +84,9 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                       onRestoreVersion(ver.id);
                       onClose();
                     }}
-                    className="px-3 py-1.5 text-xs font-bold border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1 shrink-0 cursor-pointer"
+                    className="px-3 py-1.5 text-xs font-bold border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1 shrink-0 cursor-pointer"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
+                    <RotateCcw className="w-3.5 h-3.5 text-accent-ink" />
                     <span>Restore</span>
                   </button>
                 </div>

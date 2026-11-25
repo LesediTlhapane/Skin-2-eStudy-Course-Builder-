@@ -347,7 +347,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h2 className="text-xl font-bold text-[#052B66]">Stage 1: Course Brief & Metadata</h2>
+          <h2 className="text-xl font-bold text-primary">Stage 1: Course Brief & Metadata</h2>
           <p className="text-xs text-slate-500 mt-0.5">
             Template: {project.templateName} · Protected metadata cannot be altered silently by AI.
           </p>
@@ -366,13 +366,13 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
               type="button"
               disabled={isDocxDownloading}
               onClick={() => void handleDownloadWordForm()}
-              className="px-3 py-2 text-xs font-semibold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              className="px-3 py-2 text-xs font-semibold bg-white border border-slate-200 hover:border-accent text-primary rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
               title="Download this Stage 1 form as a fillable Word (.docx) document"
             >
               {isDocxDownloading ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Download className="w-3.5 h-3.5" />
+                <Download className="w-3.5 h-3.5 text-accent-ink" />
               )}
               <span>Download Word (.docx)</span>
             </button>
@@ -381,20 +381,20 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
             type="button"
             disabled={isDocxUploading}
             onClick={() => wordUploadRef.current?.click()}
-            className="px-3 py-2 text-xs font-semibold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+            className="px-3 py-2 text-xs font-semibold bg-white border border-slate-200 hover:border-accent text-primary rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
             title="Upload a filled Word (.docx) template to populate Stage 1"
           >
             {isDocxUploading ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <FileUp className="w-3.5 h-3.5" />
+              <FileUp className="w-3.5 h-3.5 text-accent-ink" />
             )}
             <span>Upload Filled Word</span>
           </button>
           <button
             type="button"
             onClick={onOpenSources}
-            className="px-3.5 py-2 text-xs font-semibold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded-lg flex items-center gap-1.5 cursor-pointer"
+            className="px-3.5 py-2 text-xs font-semibold bg-white border border-slate-200 hover:border-accent text-primary rounded-lg flex items-center gap-1.5 cursor-pointer"
           >
             <FileUp className="w-3.5 h-3.5" />
             <span>Sources ({project.sources.length})</span>
@@ -404,22 +404,22 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
             onClick={() => updateBrief({ metadataLocked: !brief.metadataLocked })}
             className={`px-3.5 py-2 text-xs font-semibold border rounded-lg flex items-center gap-1.5 cursor-pointer ${
               brief.metadataLocked
-                ? 'bg-[#052B66]/5 border-[#052B66] text-[#052B66]'
-                : 'bg-white border-slate-200 text-slate-700'
+                ? 'bg-accent-tint border-accent-border text-primary'
+                : 'bg-white border-slate-200 text-slate-700 hover:border-primary'
             }`}
           >
-            {brief.metadataLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+            {brief.metadataLocked ? <Lock className="w-3.5 h-3.5 text-accent-ink" /> : <Unlock className="w-3.5 h-3.5" />}
             <span>{brief.metadataLocked ? 'Metadata Locked' : 'Lock Metadata'}</span>
           </button>
         </div>
       </div>
 
       {/* Inline Copilot Auto-Fill Placeholders Bar */}
-      <section className="bg-white border border-[#052B66]/20 rounded-xl p-4 space-y-2.5">
+      <section className="bg-accent-tint/50 border border-accent-border border-t-[3px] border-t-accent rounded-xl p-4 space-y-2.5">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#45CC42]" />
-            <h3 className="text-xs font-bold text-[#052B66]">
+            <Sparkles className="w-4 h-4 text-accent-ink" />
+            <h3 className="text-xs font-bold text-primary">
               Copilot Auto-Fill Helper — Fill Placeholders from Your Prompt
             </h3>
           </div>
@@ -435,17 +435,17 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
             value={copilotBriefPrompt}
             onChange={e => setCopilotBriefPrompt(e.target.value)}
             placeholder="Describe your course goal (e.g. 'Create a 6-module GEN AI course for non-technical business teams, 8 hours')..."
-            className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg bg-[#F5F7FA] focus:bg-white focus:outline-none focus:border-[#052B66]"
+            className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-accent"
           />
           <button
             type="submit"
             disabled={isCopilotDrafting || !copilotBriefPrompt.trim()}
-            className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+            className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-50 text-accent-contrast text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
           >
             {isCopilotDrafting ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
+              <Sparkles className="w-3.5 h-3.5" />
             )}
             <span>{isCopilotDrafting ? 'Filling Placeholders...' : 'Fill Placeholders with Copilot'}</span>
           </button>
@@ -461,7 +461,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
       {project.creationMode === 'improve' && project.improveDiagnosis && (
         <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
           <div>
-            <h3 className="text-sm font-bold text-[#052B66]">
+            <h3 className="text-sm font-bold text-primary">
               Existing Course Diagnostic Report (Preservation Mode)
             </h3>
             <p className="text-xs text-slate-600 mt-1">
@@ -478,10 +478,10 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
             {project.improveDiagnosis.recommendations.map(rec => (
               <div
                 key={rec.id}
-                className="p-3 rounded-lg bg-[#F5F7FA] border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                className="p-3 rounded-lg bg-surface border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
               >
                 <div className="space-y-1">
-                  <div className="text-xs font-bold text-[#052B66]">
+                  <div className="text-xs font-bold text-primary">
                     [{rec.severity.toUpperCase()}] {rec.area}: {rec.weakness}
                   </div>
                   <div className="text-xs text-slate-600">{rec.recommendation}</div>
@@ -507,7 +507,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
                     }
                     className={`px-2.5 py-1 text-xs font-bold rounded cursor-pointer ${
                       rec.decision === 'accepted'
-                        ? 'bg-[#45CC42] text-[#052B66]'
+                        ? 'bg-accent text-accent-contrast'
                         : 'bg-white border border-slate-300 text-slate-700'
                     }`}
                   >
@@ -546,7 +546,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
       {/* Protected Metadata Grid */}
       <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-[#052B66]">
+          <h3 className="text-sm font-bold text-primary">
             1. Protected Course Identity & Metadata
           </h3>
           <span className="text-xs text-slate-500">
@@ -566,7 +566,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
                     aria-label={`${label} verification status`}
                     value={status}
                     onChange={e => setFieldStatus(key, e.target.value as FieldStatus)}
-                    className="text-[11px] text-slate-600 bg-[#F5F7FA] border border-slate-200 rounded px-1.5 py-0.5"
+                    className="text-[11px] text-slate-600 bg-surface border border-slate-200 rounded px-1.5 py-0.5"
                   >
                     <option value="confirmed">Confirmed</option>
                     <option value="to_be_confirmed">To Be Confirmed</option>
@@ -579,7 +579,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
                   value={val}
                   onChange={e => updateBrief({ [key]: e.target.value })}
                   placeholder={`Enter ${label.toLowerCase()}...`}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg disabled:bg-slate-100 disabled:text-slate-600 focus:outline-none focus:border-[#052B66]"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg disabled:bg-slate-100 disabled:text-slate-600 focus:outline-none focus:border-accent"
                 />
               </div>
             );
@@ -590,7 +590,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
             <select
               value={brief.experienceLevel}
               onChange={e => updateBrief({ experienceLevel: e.target.value })}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-[#052B66]"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-accent"
             >
               <option value="Entry / Foundational">Entry / Foundational</option>
               <option value="Intermediate">Intermediate</option>
@@ -606,7 +606,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
               value={brief.targetJobRoles}
               onChange={e => updateBrief({ targetJobRoles: e.target.value })}
               placeholder="e.g., Process Engineer, Branch Consultant, Sales Rep"
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
             />
           </div>
         </div>
@@ -614,7 +614,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
 
       {/* Purpose, Problem & Authoritative Topics */}
       <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-        <h3 className="text-sm font-bold text-[#052B66]">
+        <h3 className="text-sm font-bold text-primary">
           2. Purpose, Workplace Need & Subject Scope
         </h3>
 
@@ -626,7 +626,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
               value={brief.purpose}
               onChange={e => updateBrief({ purpose: e.target.value })}
               placeholder="What workplace capability will learners gain?"
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
             />
           </div>
           <div className="space-y-1">
@@ -638,7 +638,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
               value={brief.workplaceProblem}
               onChange={e => updateBrief({ workplaceProblem: e.target.value })}
               placeholder="Describe the performance gap, risk, or operational need..."
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
             />
           </div>
         </div>
@@ -653,7 +653,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
               value={brief.prerequisites}
               onChange={e => updateBrief({ prerequisites: e.target.value })}
               placeholder="Required prior skills, qualifications, or numeracy/literacy baseline..."
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
             />
           </div>
           <div className="space-y-1">
@@ -663,7 +663,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
               value={brief.learningRequirements}
               onChange={e => updateBrief({ learningRequirements: e.target.value })}
               placeholder="Pedagogical constraints, practical demonstrations, or technical rigour rules..."
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
             />
           </div>
         </div>
@@ -677,7 +677,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
             value={brief.subjectTopicsInput}
             onChange={e => updateBrief({ subjectTopicsInput: e.target.value })}
             placeholder="List every topic, concept, or skill that MUST appear in the curriculum..."
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
           />
         </div>
       </section>
@@ -685,7 +685,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
       {/* AI Integration & South African Compliance Opt-In */}
       <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
         <div className="space-y-2">
-          <h3 className="text-sm font-bold text-[#052B66]">
+          <h3 className="text-sm font-bold text-primary">
             3. AI Integration & South African Regulatory Alignment (Opt-In)
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -721,7 +721,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
         </div>
 
         <div className="pt-4 border-t border-slate-100 space-y-3">
-          <label className="flex items-center gap-2 text-xs font-bold text-[#052B66] cursor-pointer">
+          <label className="flex items-center gap-2 text-xs font-bold text-primary cursor-pointer">
             <input
               type="checkbox"
               checked={brief.saCompliance.enabled}
@@ -735,7 +735,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
           </label>
 
           {brief.saCompliance.enabled && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-[#F5F7FA] rounded-lg border border-slate-200">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-surface rounded-lg border border-slate-200">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">NQF Level</label>
                 <input
@@ -852,7 +852,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
       {/* Template-Specific Fields */}
       {template && template.sections.length > 0 && (
         <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-          <h3 className="text-sm font-bold text-[#052B66]">
+          <h3 className="text-sm font-bold text-primary">
             4. Template-Specific Fields ({template.name})
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -873,7 +873,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
                     })
                   }
                   placeholder={field.placeholder}
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
                 />
               </div>
             ))}
@@ -885,7 +885,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
       {brief.analysis && (
         <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-[#052B66]">AI Brief Review Summary</h3>
+            <h3 className="text-sm font-bold text-primary">AI Brief Review Summary</h3>
             <span className="text-xs text-slate-500">
               Analysed {new Date(brief.analysis.analysedAt).toLocaleTimeString()}
             </span>
@@ -903,7 +903,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
           )}
           {brief.analysis.missingInformation.length > 0 && (
             <div className="text-xs text-slate-600 space-y-1">
-              <div className="font-bold text-[#052B66]">Items Requiring Confirmation:</div>
+              <div className="font-bold text-primary">Items Requiring Confirmation:</div>
               <ul className="list-disc pl-4">
                 {brief.analysis.missingInformation.map((m, i) => (
                   <li key={i}>
@@ -924,14 +924,14 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
       )}
 
       {/* Stage Footer Action Bar */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <button
           type="button"
           disabled={isAnalysing}
           onClick={handleAnalyseBrief}
-          className="px-4 py-2.5 rounded-lg border border-[#052B66] text-[#052B66] hover:bg-[#052B66]/5 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+          className="px-4 py-2.5 rounded-lg border border-primary/30 bg-accent-tint/50 hover:bg-accent-tint text-primary text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
         >
-          {isAnalysing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-[#45CC42]" />}
+          {isAnalysing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-accent-ink" />}
           <span>Analyse Brief for Gaps & Contradictions</span>
         </button>
 
@@ -939,9 +939,9 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
           type="button"
           disabled={!canApprove}
           onClick={handleApproveStage1}
-          className="px-5 py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+          className="px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
         >
-          <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
+          <CheckCircle2 className="w-4 h-4 text-accent" />
           <span>Approve Brief & Continue to Stage 2</span>
         </button>
       </div>

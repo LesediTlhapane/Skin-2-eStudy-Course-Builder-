@@ -1,11 +1,38 @@
 @import "tailwindcss";
 
-@theme {
-  --color-primary: #052B66;
-  --color-primary-dark: #042150;
-  --color-accent: #45CC42;
-  --color-accent-dark: #3ab837;
-  --color-surface: #F5F7FA;
+:root {
+  --brand-primary: #052B66;
+  --brand-primary-dark: #042150;
+  --brand-primary-contrast: #FFFFFF;
+  --brand-primary-soft: rgba(5, 43, 102, 0.09);
+  --brand-primary-tint: #EBEEF5;
+  --brand-primary-border: rgba(5, 43, 102, 0.26);
+  --brand-secondary: #45CC42;
+  --brand-secondary-dark: #38AC36;
+  --brand-secondary-contrast: #0F172A;
+  --brand-secondary-ink: #1F7A1D;
+  --brand-secondary-soft: rgba(69, 204, 66, 0.18);
+  --brand-secondary-tint: #E5F8E5;
+  --brand-secondary-border: rgba(69, 204, 66, 0.55);
+  --brand-gradient: linear-gradient(135deg, #052B66 0%, #0D3D6B 58%, #134E6F 100%);
+  --brand-surface: #F4F7FB;
+}
+
+@theme inline {
+  --color-primary: var(--brand-primary);
+  --color-primary-dark: var(--brand-primary-dark);
+  --color-primary-contrast: var(--brand-primary-contrast);
+  --color-primary-soft: var(--brand-primary-soft);
+  --color-primary-tint: var(--brand-primary-tint);
+  --color-primary-border: var(--brand-primary-border);
+  --color-accent: var(--brand-secondary);
+  --color-accent-dark: var(--brand-secondary-dark);
+  --color-accent-contrast: var(--brand-secondary-contrast);
+  --color-accent-ink: var(--brand-secondary-ink);
+  --color-accent-soft: var(--brand-secondary-soft);
+  --color-accent-tint: var(--brand-secondary-tint);
+  --color-accent-border: var(--brand-secondary-border);
+  --color-surface: var(--brand-surface);
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -13,12 +40,18 @@
 @layer base {
   html, body {
     font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-    background-color: #F5F7FA;
+    background-color: var(--brand-surface);
     color: #0f172a;
   }
 
   .tabular-nums {
     font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .bg-brand-gradient {
+    background: var(--brand-gradient);
   }
 }
 

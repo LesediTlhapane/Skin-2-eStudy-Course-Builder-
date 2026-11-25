@@ -461,27 +461,27 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
 
   return (
     <aside className="fixed right-0 top-16 bottom-0 z-40 w-full sm:w-[440px] bg-white border-l border-slate-200 shadow-2xl flex flex-col">
-      <div className="px-4 py-3 bg-[#052B66] text-white flex items-center justify-between">
+      <div className="px-4 py-3 bg-brand-gradient text-primary-contrast border-b-2 border-accent flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-[#45CC42]" />
+          <Sparkles className="w-4 h-4 text-accent" />
           <div>
             <div className="text-xs font-bold">Course Copilot</div>
-            <div className="text-[11px] text-slate-300 flex items-center gap-2">
+            <div className="text-[11px] opacity-80 flex items-center gap-2">
               <span>Stage {project.currentStage} Assistant</span>
-              <span className="inline-flex items-center gap-1 text-slate-200">
-                <FileText className="w-3 h-3 text-[#45CC42]" />
+              <span className="inline-flex items-center gap-1 opacity-95">
+                <FileText className="w-3 h-3 text-accent" />
                 <span>{readableSourcesCount} source doc(s) indexed</span>
               </span>
             </div>
           </div>
         </div>
-        <button type="button" onClick={onClose} className="p-1 text-slate-300 hover:text-white cursor-pointer">
+        <button type="button" onClick={onClose} className="p-1 opacity-80 hover:opacity-100 cursor-pointer">
           <X className="w-4 h-4" />
         </button>
       </div>
 
       {/* Execution Mode Toggle + Quick Prompts */}
-      <div className="px-3 py-2 border-b border-slate-200 bg-[#F5F7FA] space-y-2">
+      <div className="px-3 py-2 border-b border-slate-200 bg-surface space-y-2">
         <label className="flex items-center justify-between text-[11px] text-slate-700 cursor-pointer">
           <span className="font-semibold">
             Auto-apply minor scoped text edits (major changes still confirm)
@@ -503,7 +503,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
               key={q}
               type="button"
               onClick={() => void sendMessage(q)}
-              className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-slate-200 rounded-md hover:border-[#052B66] text-[#052B66] whitespace-nowrap shrink-0 cursor-pointer"
+              className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-slate-200 rounded-md hover:border-accent-border hover:bg-accent-tint/50 text-primary whitespace-nowrap shrink-0 cursor-pointer"
             >
               {q}
             </button>
@@ -551,8 +551,8 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
               <div
                 className={`inline-block max-w-[92%] rounded-xl px-3.5 py-2.5 text-xs leading-relaxed select-text ${
                   msg.role === 'user'
-                    ? 'bg-[#052B66] text-white text-left'
-                    : 'bg-[#F5F7FA] border border-slate-200 text-slate-800'
+                    ? 'bg-primary text-primary-contrast text-left'
+                    : 'bg-surface border border-slate-200 text-slate-800'
                 }`}
               >
                 <div className="whitespace-pre-wrap select-text">{msg.content}</div>
@@ -562,7 +562,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                       type="button"
                       disabled={isSending}
                       onClick={() => void sendMessage(lastFailedRequest.text, lastFailedRequest.ctx)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#052B66] text-white text-[11px] font-semibold hover:bg-[#042150] disabled:opacity-50 cursor-pointer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-primary text-primary-contrast text-[11px] font-semibold hover:bg-primary-dark disabled:opacity-50 cursor-pointer"
                     >
                       <RefreshCw className="w-3 h-3" />
                       <span>Retry Request</span>
@@ -580,7 +580,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                             reason: msg.content.slice(0, 220),
                           })
                         }
-                        className="text-[11px] font-bold text-[#052B66] hover:underline flex items-center gap-1 cursor-pointer"
+                        className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
                       >
                         <span>Go to {textHint.label}</span>
                         <ArrowRight className="w-3 h-3" />
@@ -591,7 +591,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                     <button
                       type="button"
                       onClick={() => copyText(msg.id, msg.content)}
-                      className="text-[11px] text-slate-500 hover:text-[#052B66] flex items-center gap-1 cursor-pointer"
+                      className="text-[11px] text-slate-500 hover:text-primary flex items-center gap-1 cursor-pointer"
                     >
                       {copiedId === msg.id ? (
                         <Check className="w-3 h-3 text-emerald-600" />
@@ -611,7 +611,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                       <button
                         type="button"
                         onClick={() => handleBatchAcceptPending(msg)}
-                        className="px-2.5 py-1 rounded bg-[#45CC42] hover:bg-[#3ab837] text-[#052B66] text-[11px] font-bold cursor-pointer"
+                        className="px-2.5 py-1 rounded bg-accent hover:bg-accent-dark text-accent-contrast text-[11px] font-bold cursor-pointer"
                       >
                         Accept & Apply All Pending ({pendingProps.length})
                       </button>
@@ -646,9 +646,9 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                           )}
                         </div>
 
-                        <div className="font-bold text-[#052B66]">{prop.title}</div>
+                        <div className="font-bold text-primary">{prop.title}</div>
                         <p className="text-[11px] text-slate-600">{prop.rationale}</p>
-                        <div className="p-2 rounded bg-[#F5F7FA] border border-slate-200 text-[11px] text-slate-800 select-text whitespace-pre-wrap max-h-40 overflow-y-auto">
+                        <div className="p-2 rounded bg-surface border border-slate-200 text-[11px] text-slate-800 select-text whitespace-pre-wrap max-h-40 overflow-y-auto">
                           {prop.afterPreview}
                         </div>
 
@@ -676,7 +676,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                                 type="button"
                                 disabled={isRegenBusy}
                                 onClick={() => handleProposalDecision(msg.id, prop, 'accepted')}
-                                className="px-2.5 py-1.5 bg-[#45CC42] hover:bg-[#3ab837] text-[#052B66] font-bold rounded cursor-pointer disabled:opacity-50"
+                                className="px-2.5 py-1.5 bg-accent hover:bg-accent-dark text-accent-contrast font-bold rounded cursor-pointer disabled:opacity-50"
                               >
                                 Accept & Apply
                               </button>
@@ -721,12 +721,12 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                               type="button"
                               disabled={isRegenBusy}
                               onClick={() => handleRegenerateTargetSection(msg.id, prop)}
-                              className="px-2.5 py-1.5 bg-[#052B66] hover:bg-[#042150] text-white font-semibold rounded flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                              className="px-2.5 py-1.5 bg-primary hover:bg-primary-dark text-primary-contrast font-semibold rounded flex items-center gap-1 cursor-pointer disabled:opacity-60"
                             >
                               {isRegenBusy ? (
                                 <Loader2 className="w-3 h-3 animate-spin" />
                               ) : (
-                                <RefreshCw className="w-3 h-3 text-[#45CC42]" />
+                                <RefreshCw className="w-3 h-3 text-accent" />
                               )}
                               <span>Regenerate with AI</span>
                             </button>
@@ -740,10 +740,10 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
                                 reason: `${prop.title}: ${prop.rationale}`,
                               })
                             }
-                            className="px-2.5 py-1.5 bg-white border border-slate-300 hover:border-[#052B66] text-[#052B66] font-semibold rounded flex items-center gap-1 cursor-pointer"
+                            className="px-2.5 py-1.5 bg-white border border-slate-300 hover:border-accent-border text-primary font-semibold rounded flex items-center gap-1 cursor-pointer"
                           >
                             <span>Go to {loc.stageLabel}</span>
-                            <ArrowRight className="w-3 h-3" />
+                            <ArrowRight className="w-3 h-3 text-accent-ink" />
                           </button>
                         </div>
                       </div>
@@ -756,7 +756,7 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
         })}
         {isSending && (
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-[#052B66]" />
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-ink" />
             <span>Thinking...</span>
           </div>
         )}
@@ -775,14 +775,14 @@ export const CourseCopilotDrawer: React.FC<CourseCopilotDrawerProps> = ({
           value={input}
           onChange={e => setInput(e.target.value)}
           placeholder="Ask Copilot to fix QA, outcomes, sources, or selection..."
-          className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+          className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
         />
         <button
           type="submit"
           disabled={isSending || !input.trim()}
-          className="p-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white cursor-pointer"
+          className="p-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-50 text-accent-contrast cursor-pointer"
         >
-          <Send className="w-4 h-4 text-[#45CC42]" />
+          <Send className="w-4 h-4" />
         </button>
       </form>
     </aside>

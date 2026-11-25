@@ -499,7 +499,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h2 className="text-xl font-bold text-[#052B66]">
+          <h2 className="text-xl font-bold text-primary">
             Stage 6: Quality Assurance, Accessibility & Multi-Role Sign-Off
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -511,12 +511,12 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           type="button"
           disabled={isRunning || totalWeight !== 100}
           onClick={handleRunQA}
-          className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+          className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
         >
           {isRunning ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
           ) : (
-            <Sparkles className="w-3.5 h-3.5 text-[#45CC42]" />
+            <Sparkles className="w-3.5 h-3.5" />
           )}
           <span>
             {isRunning
@@ -529,8 +529,8 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
       </div>
 
       {isRunning && (
-        <div className="p-3 bg-[#052B66] text-white rounded-lg text-xs font-semibold flex items-center gap-2">
-          <Loader2 className="w-4 h-4 animate-spin text-[#45CC42]" />
+        <div className="p-3 bg-primary text-primary-contrast border-b-2 border-accent rounded-lg text-xs font-semibold flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-accent" />
           <span>Running 7-dimension AI Quality Assurance & alignment verification...</span>
         </div>
       )}
@@ -551,7 +551,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             type="button"
             disabled={isRunning || totalWeight !== 100}
             onClick={handleRunQA}
-            className="px-3.5 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white font-bold shrink-0 cursor-pointer"
+            className="px-3.5 py-2 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent font-bold shrink-0 cursor-pointer"
           >
             Re-run QA Now
           </button>
@@ -568,7 +568,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-[#052B66]">A. Blocking Errors</span>
+            <span className="text-xs font-bold text-primary">A. Blocking Errors</span>
             <span
               className={`text-xs font-mono font-bold ${
                 activeBlockingErrors.length > 0 ? 'text-red-700' : 'text-emerald-700'
@@ -584,7 +584,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
         <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-[#052B66]">B. Advisory Warnings</span>
+            <span className="text-xs font-bold text-primary">B. Advisory Warnings</span>
             <span className="text-xs font-mono font-bold text-amber-700">
               {activeWarnings.length}
             </span>
@@ -596,7 +596,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-[#052B66]">C. Informational Notes</span>
+            <span className="text-xs font-bold text-primary">C. Informational Notes</span>
             <span className="text-xs font-mono font-bold text-slate-700">
               {activeInfo.length}
             </span>
@@ -618,15 +618,15 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
               <button
                 type="button"
                 onClick={handleAutoRepairAlignment}
-                className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center gap-1.5 cursor-pointer"
               >
-                <Wrench className="w-3.5 h-3.5 text-[#45CC42]" />
+                <Wrench className="w-3.5 h-3.5 text-accent" />
                 <span>Auto-Link Unmapped Lessons & Outcomes</span>
               </button>
               <button
                 type="button"
                 onClick={() => onJumpToStage(4)}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-[#052B66] text-[#052B66] text-xs font-bold cursor-pointer"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold cursor-pointer"
               >
                 Edit Stage 4 Alignment
               </button>
@@ -661,7 +661,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     reason: `${err.rule}: ${err.description}`,
                   })
                 }
-                className="px-3 py-1.5 rounded-lg bg-white border border-red-300 hover:border-[#052B66] text-[#052B66] text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-white border border-red-300 hover:border-accent text-primary text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer"
               >
                 <span>Fix in Stage {err.stage}{err.moduleNumber ? ` · M${err.moduleNumber}` : ''}</span>
                 <ArrowRight className="w-3 h-3" />
@@ -704,7 +704,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                         reason: `${w.rule}: ${w.description}`,
                       })
                     }
-                    className="px-2.5 py-1 rounded bg-white border border-amber-300 hover:border-[#052B66] text-[#052B66] text-[11px] font-bold shrink-0 cursor-pointer"
+                    className="px-2.5 py-1 rounded bg-white border border-amber-300 hover:border-accent text-primary text-[11px] font-bold shrink-0 cursor-pointer"
                   >
                     Review in Stage {w.stage} →
                   </button>
@@ -720,17 +720,17 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
         <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Eye className="w-4 h-4 text-[#052B66]" />
-              <h3 className="text-sm font-bold text-[#052B66]">
+              <Eye className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-bold text-primary">
                 Deterministic Accessibility & Readability Audit
               </h3>
             </div>
-            <span className="text-xs font-mono font-bold text-[#052B66]">
+            <span className="text-xs font-mono font-bold text-primary">
               {liveAccessibility.scorePercent}% · {liveAccessibility.averageSentenceWords} words/sentence
             </span>
           </div>
           {liveAccessibility.limitationsNote && (
-            <p className="text-[11px] text-slate-500 bg-[#F5F7FA] p-2.5 rounded border border-slate-200 leading-relaxed">
+            <p className="text-[11px] text-slate-500 bg-surface p-2.5 rounded border border-slate-200 leading-relaxed">
               {liveAccessibility.limitationsNote}
             </p>
           )}
@@ -738,7 +738,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             {liveAccessibility.checks.map(chk => (
               <div
                 key={chk.id}
-                className="p-2.5 rounded-lg bg-[#F5F7FA] border border-slate-200 text-xs space-y-1"
+                className="p-2.5 rounded-lg bg-surface border border-slate-200 text-xs space-y-1"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-bold text-slate-800">{chk.label}</span>
@@ -772,7 +772,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                         reason: `${chk.label}: ${chk.details}`,
                       });
                     }}
-                    className="mt-1 px-2.5 py-1 text-[11px] font-bold text-[#052B66] bg-white border border-slate-200 hover:border-[#052B66] rounded cursor-pointer"
+                    className="mt-1 px-2.5 py-1 text-[11px] font-bold text-primary bg-white border border-slate-200 hover:border-accent rounded cursor-pointer"
                   >
                     Fix in Stage {chk.id === 'acc-instructions' ? 4 : 5} →
                   </button>
@@ -785,12 +785,12 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
         <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <FlaskConical className="w-4 h-4 text-[#052B66]" />
-              <h3 className="text-sm font-bold text-[#052B66]">
+              <FlaskConical className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-bold text-primary">
                 Technical & Source Verification Summary
               </h3>
             </div>
-            <span className="text-xs font-mono font-bold text-[#052B66]">
+            <span className="text-xs font-mono font-bold text-primary">
               Alignment {liveAlignment.scorePercent}%
             </span>
           </div>
@@ -818,7 +818,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             {liveTechnical.checks.map(chk => (
               <div
                 key={chk.id}
-                className="p-2.5 rounded-lg bg-[#F5F7FA] border border-slate-200 text-xs space-y-1"
+                className="p-2.5 rounded-lg bg-surface border border-slate-200 text-xs space-y-1"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-bold text-slate-800">{chk.label}</span>
@@ -847,7 +847,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                         reason: `${chk.label}: ${chk.details}`,
                       });
                     }}
-                    className="mt-1 px-2.5 py-1 text-[11px] font-bold text-[#052B66] bg-white border border-slate-200 hover:border-[#052B66] rounded cursor-pointer"
+                    className="mt-1 px-2.5 py-1 text-[11px] font-bold text-primary bg-white border border-slate-200 hover:border-accent rounded cursor-pointer"
                   >
                     {chk.id === 'tech-metadata-tbc'
                       ? 'Confirm Metadata in Stage 1 →'
@@ -861,7 +861,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           {activeInfo.length > 0 && (
             <div className="pt-2 border-t border-slate-100 space-y-1.5">
               <div className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
-                <Info className="w-3.5 h-3.5 text-[#052B66]" />
+                <Info className="w-3.5 h-3.5 text-primary" />
                 <span>Informational Feedback</span>
               </div>
               {activeInfo.map(info => (
@@ -877,7 +877,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
       {/* Configurable Weights */}
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-[#052B66]">Configurable Dimension Weights</h3>
+          <h3 className="text-sm font-bold text-primary">Configurable Dimension Weights</h3>
           <span
             className={`text-xs font-mono font-bold ${
               totalWeight === 100 ? 'text-emerald-700' : 'text-red-700'
@@ -890,7 +890,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           {weights.map(w => (
             <div
               key={w.id}
-              className="p-2.5 bg-[#F5F7FA] border border-slate-200 rounded-lg flex items-center justify-between gap-2"
+              className="p-2.5 bg-surface border border-slate-200 rounded-lg flex items-center justify-between gap-2"
             >
               <span className="text-xs text-slate-700 font-medium">{w.label}</span>
               <input
@@ -936,10 +936,10 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             }`}
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-base font-bold text-[#052B66]">
+              <div className="text-base font-bold text-primary">
                 QA Outcome: {qa.verdict} {isQaStale ? '(Outdated — Re-run Required)' : ''}
               </div>
-              <div className="text-xl font-bold font-mono tabular-nums text-[#052B66]">
+              <div className="text-xl font-bold font-mono tabular-nums text-primary">
                 {qa.weightedScore}%
               </div>
             </div>
@@ -948,15 +948,15 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
           {/* Dimension Breakdown */}
           <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <h3 className="text-sm font-bold text-[#052B66]">Dimension Audit Breakdown</h3>
+            <h3 className="text-sm font-bold text-primary">Dimension Audit Breakdown</h3>
             <div className="space-y-3">
               {qa.dimensions.map(dim => (
                 <div key={dim.id} className="border border-slate-200 rounded-lg p-4 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-[#052B66]">
+                    <span className="text-sm font-bold text-primary">
                       {dim.label} (Weight {dim.weight}%)
                     </span>
-                    <span className="text-sm font-mono font-bold tabular-nums text-[#052B66]">
+                    <span className="text-sm font-mono font-bold tabular-nums text-primary">
                       {dim.score}%
                     </span>
                   </div>
@@ -971,7 +971,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     </div>
                   )}
                   {dim.recommendedCorrections.length > 0 && (
-                    <div className="text-xs text-[#052B66] flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs text-primary flex flex-wrap items-center justify-between gap-2">
                       <span>
                         <strong>Recommended Correction:</strong>{' '}
                         {dim.recommendedCorrections.join(' · ')}
@@ -988,7 +988,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                             }`,
                           });
                         }}
-                        className="px-2.5 py-1 text-[11px] font-bold bg-[#F5F7FA] border border-slate-200 rounded hover:border-[#052B66] cursor-pointer"
+                        className="px-2.5 py-1 text-[11px] font-bold bg-surface border border-slate-200 rounded hover:border-accent cursor-pointer"
                       >
                         Edit in Stage {resolveDimensionStage(dim.id)} →
                       </button>
@@ -1000,12 +1000,12 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           </section>
 
           {/* Multi-Role Mandatory Human Review Gates */}
-          <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+          <section className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-5 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-[#052B66]" />
+                <ShieldCheck className="w-5 h-5 text-accent-ink" />
                 <div>
-                  <h3 className="text-sm font-bold text-[#052B66]">
+                  <h3 className="text-sm font-bold text-primary">
                     Multi-Role Governance & Release Sign-Off
                   </h3>
                   <p className="text-xs text-slate-500">
@@ -1020,12 +1020,12 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     value={quickSignerName}
                     onChange={e => setQuickSignerName(e.target.value)}
                     placeholder="Your full name (optional)..."
-                    className="px-2.5 py-1.5 text-xs bg-[#F5F7FA] border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66]"
+                    className="px-2.5 py-1.5 text-xs bg-surface border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
                   />
                   <button
                     type="button"
                     onClick={handleQuickSignAllRoles}
-                    className="px-3 py-1.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent text-xs font-bold cursor-pointer"
                   >
                     Sign Off All 3 Roles
                   </button>
@@ -1049,12 +1049,12 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                     className={`p-3.5 rounded-lg border space-y-2.5 ${
                       record.signedOff
                         ? 'bg-emerald-50/50 border-emerald-200'
-                        : 'bg-[#F5F7FA] border-slate-200'
+                        : 'bg-surface border-slate-200'
                     }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <div className="text-xs font-bold text-[#052B66]">
+                        <div className="text-xs font-bold text-primary">
                           {roleDef.title}
                         </div>
                         <div className="text-[11px] text-slate-500">{roleDef.scope}</div>
@@ -1072,8 +1072,8 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                         }
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50 ${
                           record.signedOff
-                            ? 'bg-[#45CC42] text-[#052B66]'
-                            : 'bg-white border border-[#052B66] text-[#052B66]'
+                            ? 'bg-accent text-accent-contrast'
+                            : 'bg-white border border-primary/40 text-primary hover:border-accent'
                         }`}
                       >
                         {record.signedOff ? 'Approved ✓ (Click to unlock)' : 'Sign Off Role'}
@@ -1207,13 +1207,13 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                   <button
                     type="button"
                     onClick={handleReleaseCourse}
-                    className={`px-5 py-2.5 rounded-lg text-white text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+                    className={`px-5 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
                       isReleaseBlocked
-                        ? 'bg-slate-400 hover:bg-slate-500'
-                        : 'bg-[#052B66] hover:bg-[#042150]'
+                        ? 'bg-slate-400 hover:bg-slate-500 text-white'
+                        : 'bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent'
                     }`}
                   >
-                    <CheckCircle2 className="w-4 h-4 text-[#45CC42]" />
+                    <CheckCircle2 className="w-4 h-4 text-accent" />
                     <span>Release Course & Continue to Stage 7 Publish</span>
                   </button>
                 </div>

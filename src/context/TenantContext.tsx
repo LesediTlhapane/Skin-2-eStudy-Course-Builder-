@@ -3,6 +3,12 @@ import type { Session } from '@supabase/supabase-js';
 import type { CompanyMembership, CompanyRole, CompanyWorkspace, UserProfile } from '../types';
 import { getSupabaseClient, isSupabaseClientConfigured } from '../lib/supabaseClient';
 import { parseApiJson, setApiAuthContext } from '../utils/apiClient';
+import {
+  applyBrandThemeToDocument,
+  getStoredSurfaceMode,
+  saveStoredSurfaceMode,
+  type BrandSurfaceMode,
+} from '../utils/brandTheme';
 
 const ACTIVE_COMPANY_STORAGE_KEY = 'estudy_active_company_id';
 
@@ -18,6 +24,10 @@ interface TenantContextValue {
   activeRole: CompanyRole | null;
   isPasswordRecoveryMode: boolean;
   authError: string | null;
+  surfaceMode: BrandSurfaceMode;
+  setSurfaceMode: (mode: BrandSurfaceMode) => void;
+  previewTheme: (primaryColour: string, secondaryColour: string, mode?: BrandSurfaceMode) => void;
+  resetThemePreview: () => void;
   setActiveCompanyId: (companyId: string) => Promise<void>;
   refreshTenantContext: (overrideToken?: string, preferredCompanyId?: string) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
@@ -41,6 +51,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [activeRole, setActiveRole] = useState<CompanyRole | null>(null);
   const [isPasswordRecoveryMode, setIsPasswordRecoveryMode] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [surfaceMode, setSurfaceModeState] = useState<BrandSurfaceMode>(() =>
+    getStoredSurfaceMode(null)
+  );
 
   const tokenRef = useRef<string | null>(null);
   const companyIdRef = useRef<string | null>(null);
@@ -55,13 +68,40 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   }, []);
 
-  // Apply dynamic white-label CSS variables when activeCompany changes
+  // Load saved surface mode whenever activeCompany switches
+  useEffect(() => {
+    if (activeCompany?.id) {
+      setSurfaceModeState(getStoredSurfaceMode(activeCompany.id));
+    }
+  }, [activeCompany?.id]);
+
+  // Apply dynamic white-label CSS variables when activeCompany or surfaceMode changes
   useEffect(() => {
     const primary = activeCompany?.primaryColour || '#052B66';
     const secondary = activeCompany?.secondaryColour || '#45CC42';
-    document.documentElement.style.setProperty('--brand-primary', primary);
-    document.documentElement.style.setProperty('--brand-secondary', secondary);
-  }, [activeCompany]);
+    applyBrandThemeToDocument(primary, secondary, surfaceMode);
+  }, [activeCompany, surfaceMode]);
+
+  const setSurfaceMode = useCallback(
+    (mode: BrandSurfaceMode) => {
+      setSurfaceModeState(mode);
+      saveStoredSurfaceMode(activeCompany?.id, mode);
+    },
+    [activeCompany?.id]
+  );
+
+  const previewTheme = useCallback(
+    (primaryColour: string, secondaryColour: string, mode?: BrandSurfaceMode) => {
+      applyBrandThemeToDocument(primaryColour, secondaryColour, mode ?? surfaceMode);
+    },
+    [surfaceMode]
+  );
+
+  const resetThemePreview = useCallback(() => {
+    const primary = activeCompany?.primaryColour || '#052B66';
+    const secondary = activeCompany?.secondaryColour || '#45CC42';
+    applyBrandThemeToDocument(primary, secondary, surfaceMode);
+  }, [activeCompany, surfaceMode]);
 
   // Query backend health once for server Supabase status
   useEffect(() => {
@@ -298,6 +338,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         activeRole,
         isPasswordRecoveryMode,
         authError,
+        surfaceMode,
+        setSurfaceMode,
+        previewTheme,
+        resetThemePreview,
         setActiveCompanyId,
         refreshTenantContext,
         signInWithPassword,

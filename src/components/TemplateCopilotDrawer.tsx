@@ -166,12 +166,12 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
   return (
     <div className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-white border-l border-slate-200 shadow-2xl z-50 flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3.5 bg-[#052B66] text-white flex items-center justify-between">
+      <div className="px-4 py-3.5 bg-brand-gradient text-primary-contrast border-b-2 border-accent flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-[#45CC42]" />
+          <Sparkles className="w-4 h-4 text-accent" />
           <div>
             <h2 className="text-sm font-bold">Template Copilot</h2>
-            <p className="text-[11px] text-white/75">
+            <p className="text-[11px] opacity-80">
               Prompt AI to design or refine custom course templates
             </p>
           </div>
@@ -181,7 +181,7 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
             type="button"
             onClick={resetConversation}
             title="Start a new template prompt"
-            className="px-2 py-1 text-[11px] font-semibold text-white/85 hover:text-white hover:bg-white/10 rounded flex items-center gap-1 cursor-pointer"
+            className="px-2 py-1 text-[11px] font-semibold opacity-85 hover:opacity-100 hover:bg-white/10 rounded flex items-center gap-1 cursor-pointer"
           >
             <RotateCcw className="w-3 h-3" />
             <span>New</span>
@@ -198,7 +198,7 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
       </div>
 
       {/* Mode Strip */}
-      <div className="px-4 py-2 bg-[#F5F7FA] border-b border-slate-200 space-y-1.5">
+      <div className="px-4 py-2 bg-surface border-b border-slate-200 space-y-1.5">
         <div className="flex items-center gap-2 text-[11px]">
           <button
             type="button"
@@ -208,8 +208,8 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
             }}
             className={`px-2.5 py-1 rounded font-semibold cursor-pointer transition-colors ${
               mode === 'new'
-                ? 'bg-[#052B66] text-white'
-                : 'bg-white border border-slate-200 text-slate-600 hover:border-[#052B66]'
+                ? 'bg-accent text-accent-contrast font-bold'
+                : 'bg-white border border-slate-200 text-slate-600 hover:border-accent-border'
             }`}
           >
             Create New Template
@@ -220,8 +220,8 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
               onClick={() => setMode('refine')}
               className={`px-2.5 py-1 rounded font-semibold cursor-pointer transition-colors truncate max-w-[240px] ${
                 mode === 'refine'
-                  ? 'bg-[#052B66] text-white'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:border-[#052B66]'
+                  ? 'bg-accent text-accent-contrast font-bold'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:border-accent-border'
               }`}
               title={`Refine "${activeTemplate.name}"`}
             >
@@ -239,7 +239,7 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#F5F7FA]">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-surface">
         {messages.map(msg => {
           const tpl = msg.draftedTemplate;
           const totalFields = tpl
@@ -255,7 +255,7 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
               <div
                 className={`max-w-[94%] rounded-xl px-3.5 py-2.5 text-xs leading-relaxed ${
                   msg.role === 'user'
-                    ? 'bg-[#052B66] text-white'
+                    ? 'bg-primary text-primary-contrast'
                     : msg.errorPrompt
                       ? 'bg-red-50 border border-red-200 text-red-800'
                       : 'bg-white border border-slate-200 text-slate-800 shadow-xs'
@@ -298,7 +298,7 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
                           key={sec.id}
                           className="text-[11px] bg-white border border-slate-200 rounded px-2.5 py-1.5 flex items-center justify-between gap-2"
                         >
-                          <span className="font-semibold text-[#052B66] truncate">
+                          <span className="font-semibold text-primary truncate">
                             {sec.title}
                           </span>
                           <span className="text-[10px] text-slate-500 shrink-0">
@@ -318,9 +318,9 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
                             [msg.id]: 'Loaded into Template Studio editor for review & editing.',
                           }));
                         }}
-                        className="px-2.5 py-1.5 text-[11px] font-bold bg-[#052B66] hover:bg-[#042150] text-white rounded flex items-center gap-1 cursor-pointer"
+                        className="px-2.5 py-1.5 text-[11px] font-bold bg-primary hover:bg-primary-dark text-primary-contrast rounded flex items-center gap-1 cursor-pointer"
                       >
-                        <FileCheck2 className="w-3 h-3 text-[#45CC42]" />
+                        <FileCheck2 className="w-3 h-3 text-accent" />
                         <span>Load in Editor</span>
                       </button>
 
@@ -333,7 +333,7 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
                             [msg.id]: `Saved "${tpl.name}" to your Template Library.`,
                           }));
                         }}
-                        className="px-2.5 py-1.5 text-[11px] font-bold bg-[#45CC42] hover:bg-[#3ab837] text-[#052B66] rounded flex items-center gap-1 cursor-pointer"
+                        className="px-2.5 py-1.5 text-[11px] font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded flex items-center gap-1 cursor-pointer"
                       >
                         <Save className="w-3 h-3" />
                         <span>Save to Library</span>
@@ -354,12 +354,12 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
                             setDownloadingMsgId(null);
                           }
                         }}
-                        className="px-2.5 py-1.5 text-[11px] font-semibold bg-white border border-slate-200 hover:border-[#052B66] text-[#052B66] rounded flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                        className="px-2.5 py-1.5 text-[11px] font-semibold bg-white border border-slate-200 hover:border-accent-border text-primary rounded flex items-center gap-1 cursor-pointer disabled:opacity-60"
                       >
                         {downloadingMsgId === msg.id ? (
                           <Loader2 className="w-3 h-3 animate-spin" />
                         ) : (
-                          <Download className="w-3 h-3" />
+                          <Download className="w-3 h-3 text-accent-ink" />
                         )}
                         <span>Word (.docx)</span>
                       </button>
@@ -383,7 +383,7 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
                         type="button"
                         disabled={isSending}
                         onClick={() => void sendPrompt(followUp)}
-                        className="text-left px-2 py-1 text-[10px] font-semibold bg-[#F5F7FA] hover:bg-[#EBF3FC] border border-slate-200 hover:border-[#2B6CB0] text-[#052B66] rounded cursor-pointer disabled:opacity-50"
+                        className="text-left px-2 py-1 text-[10px] font-semibold bg-surface hover:bg-accent-tint border border-slate-200 hover:border-accent-border text-primary rounded cursor-pointer disabled:opacity-50"
                       >
                         + {followUp}
                       </button>
@@ -397,8 +397,8 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
 
         {/* Initial Starter Ideas */}
         {messages.length === 1 && (
-          <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2">
-            <div className="text-[11px] font-bold text-[#052B66]">
+          <div className="bg-white border border-slate-200 border-t-2 border-t-accent rounded-xl p-3 space-y-2">
+            <div className="text-[11px] font-bold text-primary">
               Quick Template Ideas (click to generate)
             </div>
             <div className="space-y-1.5">
@@ -408,7 +408,7 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
                   type="button"
                   disabled={isSending}
                   onClick={() => void sendPrompt(starter)}
-                  className="w-full text-left px-2.5 py-2 text-[11px] text-slate-700 bg-[#F5F7FA] hover:bg-[#EBF3FC] border border-slate-200 hover:border-[#2B6CB0] rounded-lg cursor-pointer transition-colors"
+                  className="w-full text-left px-2.5 py-2 text-[11px] text-slate-700 bg-surface hover:bg-accent-tint/60 border border-slate-200 hover:border-accent-border rounded-lg cursor-pointer transition-colors"
                 >
                   {starter}
                 </button>
@@ -418,8 +418,8 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
         )}
 
         {isSending && (
-          <div className="flex items-center gap-2 text-xs text-[#052B66] bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 w-fit">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-[#45CC42]" />
+          <div className="flex items-center gap-2 text-xs text-primary bg-white border border-accent-border rounded-xl px-3.5 py-2.5 w-fit">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-ink" />
             <span>Designing your custom template structure...</span>
           </div>
         )}
@@ -449,17 +449,17 @@ export const TemplateCopilotDrawer: React.FC<TemplateCopilotDrawerProps> = ({
                 ? `How should Copilot update "${activeTemplate.name}"?`
                 : 'Describe the template you want (industry, compliance rules, sections, fields)...'
             }
-            className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-[#052B66] resize-none"
+            className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent resize-none"
           />
           <button
             type="submit"
             disabled={isSending || !input.trim()}
-            className="px-3.5 py-2.5 bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white rounded-lg flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+            className="px-3.5 py-2.5 bg-accent hover:bg-accent-dark disabled:opacity-50 text-accent-contrast rounded-lg flex items-center gap-1.5 text-xs font-bold cursor-pointer"
           >
             {isSending ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Send className="w-3.5 h-3.5 text-[#45CC42]" />
+              <Send className="w-3.5 h-3.5" />
             )}
             <span>{latestDraft || mode === 'refine' ? 'Update' : 'Create'}</span>
           </button>

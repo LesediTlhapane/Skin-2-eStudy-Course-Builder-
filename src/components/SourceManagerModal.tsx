@@ -213,10 +213,10 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col shadow-xl">
+      <div className="bg-white rounded-xl border border-slate-200 border-t-[3px] border-t-accent max-w-4xl w-full max-h-[90vh] flex flex-col shadow-xl overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-[#052B66]">Source Register & Document Analysis</h2>
+            <h2 className="text-lg font-bold text-primary">Source Register & Document Analysis</h2>
             <p className="text-xs text-slate-500">
               All newly added sources default to NEEDS REVIEW until a human reviewer verifies authority and dates.
             </p>
@@ -228,7 +228,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
 
         <div className="p-6 overflow-y-auto space-y-6">
           {/* Upload Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-[#F5F7FA] border border-slate-200 rounded-lg">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-surface border border-slate-200 rounded-lg">
             <input
               ref={fileRef}
               type="file"
@@ -243,9 +243,9 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
               type="button"
               disabled={isAnalysing}
               onClick={() => fileRef.current?.click()}
-              className="px-4 py-2 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+              className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
             >
-              {isAnalysing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5 text-[#45CC42]" />}
+              {isAnalysing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5 text-accent" />}
               <span>{isAnalysing ? 'Analysing Document...' : 'Upload & Analyse Source'}</span>
             </button>
           </div>
@@ -320,7 +320,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
 
           {/* Source Register List */}
           <div className="space-y-3">
-            <h3 className="text-sm font-bold text-[#052B66]">
+            <h3 className="text-sm font-bold text-primary">
               Registered Sources ({project.sources.length})
             </h3>
             {project.sources.map(src => {
@@ -332,7 +332,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
                       type="text"
                       value={src.title}
                       onChange={e => updateSource(src.id, { title: e.target.value })}
-                      className="flex-1 min-w-[200px] px-2.5 py-1 text-sm font-bold text-[#052B66] border border-slate-200 rounded"
+                      className="flex-1 min-w-[200px] px-2.5 py-1 text-sm font-bold text-primary border border-slate-200 rounded"
                     />
                     <select
                       aria-label={`Verification status for ${src.title}`}
@@ -377,9 +377,9 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
                             setErrorMsg(err?.message || 'Failed to download private file.');
                           }
                         }}
-                        className="px-2 py-1 text-[11px] font-semibold text-[#052B66] bg-[#F5F7FA] hover:bg-slate-200 border border-slate-200 rounded flex items-center gap-1 cursor-pointer"
+                        className="px-2 py-1 text-[11px] font-semibold text-primary bg-surface hover:bg-accent-tint/60 border border-slate-200 rounded flex items-center gap-1 cursor-pointer"
                       >
-                        <Download className="w-3 h-3" />
+                        <Download className="w-3 h-3 text-accent-ink" />
                         <span>Download</span>
                       </button>
                     )}
@@ -434,7 +434,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
                   </div>
 
                   {/* Human Verifier Gate Row */}
-                  <div className="flex flex-wrap items-center gap-2 pt-1 bg-[#F5F7FA] px-2.5 py-2 rounded border border-slate-200 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 pt-1 bg-surface px-2.5 py-2 rounded border border-slate-200 text-xs">
                     <input
                       type="text"
                       value={verifierVal}
@@ -451,9 +451,9 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
                         type="button"
                         disabled={!verifierVal.trim()}
                         onClick={() => handleStatusChange(src, 'VERIFIED')}
-                        className="px-2.5 py-1 rounded bg-[#052B66] disabled:opacity-40 text-white font-bold flex items-center gap-1 cursor-pointer"
+                        className="px-2.5 py-1 rounded bg-primary hover:bg-primary-dark disabled:opacity-40 text-primary-contrast font-bold flex items-center gap-1 cursor-pointer"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-[#45CC42]" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-accent" />
                         <span>Verify Source</span>
                       </button>
                     ) : (
@@ -474,7 +474,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
 
           {/* Add Manual Reference */}
           <div className="border-t border-slate-200 pt-4 space-y-2">
-            <h4 className="text-xs font-bold text-[#052B66]">Add Reference Manually</h4>
+            <h4 className="text-xs font-bold text-primary">Add Reference Manually</h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input
                 type="text"
@@ -501,9 +501,9 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
             <button
               type="button"
               onClick={handleAddManualSource}
-              className="px-3 py-1.5 text-xs font-bold bg-[#F5F7FA] border border-slate-200 rounded hover:border-[#052B66] flex items-center gap-1 cursor-pointer"
+              className="px-3 py-1.5 text-xs font-bold bg-surface border border-slate-200 rounded hover:border-accent-border text-primary flex items-center gap-1 cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-3.5 h-3.5 text-accent-ink" />
               <span>Add to Source Register</span>
             </button>
           </div>
