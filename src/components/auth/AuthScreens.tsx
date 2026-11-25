@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Building2,
@@ -8,15 +8,171 @@ import {
   LogIn,
   LogOut,
   Mail,
+  Palette,
   ShieldCheck,
   UserPlus,
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext';
 import { parseApiJson } from '../../utils/apiClient';
-import { BRAND_THEME_PRESETS, getContrastText } from '../../utils/brandTheme';
+import {
+  BRAND_THEME_PRESETS,
+  computeBrandThemeTokens,
+  getContrastText,
+} from '../../utils/brandTheme';
+import {
+  uploadCompanyLogoToServer,
+  type ValidatedLogoFile,
+} from '../../utils/logoUpload';
 import { BrandLogo } from '../BrandLogo';
+import { CompanyLogoUploadSection } from '../CompanyLogoUploadSection';
+import {
+  EstudyMotionBackground,
+  readStoredMotionIntensity,
+  saveStoredMotionIntensity,
+} from './EstudyMotionBackground';
 
 type AuthTab = 'login' | 'register_company' | 'register_user' | 'forgot_password';
+
+interface LiveBrandingPreviewProps {
+  companyName: string;
+  primaryColour: string;
+  secondaryColour: string;
+  logoPreviewUrl?: string | null;
+}
+
+const LiveCompanyBrandingPreview: React.FC<LiveBrandingPreviewProps> = ({
+  companyName,
+  primaryColour,
+  secondaryColour,
+  logoPreviewUrl,
+}) => {
+  const displayName = companyName.trim() || 'Your Organisation';
+  const tokens = useMemo(
+    () => computeBrandThemeTokens(primaryColour, secondaryColour, 'vibrant'),
+    [primaryColour, secondaryColour]
+  );
+
+  const initials = displayName
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(w => w[0]?.toUpperCase() || '')
+    .join('') || 'YO';
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+        <span>Live Workspace Branding Preview</span>
+        <span className="text-[11px] font-mono text-slate-500">
+          {tokens.primary} · {tokens.secondary}
+        </span>
+      </div>
+
+      <div
+        className="rounded-xl border border-slate-200 overflow-hidden shadow-xs"
+        style={{ backgroundColor: tokens.surface }}
+      >
+        {/* Simulated Workspace TopBar */}
+        <div
+          className="bg-white px-3.5 py-2.5 border-b border-slate-200 flex items-center justify-between gap-3"
+          style={{ borderTop: `3px solid ${tokens.secondary}` }}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            {logoPreviewUrl ? (
+              <div className="h-8 px-1.5 py-1 rounded-lg bg-slate-50 border border-slate-200/80 flex items-center justify-center shrink-0">
+                <img
+                  src={logoPreviewUrl}
+                  alt={`${displayName} preview logo`}
+                  className="h-6 w-auto max-w-[96px] object-contain"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            ) : (
+              <span
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-extrabold shrink-0"
+                style={{
+                  backgroundColor: tokens.primary,
+                  color: getContrastText(tokens.primary),
+                  border: `2px solid ${tokens.secondary}`,
+                }}
+              >
+                {initials}
+              </span>
+            )}
+            <span
+              className="text-xs sm:text-sm font-bold truncate"
+              style={{ color: tokens.primary }}
+            >
+              {displayName}
+            </span>
+          </div>
+
+          <span
+            className="px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shrink-0"
+            style={{
+              backgroundColor: tokens.secondary,
+              color: tokens.secondaryContrast,
+            }}
+          >
+            + New Course
+          </span>
+        </div>
+
+        {/* Simulated Workspace Hero & Sample Elements */}
+        <div className="p-3.5 space-y-2.5">
+          <div
+            className="rounded-lg p-3 flex flex-wrap items-center justify-between gap-2.5"
+            style={{
+              background: tokens.gradient,
+              color: tokens.primaryContrast,
+              borderBottom: `3px solid ${tokens.secondary}`,
+            }}
+          >
+            <div className="min-w-0">
+              <div className="text-[10px] font-semibold uppercase tracking-wider opacity-85">
+                {displayName} Workspace
+              </div>
+              <div className="text-xs font-bold truncate">Course Development Studio</div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className="px-2.5 py-1 rounded-md text-[11px] font-bold border border-white/25"
+                style={{
+                  backgroundColor: tokens.primary,
+                  color: getContrastText(tokens.primary),
+                }}
+              >
+                Primary Button
+              </span>
+              <span
+                className="px-2.5 py-1 rounded-md text-[11px] font-bold"
+                style={{
+                  backgroundColor: tokens.secondary,
+                  color: getContrastText(tokens.secondary),
+                }}
+              >
+                Secondary Accent
+              </span>
+            </div>
+          </div>
+
+          <div
+            className="rounded-lg px-3 py-2 border flex items-center justify-between text-[11px]"
+            style={{
+              backgroundColor: tokens.secondaryTint,
+              borderColor: tokens.secondaryBorder,
+            }}
+          >
+            <span className="text-slate-700 font-medium">Secondary highlight accent preview</span>
+            <span className="font-bold" style={{ color: tokens.secondaryInk }}>
+              7-Stage Authoring Ready
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const AuthScreens: React.FC = () => {
   const {
@@ -26,6 +182,7 @@ export const AuthScreens: React.FC = () => {
     profile,
     isPasswordRecoveryMode,
     authError,
+    setWorkspaceNotice,
     signInWithPassword,
     sendPasswordResetEmail,
     updatePassword,
@@ -37,6 +194,9 @@ export const AuthScreens: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(authError);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [motionIntensity, setMotionIntensity] = useState<number>(() =>
+    readStoredMotionIntensity()
+  );
 
   // Login fields
   const [loginEmail, setLoginEmail] = useState('');
@@ -50,6 +210,7 @@ export const AuthScreens: React.FC = () => {
   const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
   const [primaryColour, setPrimaryColour] = useState('#052B66');
   const [secondaryColour, setSecondaryColour] = useState('#45CC42');
+  const [pendingLogo, setPendingLogo] = useState<ValidatedLogoFile | null>(null);
 
   // Register User fields
   const [userFullName, setUserFullName] = useState('');
@@ -61,6 +222,11 @@ export const AuthScreens: React.FC = () => {
   const [forgotEmail, setForgotEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+
+  const handleIntensityChange = (next: number) => {
+    setMotionIntensity(next);
+    saveStoredMotionIntensity(next);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,11 +298,33 @@ export const AuthScreens: React.FC = () => {
         throw new Error(data.error || 'Company workspace registration failed.');
       }
 
-      if (session?.access_token) {
-        await refreshTenantContext(session.access_token, data.company?.id);
-      } else {
-        await signInWithPassword(adminEmail.trim().toLowerCase(), adminPassword);
+      const createdCompanyId = data.company?.id as string | undefined;
+
+      // Authenticate without immediately unmounting so the new Company Admin can upload the logo cleanly
+      const activeToken = session?.access_token
+        ? session.access_token
+        : await signInWithPassword(adminEmail.trim().toLowerCase(), adminPassword, {
+            skipRefresh: true,
+          });
+
+      if (pendingLogo && createdCompanyId && activeToken) {
+        try {
+          await uploadCompanyLogoToServer({
+            logo: pendingLogo,
+            accessToken: activeToken,
+            companyId: createdCompanyId,
+          });
+        } catch (uploadErr: any) {
+          // Non-blocking fallback: enter the workspace and let the admin retry from Company Settings
+          setWorkspaceNotice(
+            `Company workspace created! Logo upload could not complete right now (${
+              uploadErr?.message || 'storage check needed'
+            }). Open Organisation Branding & Team to retry.`
+          );
+        }
       }
+
+      await refreshTenantContext(activeToken, createdCompanyId);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Unable to register company workspace.');
     } finally {
@@ -237,188 +425,257 @@ export const AuthScreens: React.FC = () => {
   // Show password reset view whenever recovery mode is triggered by Supabase recovery link
   if (isPasswordRecoveryMode) {
     return (
-      <div className="min-h-screen bg-surface flex items-center justify-center p-4">
-        <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl shadow-sm max-w-md w-full p-6 sm:p-8 space-y-6">
-          <div className="space-y-2">
-            <BrandLogo size="md" />
-            <h1 className="text-xl font-bold text-primary pt-2">Set New Password</h1>
-            <p className="text-xs text-slate-600">
-              Choose a new password (minimum 8 characters) for your account.
+      <EstudyMotionBackground
+        intensity={motionIntensity}
+        onChangeIntensity={handleIntensityChange}
+      >
+        <div className="bg-white/95 backdrop-blur-md border border-white/60 rounded-2xl shadow-2xl shadow-[#02122E]/40 max-w-md w-full overflow-hidden">
+          <div className="bg-[#052B66] border-b-[3px] border-b-[#45CC42] px-6 py-5 text-white space-y-2">
+            <img
+              src="/estudy-logo-white.svg"
+              alt="eStudy"
+              className="h-8 w-auto object-contain"
+              referrerPolicy="no-referrer"
+            />
+            <h1 className="text-lg font-bold tracking-tight">Set New Password</h1>
+            <p className="text-xs text-slate-200 leading-relaxed">
+              Choose a new password (minimum 8 characters) for your Master Course Builder account.
             </p>
           </div>
-          {errorMsg && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-          {successMsg && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700 flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{successMsg}</span>
-            </div>
-          )}
-          <form onSubmit={handleResetPassword} className="space-y-4">
-            <label className="block space-y-1 text-xs font-semibold text-slate-700">
-              <span>New Password</span>
-              <input
-                type="password"
-                required
-                minLength={8}
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
-                placeholder="At least 8 characters"
-              />
-            </label>
-            <label className="block space-y-1 text-xs font-semibold text-slate-700">
-              <span>Confirm New Password</span>
-              <input
-                type="password"
-                required
-                minLength={8}
-                value={confirmNewPassword}
-                onChange={e => setConfirmNewPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
-            >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4 text-accent" />}
-              <span>Update Password</span>
-            </button>
-          </form>
+          <div className="p-6 sm:p-7 space-y-4">
+            {errorMsg && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+            {successMsg && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700 flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{successMsg}</span>
+              </div>
+            )}
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
+                <span>New Password</span>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
+                  placeholder="At least 8 characters"
+                />
+              </label>
+              <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
+                <span>Confirm New Password</span>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  value={confirmNewPassword}
+                  onChange={e => setConfirmNewPassword(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white border-b-2 border-[#45CC42] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              >
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4 text-[#45CC42]" />}
+                <span>Update Password</span>
+              </button>
+            </form>
+          </div>
         </div>
-      </div>
+      </EstudyMotionBackground>
     );
   }
 
   // User is signed in via Supabase Auth, but has no active company memberships yet
   if (session) {
     return (
-      <div className="min-h-screen bg-surface flex items-center justify-center p-4">
-        <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl shadow-sm max-w-lg w-full p-6 sm:p-8 space-y-6">
-          <div className="flex items-start justify-between gap-4">
+      <EstudyMotionBackground
+        intensity={motionIntensity}
+        onChangeIntensity={handleIntensityChange}
+      >
+        <div className="bg-white/95 backdrop-blur-md border border-white/60 rounded-2xl shadow-2xl shadow-[#02122E]/40 max-w-2xl w-full overflow-hidden">
+          <div className="bg-[#052B66] border-b-[3px] border-b-[#45CC42] px-6 py-5 text-white flex items-start justify-between gap-4">
             <div className="space-y-1.5">
-              <BrandLogo size="md" />
-              <h1 className="text-xl font-bold text-primary pt-2">
+              <img
+                src="/estudy-logo-white.svg"
+                alt="eStudy"
+                className="h-8 w-auto object-contain"
+                referrerPolicy="no-referrer"
+              />
+              <h1 className="text-lg sm:text-xl font-bold tracking-tight pt-1">
                 Complete Workspace Onboarding
               </h1>
-              <p className="text-xs text-slate-600">
-                Signed in as <strong>{profile?.email || session.user.email}</strong>. Create a new
-                company workspace below, or ask your company administrator to invite this email address.
+              <p className="text-xs text-slate-200 leading-relaxed">
+                Signed in as <strong>{profile?.email || session.user.email}</strong>. Configure your
+                company workspace and branding below, or ask your company administrator to invite you.
               </p>
             </div>
             <button
               type="button"
               onClick={() => void signOut()}
-              className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-primary border border-slate-200 rounded-lg flex items-center gap-1.5 cursor-pointer shrink-0"
+              className="px-3 py-1.5 text-xs font-semibold text-white/90 hover:text-white bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Sign Out</span>
             </button>
           </div>
 
-          {errorMsg && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
+          <div className="p-6 sm:p-7 space-y-5">
+            {errorMsg && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
 
-          <form onSubmit={handleRegisterCompany} className="space-y-4">
-            <label className="block space-y-1 text-xs font-semibold text-slate-700">
-              <span>Company / Organisation Name</span>
-              <input
-                type="text"
-                required
-                value={companyName}
-                onChange={e => setCompanyName(e.target.value)}
-                placeholder="e.g. Meridian Technical Training"
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                <span>Primary Brand Colour</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={primaryColour}
-                    onChange={e => setPrimaryColour(e.target.value)}
-                    className="w-9 h-9 rounded border border-slate-200 cursor-pointer"
-                  />
-                  <input
-                    type="text"
-                    value={primaryColour}
-                    onChange={e => setPrimaryColour(e.target.value)}
-                    className="flex-1 px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono"
-                  />
-                </div>
+            <form onSubmit={handleRegisterCompany} className="space-y-5">
+              <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
+                <span>Company / Organisation Name</span>
+                <input
+                  type="text"
+                  required
+                  value={companyName}
+                  onChange={e => setCompanyName(e.target.value)}
+                  placeholder="e.g. Meridian Technical Training"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
+                />
               </label>
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                <span>Secondary Accent Colour</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={secondaryColour}
-                    onChange={e => setSecondaryColour(e.target.value)}
-                    className="w-9 h-9 rounded border border-slate-200 cursor-pointer"
-                  />
-                  <input
-                    type="text"
-                    value={secondaryColour}
-                    onChange={e => setSecondaryColour(e.target.value)}
-                    className="flex-1 px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono"
-                  />
-                </div>
-              </label>
-            </div>
 
-            <button
-              type="submit"
-              disabled={busy}
-              className="w-full py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-opacity hover:opacity-95"
-              style={{
-                backgroundColor: primaryColour,
-                color: getContrastText(primaryColour),
-                borderBottom: `3px solid ${secondaryColour}`,
-              }}
-            >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" style={{ color: secondaryColour }} />}
-              <span>Create Company Workspace</span>
-            </button>
-          </form>
+              {/* Dedicated Company Branding Section */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/75 p-4 space-y-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-[#052B66]">
+                  <Palette className="w-4 h-4 text-[#1F7A1D]" />
+                  <span>Company Branding</span>
+                </div>
+
+                {/* Top-left logo upload */}
+                <CompanyLogoUploadSection
+                  previewUrl={pendingLogo?.previewDataUrl || null}
+                  companyName={companyName}
+                  onSelectLogo={validated => setPendingLogo(validated)}
+                  onRemoveLogo={() => setPendingLogo(null)}
+                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Primary Brand Colour</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={primaryColour}
+                        onChange={e => setPrimaryColour(e.target.value)}
+                        className="w-9 h-9 rounded border border-slate-200 cursor-pointer"
+                      />
+                      <input
+                        type="text"
+                        value={primaryColour}
+                        onChange={e => setPrimaryColour(e.target.value)}
+                        className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-mono"
+                      />
+                    </div>
+                  </label>
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Secondary Accent Colour</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={secondaryColour}
+                        onChange={e => setSecondaryColour(e.target.value)}
+                        className="w-9 h-9 rounded border border-slate-200 cursor-pointer"
+                      />
+                      <input
+                        type="text"
+                        value={secondaryColour}
+                        onChange={e => setSecondaryColour(e.target.value)}
+                        className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-mono"
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                <LiveCompanyBrandingPreview
+                  companyName={companyName}
+                  primaryColour={primaryColour}
+                  secondaryColour={secondaryColour}
+                  logoPreviewUrl={pendingLogo?.previewDataUrl || null}
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-opacity hover:opacity-95"
+                style={{
+                  backgroundColor: primaryColour,
+                  color: getContrastText(primaryColour),
+                  borderBottom: `3px solid ${secondaryColour}`,
+                }}
+              >
+                {busy ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Building2 className="w-4 h-4" style={{ color: secondaryColour }} />
+                )}
+                <span>Create Company Workspace</span>
+              </button>
+            </form>
+          </div>
         </div>
-      </div>
+      </EstudyMotionBackground>
     );
   }
 
+  const isWideCompanyRegistration = tab === 'register_company';
+
   return (
-    <div className="min-h-screen bg-surface flex items-center justify-center p-4">
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm max-w-lg w-full overflow-hidden">
-        <div className="bg-brand-gradient border-b-[3px] border-b-accent px-6 py-5 text-primary-contrast space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-accent">
-              Multi-Tenant SaaS Platform
-            </span>
-            <span className="inline-flex items-center gap-1 text-[11px] text-slate-200">
-              <ShieldCheck className="w-3.5 h-3.5 text-accent" />
-              <span>Supabase Auth + RLS</span>
+    <EstudyMotionBackground
+      intensity={motionIntensity}
+      onChangeIntensity={handleIntensityChange}
+    >
+      <div
+        className={`bg-white/95 backdrop-blur-md border border-white/60 rounded-2xl shadow-2xl shadow-[#021433]/40 w-full overflow-hidden transition-[max-width] duration-200 ${
+          isWideCompanyRegistration ? 'max-w-2xl' : 'max-w-lg'
+        }`}
+      >
+        {/* Official eStudy Brand Header */}
+        <div
+          className="px-6 sm:px-7 py-5 text-white border-b-[3px] border-b-[#45CC42] space-y-2.5"
+          style={{
+            background: 'linear-gradient(135deg, #042150 0%, #052B66 60%, #093E8F 100%)',
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <img
+              src="/estudy-logo-white.svg"
+              alt="eStudy"
+              className="h-8 sm:h-9 w-auto object-contain shrink-0"
+              referrerPolicy="no-referrer"
+            />
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-200 whitespace-nowrap shrink-0">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#45CC42]" />
+              <span>Secure Multi-Company Workspace</span>
             </span>
           </div>
-          <h1 className="text-xl font-bold tracking-tight">eStudy Master Course Builder V2</h1>
-          <p className="text-xs text-slate-200">
-            Sign in to your organisation workspace or create a dedicated company tenant.
-          </p>
+          <div className="space-y-1 pt-0.5">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
+              Master Course Builder
+            </h1>
+            <p className="text-xs sm:text-[13px] text-slate-200/95 leading-relaxed">
+              Create, manage and publish structured learning experiences with AI-powered course development.
+            </p>
+          </div>
         </div>
 
         {!isClientSupabaseConfigured && (
-          <div className="m-6 p-4 bg-amber-50 border border-amber-300 rounded-lg space-y-2 text-xs text-amber-900">
+          <div className="m-6 mb-0 p-4 bg-amber-50 border border-amber-300 rounded-xl space-y-2 text-xs text-amber-900">
             <div className="font-bold flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
               <span>Supabase Environment Variables Required</span>
@@ -440,7 +697,7 @@ export const AuthScreens: React.FC = () => {
         )}
 
         {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-200 px-4 pt-3 gap-1 overflow-x-auto bg-slate-50">
+        <div className="flex border-b border-slate-200 px-4 sm:px-6 pt-3 gap-1 overflow-x-auto bg-slate-50/90">
           {(
             [
               { id: 'login', label: 'Sign In' },
@@ -457,10 +714,10 @@ export const AuthScreens: React.FC = () => {
                 setErrorMsg(null);
                 setSuccessMsg(null);
               }}
-              className={`px-3 py-2 text-xs font-bold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+              className={`px-3.5 py-2.5 text-xs font-bold whitespace-nowrap shrink-0 border-b-2 transition-colors cursor-pointer ${
                 tab === item.id
-                  ? 'border-accent text-primary bg-white rounded-t-md'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
+                  ? 'border-[#45CC42] text-[#052B66] bg-white rounded-t-lg shadow-2xs'
+                  : 'border-transparent text-slate-500 hover:text-[#052B66]'
               }`}
             >
               {item.label}
@@ -468,16 +725,22 @@ export const AuthScreens: React.FC = () => {
           ))}
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 sm:p-7 space-y-4">
           {errorMsg && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
+            <div
+              role="alert"
+              className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2"
+            >
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
 
           {successMsg && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700 flex items-start gap-2">
+            <div
+              role="status"
+              className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700 flex items-start gap-2"
+            >
               <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{successMsg}</span>
             </div>
@@ -485,7 +748,17 @@ export const AuthScreens: React.FC = () => {
 
           {tab === 'login' && (
             <form onSubmit={handleLogin} className="space-y-4">
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
+              <div className="flex items-center justify-between pb-1">
+                <div>
+                  <h2 className="text-base font-bold text-[#052B66]">Welcome Back</h2>
+                  <p className="text-xs text-slate-500">
+                    Sign in to access your company workspace and courses.
+                  </p>
+                </div>
+                <BrandLogo size="sm" />
+              </div>
+
+              <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
                 <span>Work Email</span>
                 <input
                   type="email"
@@ -493,10 +766,11 @@ export const AuthScreens: React.FC = () => {
                   value={loginEmail}
                   onChange={e => setLoginEmail(e.target.value)}
                   placeholder="name@company.com"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
                 />
               </label>
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
+
+              <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
                 <span>Password</span>
                 <input
                   type="password"
@@ -504,191 +778,233 @@ export const AuthScreens: React.FC = () => {
                   value={loginPassword}
                   onChange={e => setLoginPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
                 />
               </label>
+
               <button
                 type="submit"
                 disabled={busy || !isClientSupabaseConfigured}
-                className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white border-b-[3px] border-[#45CC42] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors min-h-[42px]"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4 text-accent" />}
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4 text-[#45CC42]" />}
                 <span>Sign In to Workspace</span>
               </button>
             </form>
           )}
 
           {tab === 'register_company' && (
-            <form onSubmit={handleRegisterCompany} className="space-y-3.5">
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                <span>Company / Organisation Name</span>
-                <input
-                  type="text"
-                  required
-                  value={companyName}
-                  onChange={e => setCompanyName(e.target.value)}
-                  placeholder="e.g. Apex Skills Academy"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                />
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                  <span>Primary Admin Full Name</span>
+            <form onSubmit={handleRegisterCompany} className="space-y-4">
+              <div className="space-y-3">
+                <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
+                  <span>Company / Organisation Name</span>
                   <input
                     type="text"
                     required
-                    value={adminFullName}
-                    onChange={e => setAdminFullName(e.target.value)}
-                    placeholder="Jane Doe"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                    value={companyName}
+                    onChange={e => setCompanyName(e.target.value)}
+                    placeholder="e.g. Apex Skills Academy"
+                    className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
                   />
                 </label>
-                <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                  <span>Admin Work Email</span>
-                  <input
-                    type="email"
-                    required
-                    value={adminEmail}
-                    onChange={e => setAdminEmail(e.target.value)}
-                    placeholder="admin@company.com"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                  />
-                </label>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                  <span>Password (min 8 chars)</span>
-                  <input
-                    type="password"
-                    required
-                    minLength={8}
-                    value={adminPassword}
-                    onChange={e => setAdminPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                  />
-                </label>
-                <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                  <span>Confirm Password</span>
-                  <input
-                    type="password"
-                    required
-                    minLength={8}
-                    value={adminConfirmPassword}
-                    onChange={e => setAdminConfirmPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                  />
-                </label>
-              </div>
-              <div className="space-y-1.5 pt-1">
-                <span className="block text-xs font-semibold text-slate-700">
-                  Quick Theme Presets
-                </span>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {BRAND_THEME_PRESETS.slice(0, 3).map(preset => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => {
-                        setPrimaryColour(preset.primaryColour);
-                        setSecondaryColour(preset.secondaryColour);
-                      }}
-                      className={`px-2 py-1.5 rounded border text-left text-[10px] font-semibold flex items-center gap-1.5 cursor-pointer ${
-                        primaryColour.toUpperCase() === preset.primaryColour &&
-                        secondaryColour.toUpperCase() === preset.secondaryColour
-                          ? 'border-primary bg-accent-tint/60'
-                          : 'border-slate-200 hover:border-slate-300 bg-white'
-                      }`}
-                    >
-                      <span
-                        className="w-3 h-3 rounded-xs shrink-0"
-                        style={{ backgroundColor: preset.primaryColour }}
-                      />
-                      <span
-                        className="w-3 h-3 rounded-xs shrink-0"
-                        style={{ backgroundColor: preset.secondaryColour }}
-                      />
-                      <span className="truncate">{preset.name}</span>
-                    </button>
-                  ))}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Primary Admin Full Name</span>
+                    <input
+                      type="text"
+                      required
+                      value={adminFullName}
+                      onChange={e => setAdminFullName(e.target.value)}
+                      placeholder="Jane Doe"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Admin Work Email</span>
+                    <input
+                      type="email"
+                      required
+                      value={adminEmail}
+                      onChange={e => setAdminEmail(e.target.value)}
+                      placeholder="admin@company.com"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Password (min 8 chars)</span>
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      value={adminPassword}
+                      onChange={e => setAdminPassword(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Confirm Password</span>
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      value={adminConfirmPassword}
+                      onChange={e => setAdminConfirmPassword(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
+                    />
+                  </label>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                  <span>Primary Colour</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={primaryColour}
-                      onChange={e => setPrimaryColour(e.target.value)}
-                      className="w-8 h-8 rounded border border-slate-200 cursor-pointer"
-                    />
-                    <input
-                      type="text"
-                      value={primaryColour}
-                      onChange={e => setPrimaryColour(e.target.value)}
-                      className="flex-1 px-2 py-1.5 border border-slate-200 rounded text-xs font-mono"
-                    />
+              {/* Dedicated Company Branding Section (Logo top-left + Colours + Live Preview) */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-4">
+                <div className="flex items-center justify-between gap-2 border-b border-slate-200/80 pb-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-[#052B66]">
+                    <Palette className="w-4 h-4 text-[#1F7A1D]" />
+                    <span>Company Branding</span>
                   </div>
-                </label>
-                <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                  <span>Accent Colour</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={secondaryColour}
-                      onChange={e => setSecondaryColour(e.target.value)}
-                      className="w-8 h-8 rounded border border-slate-200 cursor-pointer"
-                    />
-                    <input
-                      type="text"
-                      value={secondaryColour}
-                      onChange={e => setSecondaryColour(e.target.value)}
-                      className="flex-1 px-2 py-1.5 border border-slate-200 rounded text-xs font-mono"
-                    />
+                  <span className="text-[11px] text-slate-500">
+                    Customise your tenant workspace
+                  </span>
+                </div>
+
+                {/* Logo Upload at top-left of Company Branding section */}
+                <CompanyLogoUploadSection
+                  previewUrl={pendingLogo?.previewDataUrl || null}
+                  companyName={companyName}
+                  onSelectLogo={validated => setPendingLogo(validated)}
+                  onRemoveLogo={() => setPendingLogo(null)}
+                />
+
+                {/* Quick Theme Presets */}
+                <div className="space-y-1.5 pt-1">
+                  <span className="block text-xs font-semibold text-slate-700">
+                    Quick Theme Presets
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                    {BRAND_THEME_PRESETS.slice(0, 3).map(preset => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          setPrimaryColour(preset.primaryColour);
+                          setSecondaryColour(preset.secondaryColour);
+                        }}
+                        className={`px-2.5 py-2 rounded-lg border text-left text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                          primaryColour.toUpperCase() === preset.primaryColour &&
+                          secondaryColour.toUpperCase() === preset.secondaryColour
+                            ? 'border-[#052B66] bg-white ring-2 ring-[#45CC42]/35'
+                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                        }`}
+                      >
+                        <span
+                          className="w-3 h-3 rounded-xs shrink-0 border border-black/10"
+                          style={{ backgroundColor: preset.primaryColour }}
+                        />
+                        <span
+                          className="w-3 h-3 rounded-xs shrink-0 border border-black/10"
+                          style={{ backgroundColor: preset.secondaryColour }}
+                        />
+                        <span className="truncate">{preset.name}</span>
+                      </button>
+                    ))}
                   </div>
-                </label>
+                </div>
+
+                {/* Custom Primary & Secondary Pickers */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Primary Brand Colour</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={primaryColour}
+                        onChange={e => setPrimaryColour(e.target.value)}
+                        className="w-9 h-9 rounded border border-slate-200 cursor-pointer shrink-0"
+                      />
+                      <input
+                        type="text"
+                        value={primaryColour}
+                        onChange={e => setPrimaryColour(e.target.value)}
+                        className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-mono"
+                      />
+                    </div>
+                  </label>
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Secondary Accent Colour</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={secondaryColour}
+                        onChange={e => setSecondaryColour(e.target.value)}
+                        className="w-9 h-9 rounded border border-slate-200 cursor-pointer shrink-0"
+                      />
+                      <input
+                        type="text"
+                        value={secondaryColour}
+                        onChange={e => setSecondaryColour(e.target.value)}
+                        className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-mono"
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                {/* Live Branding Preview */}
+                <LiveCompanyBrandingPreview
+                  companyName={companyName}
+                  primaryColour={primaryColour}
+                  secondaryColour={secondaryColour}
+                  logoPreviewUrl={pendingLogo?.previewDataUrl || null}
+                />
               </div>
+
               <button
                 type="submit"
                 disabled={busy || !isClientSupabaseConfigured}
-                className="w-full py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-opacity hover:opacity-95 disabled:opacity-50"
+                className="w-full py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-opacity hover:opacity-95 disabled:opacity-50 min-h-[42px]"
                 style={{
                   backgroundColor: primaryColour,
                   color: getContrastText(primaryColour),
                   borderBottom: `3px solid ${secondaryColour}`,
                 }}
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" style={{ color: secondaryColour }} />}
+                {busy ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Building2 className="w-4 h-4" style={{ color: secondaryColour }} />
+                )}
                 <span>Create Organisation & Admin Account</span>
               </button>
             </form>
           )}
 
           {tab === 'register_user' && (
-            <form onSubmit={handleRegisterUser} className="space-y-3.5">
+            <form onSubmit={handleRegisterUser} className="space-y-4">
               <p className="text-xs text-slate-600 leading-relaxed">
                 Invited to an existing organisation? Register using the exact email address your
                 company administrator invited to unlock access automatically.
               </p>
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
+              <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
                 <span>Full Name</span>
                 <input
                   type="text"
                   required
                   value={userFullName}
                   onChange={e => setUserFullName(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
+                  className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
                 />
               </label>
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
+              <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
                 <span>Invited Email Address</span>
                 <input
                   type="email"
                   required
                   value={userEmail}
                   onChange={e => setUserEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
+                  className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
                 />
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -700,7 +1016,7 @@ export const AuthScreens: React.FC = () => {
                     minLength={8}
                     value={userPassword}
                     onChange={e => setUserPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
                   />
                 </label>
                 <label className="block space-y-1 text-xs font-semibold text-slate-700">
@@ -711,16 +1027,16 @@ export const AuthScreens: React.FC = () => {
                     minLength={8}
                     value={userConfirmPassword}
                     onChange={e => setUserConfirmPassword(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
                   />
                 </label>
               </div>
               <button
                 type="submit"
                 disabled={busy || !isClientSupabaseConfigured}
-                className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white border-b-[3px] border-[#45CC42] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors min-h-[42px]"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4 text-accent" />}
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4 text-[#45CC42]" />}
                 <span>Create User Account</span>
               </button>
             </form>
@@ -728,10 +1044,10 @@ export const AuthScreens: React.FC = () => {
 
           {tab === 'forgot_password' && (
             <form onSubmit={handleForgotPassword} className="space-y-4">
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-slate-600 leading-relaxed">
                 Enter your account email and we will send a password recovery link via Supabase Auth.
               </p>
-              <label className="block space-y-1 text-xs font-semibold text-slate-700">
+              <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
                 <span>Account Email</span>
                 <input
                   type="email"
@@ -739,21 +1055,21 @@ export const AuthScreens: React.FC = () => {
                   value={forgotEmail}
                   onChange={e => setForgotEmail(e.target.value)}
                   placeholder="name@company.com"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-accent"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-[#052B66] focus:ring-2 focus:ring-[#45CC42]/25 transition-all"
                 />
               </label>
               <button
                 type="submit"
                 disabled={busy || !isClientSupabaseConfigured}
-                className="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] disabled:opacity-50 text-white border-b-[3px] border-[#45CC42] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors min-h-[42px]"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4 text-accent" />}
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4 text-[#45CC42]" />}
                 <span>Send Recovery Email</span>
               </button>
             </form>
           )}
         </div>
       </div>
-    </div>
+    </EstudyMotionBackground>
   );
 };

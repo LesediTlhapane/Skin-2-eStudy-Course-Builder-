@@ -24,13 +24,19 @@ interface TenantContextValue {
   activeRole: CompanyRole | null;
   isPasswordRecoveryMode: boolean;
   authError: string | null;
+  workspaceNotice: string | null;
+  setWorkspaceNotice: (msg: string | null) => void;
   surfaceMode: BrandSurfaceMode;
   setSurfaceMode: (mode: BrandSurfaceMode) => void;
   previewTheme: (primaryColour: string, secondaryColour: string, mode?: BrandSurfaceMode) => void;
   resetThemePreview: () => void;
   setActiveCompanyId: (companyId: string) => Promise<void>;
   refreshTenantContext: (overrideToken?: string, preferredCompanyId?: string) => Promise<void>;
-  signInWithPassword: (email: string, password: string) => Promise<void>;
+  signInWithPassword: (
+    email: string,
+    password: string,
+    options?: { skipRefresh?: boolean }
+  ) => Promise<string>;
   sendPasswordResetEmail: (email: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
   clearPasswordRecoveryMode: () => void;
@@ -51,6 +57,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [activeRole, setActiveRole] = useState<CompanyRole | null>(null);
   const [isPasswordRecoveryMode, setIsPasswordRecoveryMode] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
   const [surfaceMode, setSurfaceModeState] = useState<BrandSurfaceMode>(() =>
     getStoredSurfaceMode(null)
   );
@@ -75,12 +82,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [activeCompany?.id]);
 
-  // Apply dynamic white-label CSS variables when activeCompany or surfaceMode changes
+  // Apply official eStudy identity on public auth/recovery screens; apply company branding once inside a workspace
   useEffect(() => {
-    const primary = activeCompany?.primaryColour || '#052B66';
-    const secondary = activeCompany?.secondaryColour || '#45CC42';
+    if (!activeCompany || isPasswordRecoveryMode) {
+      applyBrandThemeToDocument('#052B66', '#45CC42', 'vibrant');
+      return;
+    }
+    const primary = activeCompany.primaryColour || '#052B66';
+    const secondary = activeCompany.secondaryColour || '#45CC42';
     applyBrandThemeToDocument(primary, secondary, surfaceMode);
-  }, [activeCompany, surfaceMode]);
+  }, [activeCompany, isPasswordRecoveryMode, surfaceMode]);
 
   const setSurfaceMode = useCallback(
     (mode: BrandSurfaceMode) => {
@@ -98,10 +109,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const resetThemePreview = useCallback(() => {
-    const primary = activeCompany?.primaryColour || '#052B66';
-    const secondary = activeCompany?.secondaryColour || '#45CC42';
+    if (!activeCompany || isPasswordRecoveryMode) {
+      applyBrandThemeToDocument('#052B66', '#45CC42', 'vibrant');
+      return;
+    }
+    const primary = activeCompany.primaryColour || '#052B66';
+    const secondary = activeCompany.secondaryColour || '#45CC42';
     applyBrandThemeToDocument(primary, secondary, surfaceMode);
-  }, [activeCompany, surfaceMode]);
+  }, [activeCompany, isPasswordRecoveryMode, surfaceMode]);
 
   // Query backend health once for server Supabase status
   useEffect(() => {
@@ -250,7 +265,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const signInWithPassword = useCallback(
-    async (email: string, password: string) => {
+    async (
+      email: string,
+      password: string,
+      options?: { skipRefresh?: boolean }
+    ): Promise<string> => {
       const client = getSupabaseClient();
       if (!client) {
         throw new Error('Supabase client is not configured (missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).');
@@ -265,7 +284,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
       setSession(data.session);
       tokenRef.current = data.session.access_token;
-      await refreshTenantContext(data.session.access_token);
+      if (!options?.skipRefresh) {
+        await refreshTenantContext(data.session.access_token);
+      }
+      return data.session.access_token;
     },
     [refreshTenantContext]
   );
@@ -338,6 +360,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         activeRole,
         isPasswordRecoveryMode,
         authError,
+        workspaceNotice,
+        setWorkspaceNotice,
         surfaceMode,
         setSurfaceMode,
         previewTheme,

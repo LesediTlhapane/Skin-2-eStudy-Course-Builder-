@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2, X } from 'lucide-react';
 import { useTenant } from './context/TenantContext';
 import { useV2Store } from './hooks/useV2Store';
 import { readLocalBackupSnapshot } from './hooks/useV2Store';
@@ -22,6 +22,8 @@ export default function App() {
     activeCompany,
     activeRole,
     isPasswordRecoveryMode,
+    workspaceNotice,
+    setWorkspaceNotice,
     setActiveCompanyId,
     signOut,
   } = useTenant();
@@ -61,18 +63,12 @@ export default function App() {
       <TopBar
         route={store.route}
         activeProject={store.activeProject}
-        selectedProvider={store.selectedProvider}
-        selectedModel={store.selectedModel}
-        availableModels={store.availableModels}
-        keysStatus={store.keysStatus}
         activeCompany={activeCompany}
         activeRole={activeRole}
         profile={profile}
         memberships={memberships}
         pendingLocalMigrationCount={store.pendingLocalMigrationCount}
         onNavigate={store.setRoute}
-        onSelectProvider={store.setProvider}
-        onSelectModel={store.setModel}
         onOpenNewCourse={() => {
           setPreselectedTemplateId(undefined);
           setIsNewCourseModalOpen(true);
@@ -82,6 +78,35 @@ export default function App() {
         onOpenLocalMigration={() => setIsLocalMigrationOpen(true)}
         onSignOut={() => void signOut()}
       />
+
+      {workspaceNotice && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-2.5 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{workspaceNotice}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setWorkspaceNotice(null);
+                setIsCompanySettingsOpen(true);
+              }}
+              className="px-2.5 py-1 rounded bg-primary text-primary-contrast font-semibold cursor-pointer"
+            >
+              Open Branding Settings
+            </button>
+            <button
+              type="button"
+              onClick={() => setWorkspaceNotice(null)}
+              aria-label="Dismiss notice"
+              className="p-1 text-amber-700 hover:text-amber-900 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {store.route === 'dashboard' && (
         <Dashboard

@@ -26,6 +26,12 @@ import {
   computeBrandThemeTokens,
   type BrandSurfaceMode,
 } from '../utils/brandTheme';
+import {
+  removeCompanyLogoOnServer,
+  uploadCompanyLogoToServer,
+  type ValidatedLogoFile,
+} from '../utils/logoUpload';
+import { CompanyLogoUploadSection } from './CompanyLogoUploadSection';
 
 interface CompanySettingsModalProps {
   isOpen: boolean;
@@ -52,6 +58,8 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
   const [tab, setTab] = useState<TabKey>('branding');
   const [companyName, setCompanyName] = useState(activeCompany?.companyName || '');
   const [logoUrl, setLogoUrl] = useState(activeCompany?.logoUrl || '');
+  const [pendingLogoFile, setPendingLogoFile] = useState<ValidatedLogoFile | null>(null);
+  const [pendingRemoveLogo, setPendingRemoveLogo] = useState(false);
   const [primaryColour, setPrimaryColour] = useState(activeCompany?.primaryColour || '#052B66');
   const [secondaryColour, setSecondaryColour] = useState(
     activeCompany?.secondaryColour || '#45CC42'
@@ -74,6 +82,8 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
     if (!isOpen || !activeCompany) return;
     setCompanyName(activeCompany.companyName);
     setLogoUrl(activeCompany.logoUrl || '');
+    setPendingLogoFile(null);
+    setPendingRemoveLogo(false);
     setPrimaryColour(activeCompany.primaryColour || '#052B66');
     setSecondaryColour(activeCompany.secondaryColour || '#45CC42');
     setDraftSurfaceMode(surfaceMode);
@@ -122,7 +132,9 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           companyName: companyName.trim(),
-          logoUrl: logoUrl.trim() || null,
+          ...(!pendingLogoFile && !pendingRemoveLogo
+            ? { logoUrl: logoUrl.trim() || null }
+            : {}),
           primaryColour,
           secondaryColour,
         }),
@@ -131,9 +143,30 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to save company branding.');
       }
-      updateLocalActiveCompany(data.company);
+
+      let latestCompany = data.company;
+
+      if (pendingLogoFile) {
+        const uploaded = await uploadCompanyLogoToServer({
+          logo: pendingLogoFile,
+          companyId: activeCompany.id,
+        });
+        latestCompany = uploaded.company;
+        setLogoUrl(uploaded.logoUrl);
+        setPendingLogoFile(null);
+        setPendingRemoveLogo(false);
+      } else if (pendingRemoveLogo) {
+        const removed = await removeCompanyLogoOnServer({
+          companyId: activeCompany.id,
+        });
+        latestCompany = removed.company;
+        setLogoUrl('');
+        setPendingRemoveLogo(false);
+      }
+
+      updateLocalActiveCompany(latestCompany);
       setSurfaceMode(draftSurfaceMode);
-      setNotice('Company branding and theme settings saved across your workspace.');
+      setNotice('Company branding, logo, and theme settings saved across your workspace.');
     } catch (err: any) {
       setErrorMsg(err?.message || 'Unable to update company settings.');
     } finally {
@@ -151,6 +184,10 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
     secondaryColour,
     draftSurfaceMode
   );
+
+  const effectivePreviewLogoUrl = pendingRemoveLogo
+    ? null
+    : pendingLogoFile?.previewDataUrl || logoUrl.trim() || null;
 
   const handleInviteMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -289,29 +326,51 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                  <span>Company Display Name</span>
-                  <input
-                    type="text"
-                    disabled={!isAdmin}
-                    value={companyName}
-                    onChange={e => setCompanyName(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50"
-                  />
-                </label>
+              {/* Top-left Logo Upload & Company Display Name */}
+              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-4">
+                <CompanyLogoUploadSection
+                  previewUrl={effectivePreviewLogoUrl}
+                  companyName={companyName || activeCompany.companyName}
+                  disabled={!isAdmin}
+                  onSelectLogo={validated => {
+                    setPendingLogoFile(validated);
+                    setPendingRemoveLogo(false);
+                    setErrorMsg(null);
+                  }}
+                  onRemoveLogo={() => {
+                    setPendingLogoFile(null);
+                    setPendingRemoveLogo(true);
+                    setLogoUrl('');
+                  }}
+                />
 
-                <label className="block space-y-1 text-xs font-semibold text-slate-700">
-                  <span>Company Logo URL (https://...)</span>
-                  <input
-                    type="url"
-                    disabled={!isAdmin}
-                    value={logoUrl}
-                    onChange={e => setLogoUrl(e.target.value)}
-                    placeholder="https://cdn.yourcompany.com/logo.png"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm disabled:bg-slate-50"
-                  />
-                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200/80">
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>Company Display Name</span>
+                    <input
+                      type="text"
+                      disabled={!isAdmin}
+                      value={companyName}
+                      onChange={e => setCompanyName(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm disabled:bg-slate-100"
+                    />
+                  </label>
+
+                  <label className="block space-y-1 text-xs font-semibold text-slate-700">
+                    <span>External Logo URL (Optional)</span>
+                    <input
+                      type="url"
+                      disabled={!isAdmin || Boolean(pendingLogoFile)}
+                      value={pendingLogoFile ? pendingLogoFile.fileName : logoUrl}
+                      onChange={e => {
+                        setLogoUrl(e.target.value);
+                        setPendingRemoveLogo(false);
+                      }}
+                      placeholder="https://cdn.yourcompany.com/logo.png"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm disabled:bg-slate-100"
+                    />
+                  </label>
+                </div>
               </div>
 
               {/* Curated Brand Theme Presets */}
@@ -478,19 +537,30 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                   className="bg-white px-4 py-2 border-b border-slate-200 flex items-center justify-between"
                   style={{ borderTop: `3px solid ${previewTokens.secondary}` }}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {effectivePreviewLogoUrl ? (
+                      <div className="w-7 h-7 rounded bg-slate-50 border border-slate-200 flex items-center justify-center p-0.5 shrink-0">
+                        <img
+                          src={effectivePreviewLogoUrl}
+                          alt="Live theme preview logo"
+                          className="max-w-full max-h-full object-contain"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                    ) : (
+                      <span
+                        className="w-6 h-6 rounded text-[10px] font-extrabold flex items-center justify-center shrink-0"
+                        style={{
+                          backgroundColor: previewTokens.primary,
+                          color: previewTokens.primaryContrast,
+                          border: `1.5px solid ${previewTokens.secondary}`,
+                        }}
+                      >
+                        {(companyName || activeCompany.companyName).slice(0, 2).toUpperCase()}
+                      </span>
+                    )}
                     <span
-                      className="w-5 h-5 rounded text-[10px] font-extrabold flex items-center justify-center"
-                      style={{
-                        backgroundColor: previewTokens.primary,
-                        color: previewTokens.primaryContrast,
-                        border: `1.5px solid ${previewTokens.secondary}`,
-                      }}
-                    >
-                      {(companyName || activeCompany.companyName).slice(0, 2).toUpperCase()}
-                    </span>
-                    <span
-                      className="text-xs font-bold"
+                      className="text-xs font-bold truncate"
                       style={{ color: previewTokens.primary }}
                     >
                       Live Theme Preview · {companyName || activeCompany.companyName}

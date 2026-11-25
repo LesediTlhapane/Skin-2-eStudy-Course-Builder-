@@ -55,6 +55,105 @@
   }
 }
 
+/* Official eStudy Authentication Motion Keyframes (GPU-composited transform/opacity/dash only) */
+@keyframes estudyWaveDriftA {
+  0%, 100% {
+    transform: translate3d(-3%, -2%, 0) scale(1) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(4%, 3%, 0) scale(1.06) rotate(4deg);
+  }
+}
+
+@keyframes estudyWaveDriftB {
+  0%, 100% {
+    transform: translate3d(3%, 2%, 0) scale(1.02) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(-4%, -3%, 0) scale(0.96) rotate(-5deg);
+  }
+}
+
+@keyframes estudyTrailFlow {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: -1200;
+  }
+}
+
+@keyframes estudyTrailFlowSlow {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 960;
+  }
+}
+
+@keyframes estudyParticleFloat {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translate3d(14px, -22px, 0) scale(1.18);
+    opacity: 0.85;
+  }
+}
+
+@keyframes estudyGlowPulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.07);
+  }
+}
+
+.estudy-wave-a {
+  animation: estudyWaveDriftA 22s ease-in-out infinite;
+  will-change: transform;
+}
+
+.estudy-wave-b {
+  animation: estudyWaveDriftB 28s ease-in-out infinite;
+  will-change: transform;
+}
+
+.estudy-trail-flow {
+  animation: estudyTrailFlow 26s linear infinite;
+}
+
+.estudy-trail-flow-slow {
+  animation: estudyTrailFlowSlow 36s linear infinite;
+}
+
+.estudy-particle {
+  animation: estudyParticleFloat var(--particle-duration, 18s) ease-in-out infinite;
+  animation-delay: var(--particle-delay, 0s);
+  will-change: transform, opacity;
+}
+
+.estudy-glow-breathe {
+  animation: estudyGlowPulse 14s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .estudy-wave-a,
+  .estudy-wave-b,
+  .estudy-trail-flow,
+  .estudy-trail-flow-slow,
+  .estudy-particle,
+  .estudy-glow-breathe {
+    animation: none !important;
+  }
+}
+
 @media print {
   .no-print {
     display: none !important;

@@ -21,13 +21,16 @@ import {
   requireCompanyRole,
 } from './authMiddleware.js';
 import {
+  extractCompanyLogoStoragePath,
   getSupabaseAdminClient,
   isSupabaseServerConfigured,
   isValidHexColour,
   isValidUuid,
+  MAX_COMPANY_LOGO_BYTES,
   sanitizeHttpUrl,
   sanitizeStorageSegment,
   slugifyCompanyName,
+  validateLogoImageBuffer,
 } from './supabaseAdmin.js';
 
 const VALID_ROLES: CompanyRole[] = ['company_admin', 'author', 'reviewer', 'viewer'];
@@ -143,6 +146,17 @@ export interface TenantServiceAdapter {
       secondaryColour?: string;
     }
   ): Promise<CompanyWorkspace>;
+
+  uploadCompanyLogo(params: {
+    companyId: string;
+    userId: string;
+    fileName: string;
+    mimeType: string;
+    ext: 'png' | 'jpg' | 'webp';
+    buffer: Buffer;
+  }): Promise<{ company: CompanyWorkspace; logoUrl: string; storagePath: string }>;
+
+  removeCompanyLogo(companyId: string, userId: string): Promise<CompanyWorkspace>;
 
   listMembers(companyId: string): Promise<CompanyMembership[]>;
 
@@ -405,6 +419,12 @@ class SupabaseTenantService implements TenantServiceAdapter {
     }
   ) {
     const admin = getSupabaseAdminClient();
+    const { data: existingRow } = await admin
+      .from('companies')
+      .select('logo_url')
+      .eq('id', companyId)
+      .maybeSingle();
+
     const updates: Record<string, any> = {};
     if (patch.companyName !== undefined) updates.company_name = patch.companyName.trim();
     if (patch.logoUrl !== undefined) updates.logo_url = patch.logoUrl;
@@ -422,6 +442,14 @@ class SupabaseTenantService implements TenantServiceAdapter {
       throw new Error(error?.message || 'Failed to update company settings.');
     }
 
+    // Clean up replaced/cleared managed storage logo if the URL changed
+    if (patch.logoUrl !== undefined && existingRow?.logo_url && existingRow.logo_url !== patch.logoUrl) {
+      const oldPath = extractCompanyLogoStoragePath(existingRow.logo_url, companyId);
+      if (oldPath) {
+        await admin.storage.from('company-logos').remove([oldPath]).catch(() => {});
+      }
+    }
+
     await admin.from('audit_logs').insert({
       company_id: companyId,
       user_id: userId,
@@ -432,6 +460,135 @@ class SupabaseTenantService implements TenantServiceAdapter {
     });
 
     return mapCompany(data);
+  }
+
+  async uploadCompanyLogo(params: {
+    companyId: string;
+    userId: string;
+    fileName: string;
+    mimeType: string;
+    ext: 'png' | 'jpg' | 'webp';
+    buffer: Buffer;
+  }) {
+    const admin = getSupabaseAdminClient();
+    const { data: existingRow } = await admin
+      .from('companies')
+      .select('logo_url')
+      .eq('id', params.companyId)
+      .maybeSingle();
+
+    const baseName = sanitizeStorageSegment(
+      params.fileName.replace(/\.[^.]+$/, '') || 'logo'
+    ).slice(0, 48);
+    const storagePath = `${params.companyId}/${crypto.randomUUID()}-${baseName}.${params.ext}`;
+
+    let { error: uploadErr } = await admin.storage
+      .from('company-logos')
+      .upload(storagePath, params.buffer, {
+        contentType: params.mimeType,
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    // If bucket has not been provisioned yet, create it cleanly with strict limits and retry once
+    if (uploadErr && /bucket.*not found|not.*exist/i.test(uploadErr.message || '')) {
+      await admin.storage
+        .createBucket('company-logos', {
+          public: true,
+          fileSizeLimit: MAX_COMPANY_LOGO_BYTES,
+          allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+        })
+        .catch(() => {});
+
+      const retry = await admin.storage
+        .from('company-logos')
+        .upload(storagePath, params.buffer, {
+          contentType: params.mimeType,
+          cacheControl: '3600',
+          upsert: false,
+        });
+      uploadErr = retry.error;
+    }
+
+    if (uploadErr) {
+      throw new Error(`Company logo upload failed: ${uploadErr.message}`);
+    }
+
+    const { data: pubData } = admin.storage.from('company-logos').getPublicUrl(storagePath);
+    const publicUrl = sanitizeHttpUrl(pubData?.publicUrl);
+    if (!publicUrl) {
+      await admin.storage.from('company-logos').remove([storagePath]).catch(() => {});
+      throw new Error('Could not resolve public URL for uploaded company logo.');
+    }
+
+    const { data: updatedRow, error: updateErr } = await admin
+      .from('companies')
+      .update({ logo_url: publicUrl })
+      .eq('id', params.companyId)
+      .select('*')
+      .single();
+
+    if (updateErr || !updatedRow) {
+      await admin.storage.from('company-logos').remove([storagePath]).catch(() => {});
+      throw new Error(updateErr?.message || 'Failed to save logo reference to company record.');
+    }
+
+    // Remove previous managed logo only after new upload & DB update both succeeded
+    const oldPath = extractCompanyLogoStoragePath(existingRow?.logo_url, params.companyId);
+    if (oldPath && oldPath !== storagePath) {
+      await admin.storage.from('company-logos').remove([oldPath]).catch(() => {});
+    }
+
+    await admin.from('audit_logs').insert({
+      company_id: params.companyId,
+      user_id: params.userId,
+      action: 'company_logo_uploaded',
+      resource_type: 'company',
+      resource_id: params.companyId,
+      details: { storagePath, mimeType: params.mimeType, bytes: params.buffer.byteLength },
+    });
+
+    return {
+      company: mapCompany(updatedRow),
+      logoUrl: publicUrl,
+      storagePath,
+    };
+  }
+
+  async removeCompanyLogo(companyId: string, userId: string): Promise<CompanyWorkspace> {
+    const admin = getSupabaseAdminClient();
+    const { data: existingRow } = await admin
+      .from('companies')
+      .select('logo_url')
+      .eq('id', companyId)
+      .maybeSingle();
+
+    const { data: updatedRow, error: updateErr } = await admin
+      .from('companies')
+      .update({ logo_url: null })
+      .eq('id', companyId)
+      .select('*')
+      .single();
+
+    if (updateErr || !updatedRow) {
+      throw new Error(updateErr?.message || 'Failed to remove company logo.');
+    }
+
+    const oldPath = extractCompanyLogoStoragePath(existingRow?.logo_url, companyId);
+    if (oldPath) {
+      await admin.storage.from('company-logos').remove([oldPath]).catch(() => {});
+    }
+
+    await admin.from('audit_logs').insert({
+      company_id: companyId,
+      user_id: userId,
+      action: 'company_logo_removed',
+      resource_type: 'company',
+      resource_id: companyId,
+      details: {},
+    });
+
+    return mapCompany(updatedRow);
   }
 
   async listMembers(companyId: string): Promise<CompanyMembership[]> {
@@ -1346,6 +1503,90 @@ export function attachTenantRoutes(
         return res.status(400).json({
           success: false,
           error: String(err?.message || 'Failed to update company settings.'),
+        });
+      }
+    }
+  );
+
+  // Company Logo Upload & Replacement (company_admin only; strict magic-byte & 2 MB validation)
+  router.post(
+    '/v2/tenant/company/logo',
+    requireTenantAuth,
+    requireCompanyRole(['company_admin']),
+    async (req: AuthenticatedRequest, res: express.Response) => {
+      try {
+        const { fileName, base64Data } = req.body || {};
+        if (!base64Data || typeof base64Data !== 'string') {
+          return res.status(400).json({
+            success: false,
+            error: 'Missing logo image payload.',
+          });
+        }
+
+        const compact = base64Data.replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
+        if (!compact || !/^[A-Za-z0-9+/=]+$/.test(compact)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid base64 image payload.',
+          });
+        }
+
+        if (compact.length > 2_900_000) {
+          return res.status(413).json({
+            success: false,
+            error: 'Company logo exceeds the 2 MB maximum upload size.',
+          });
+        }
+
+        const buffer = Buffer.from(compact, 'base64');
+        const validation = validateLogoImageBuffer(buffer);
+        if (validation.valid === false) {
+          return res.status(buffer.byteLength > MAX_COMPANY_LOGO_BYTES ? 413 : 400).json({
+            success: false,
+            error: validation.error,
+          });
+        }
+
+        const result = await service.uploadCompanyLogo({
+          companyId: req.tenantAuth!.companyId,
+          userId: req.tenantAuth!.userId,
+          fileName: typeof fileName === 'string' && fileName.trim() ? fileName.trim() : `logo.${validation.ext}`,
+          mimeType: validation.mimeType,
+          ext: validation.ext,
+          buffer,
+        });
+
+        return res.status(201).json({
+          success: true,
+          company: result.company,
+          logoUrl: result.logoUrl,
+          storagePath: result.storagePath,
+        });
+      } catch (err: any) {
+        return res.status(400).json({
+          success: false,
+          error: String(err?.message || 'Failed to upload company logo.'),
+        });
+      }
+    }
+  );
+
+  // Company Logo Removal (company_admin only)
+  router.delete(
+    '/v2/tenant/company/logo',
+    requireTenantAuth,
+    requireCompanyRole(['company_admin']),
+    async (req: AuthenticatedRequest, res: express.Response) => {
+      try {
+        const company = await service.removeCompanyLogo(
+          req.tenantAuth!.companyId,
+          req.tenantAuth!.userId
+        );
+        return res.json({ success: true, company });
+      } catch (err: any) {
+        return res.status(400).json({
+          success: false,
+          error: String(err?.message || 'Failed to remove company logo.'),
         });
       }
     }

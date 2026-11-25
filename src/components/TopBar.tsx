@@ -3,15 +3,12 @@ import {
   Building2,
   ChevronDown,
   CloudUpload,
-  Cpu,
   LogOut,
   Plus,
   Settings,
   User,
 } from 'lucide-react';
 import type {
-  AIModelMeta,
-  AIProvider,
   CompanyMembership,
   CompanyRole,
   CompanyWorkspace,
@@ -24,18 +21,12 @@ import { BrandLogo } from './BrandLogo';
 interface TopBarProps {
   route: AppRoute;
   activeProject: CourseProject | null;
-  selectedProvider: AIProvider;
-  selectedModel: string;
-  availableModels: AIModelMeta[];
-  keysStatus: { groq: boolean };
   activeCompany?: CompanyWorkspace | null;
   activeRole?: CompanyRole | null;
   profile?: UserProfile | null;
   memberships?: CompanyMembership[];
   pendingLocalMigrationCount?: number;
   onNavigate: (route: AppRoute) => void;
-  onSelectProvider: (provider: AIProvider) => void;
-  onSelectModel: (model: string) => void;
   onOpenNewCourse: () => void;
   onSwitchCompany?: (companyId: string) => void;
   onOpenCompanySettings?: () => void;
@@ -46,24 +37,18 @@ interface TopBarProps {
 export const TopBar: React.FC<TopBarProps> = ({
   route,
   activeProject,
-  selectedProvider,
-  selectedModel,
-  availableModels,
-  keysStatus,
   activeCompany,
   activeRole,
   profile,
   memberships = [],
   pendingLocalMigrationCount = 0,
   onNavigate,
-  onSelectModel,
   onOpenNewCourse,
   onSwitchCompany,
   onOpenCompanySettings,
   onOpenLocalMigration,
   onSignOut,
 }) => {
-  const providerModels = availableModels.filter(m => m.provider === selectedProvider);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const primaryColour = activeCompany?.primaryColour || '#052B66';
@@ -128,7 +113,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
       </nav>
 
-      {/* Zone 3: Company Switcher, Groq Selector, New Course, Account Menu */}
+      {/* Zone 3: Company Switcher, New Course, Account Menu */}
       <div className="flex items-center gap-2.5 shrink-0">
         {memberships.length > 1 && activeCompany && onSwitchCompany && (
           <div className="hidden xl:flex items-center gap-1.5 bg-surface border border-slate-200 hover:border-accent-border rounded-lg px-2 py-1.5 transition-colors">
@@ -147,30 +132,6 @@ export const TopBar: React.FC<TopBarProps> = ({
             </select>
           </div>
         )}
-
-        <div className="hidden lg:flex items-center gap-2 bg-surface border border-slate-200 rounded-lg px-2.5 py-1.5">
-          <Cpu className="w-3.5 h-3.5 text-accent-ink shrink-0" />
-          <span className="text-xs font-semibold text-primary whitespace-nowrap">
-            Groq {!keysStatus.groq ? '(No key)' : ''}
-          </span>
-          <span className="text-slate-300">|</span>
-          <select
-            aria-label="Groq AI Model"
-            value={selectedModel}
-            onChange={e => onSelectModel(e.target.value)}
-            className="text-xs text-slate-700 bg-transparent focus:outline-none max-w-[165px] truncate cursor-pointer"
-          >
-            {providerModels.length > 0 ? (
-              providerModels.map(m => (
-                <option key={m.id} value={m.id}>
-                  {m.displayName}
-                </option>
-              ))
-            ) : (
-              <option value={selectedModel}>{selectedModel}</option>
-            )}
-          </select>
-        </div>
 
         <button
           type="button"

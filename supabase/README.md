@@ -15,6 +15,7 @@ Run the SQL migration files in order via Supabase Dashboard -> SQL Editor (or `s
 
 1. `supabase/migrations/001_multi_tenant_schema.sql` — Creates `companies`, `user_profiles`, `company_memberships`, `courses`, `course_versions`, `templates`, `source_documents`, `course_approvals`, `ai_usage_records`, `audit_logs`, indexes, helper functions, and strict Row Level Security (RLS) policies.
 2. `supabase/migrations/002_storage_policies.sql` — Provisions the private `course-sources` Storage bucket and company-isolated storage policies.
+3. `supabase/migrations/003_company_logos_storage.sql` — Provisions the public-read, company-admin-write `company-logos` Storage bucket (2 MB cap, PNG/JPEG/WebP only) and company-scoped policies.
 
 ## 3. Supabase Auth URL Configuration
 In **Supabase Dashboard -> Authentication -> URL Configuration**:

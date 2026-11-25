@@ -114,6 +114,99 @@ export function sanitizeStorageSegment(name: string): string {
     .slice(0, 96) || 'document';
 }
 
+export const MAX_COMPANY_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB
+
+export type VerifiedLogoMime = 'image/png' | 'image/jpeg' | 'image/webp';
+
+export function validateLogoImageBuffer(
+  buffer: Buffer
+):
+  | { valid: true; mimeType: VerifiedLogoMime; ext: 'png' | 'jpg' | 'webp' }
+  | { valid: false; error: string } {
+  if (!Buffer.isBuffer(buffer) || buffer.byteLength === 0) {
+    return { valid: false, error: 'Logo file is empty.' };
+  }
+  if (buffer.byteLength > MAX_COMPANY_LOGO_BYTES) {
+    return { valid: false, error: 'Company logo exceeds the 2 MB maximum file size.' };
+  }
+
+  // Block SVG, XML, HTML, or script payloads regardless of filename extension
+  const headText = buffer
+    .subarray(0, Math.min(buffer.byteLength, 96))
+    .toString('utf8')
+    .trimStart()
+    .toLowerCase();
+  if (
+    headText.startsWith('<svg') ||
+    headText.startsWith('<?xml') ||
+    headText.startsWith('<!doctype') ||
+    headText.startsWith('<html') ||
+    headText.startsWith('<script')
+  ) {
+    return {
+      valid: false,
+      error: 'SVG and HTML uploads are not allowed. Upload a PNG, JPG, JPEG, or WebP logo.',
+    };
+  }
+
+  // PNG magic header: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer.byteLength >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return { valid: true, mimeType: 'image/png', ext: 'png' };
+  }
+
+  // JPEG magic header: FF D8 FF
+  if (
+    buffer.byteLength >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  ) {
+    return { valid: true, mimeType: 'image/jpeg', ext: 'jpg' };
+  }
+
+  // WebP magic header: "RIFF" [4 bytes] "WEBP"
+  if (
+    buffer.byteLength >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return { valid: true, mimeType: 'image/webp', ext: 'webp' };
+  }
+
+  return {
+    valid: false,
+    error: 'Invalid image signature. Only genuine PNG, JPG, JPEG, and WebP files are accepted.',
+  };
+}
+
+export function extractCompanyLogoStoragePath(
+  logoUrl: string | null | undefined,
+  companyId: string
+): string | null {
+  if (!logoUrl || !isValidUuid(companyId)) return null;
+  try {
+    const parsed = new URL(logoUrl);
+    const marker = `/storage/v1/object/public/company-logos/${companyId}/`;
+    const idx = parsed.pathname.indexOf(marker);
+    if (idx === -1) return null;
+    const filePart = decodeURIComponent(parsed.pathname.slice(idx + marker.length));
+    if (!filePart || filePart.includes('..') || filePart.includes('\\')) return null;
+    return `${companyId}/${filePart}`;
+  } catch {
+    return null;
+  }
+}
+
 export function estimateGroqCostUsd(model: string, inputTokens = 0, outputTokens = 0): number {
   const lower = String(model || '').toLowerCase();
   // Conservative approximate per-1M token pricing estimates in USD for usage tracking

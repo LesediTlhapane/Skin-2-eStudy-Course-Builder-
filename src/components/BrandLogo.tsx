@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { getContrastText } from '../utils/brandTheme';
 
 interface BrandLogoProps {
   variant?: 'full' | 'icon';
@@ -21,22 +22,28 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 }) => {
   const [imgFailed, setImgFailed] = useState(false);
 
+  useEffect(() => {
+    setImgFailed(false);
+  }, [logoUrl]);
+
   const heightClasses = {
-    sm: 'h-5',
-    md: 'h-6',
-    lg: 'h-8',
+    sm: 'h-6',
+    md: 'h-8',
+    lg: 'h-10',
   };
 
   if (logoUrl && !imgFailed) {
     return (
-      <div className={`inline-flex items-center gap-2 shrink-0 select-none ${className}`}>
-        <img
-          src={logoUrl}
-          alt={companyName || 'Company Logo'}
-          onError={() => setImgFailed(true)}
-          className={`${heightClasses[size]} w-auto max-w-[140px] object-contain shrink-0 rounded`}
-          referrerPolicy="no-referrer"
-        />
+      <div className={`inline-flex items-center gap-2.5 shrink-0 select-none ${className}`}>
+        <div className="bg-slate-50 border border-slate-200/80 rounded-lg px-1.5 py-1 flex items-center justify-center shrink-0">
+          <img
+            src={logoUrl}
+            alt={companyName || 'Company Logo'}
+            onError={() => setImgFailed(true)}
+            className={`${heightClasses[size]} w-auto max-w-[140px] object-contain shrink-0`}
+            referrerPolicy="no-referrer"
+          />
+        </div>
         {variant === 'full' && companyName && (
           <span
             className="text-sm font-bold tracking-tight truncate max-w-[180px]"
@@ -63,7 +70,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           className="relative w-8 h-8 rounded-lg flex items-center justify-center text-xs font-extrabold shrink-0 shadow-xs"
           style={{
             backgroundColor: primaryColour,
-            color: 'var(--brand-primary-contrast, #FFFFFF)',
+            color: getContrastText(primaryColour),
             border: `2px solid ${secondaryColour}`,
           }}
         >
