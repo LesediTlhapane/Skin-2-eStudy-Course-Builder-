@@ -19,6 +19,7 @@ import {
   extractTemplateFromDocumentWithAI,
   generateOrRefineTemplateWithCopilotAI,
   evaluateCourseQAWithAI,
+  remediateCourseQualityWithAI,
   parseFilledTemplateTextDeterministically,
   parseFilledCourseBriefWithAI,
 } from './ai/index.js';
@@ -615,6 +616,29 @@ export function createApiRouter(options?: {
         return res.json({ success: true, report });
       } catch (err: any) {
         return res.status(resolveErrorStatus(err)).json({ success: false, error: sanitizeErrorMessage(err, 'QA evaluation failed.') });
+      }
+    }
+  );
+
+  router.post(
+    '/v2/qa/remediate',
+    requireTenantAuth,
+    requireEditorRole,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const { project, provider, model } = req.body || {};
+        if (!project || typeof project !== 'object') {
+          return res.status(400).json({ success: false, error: 'Missing project payload.' });
+        }
+        const result = await runWithAiTelemetry(req, 'qa.remediate', () =>
+          remediateCourseQualityWithAI({ project, provider, model })
+        );
+        return res.json({ success: true, ...result });
+      } catch (err: any) {
+        return res.status(resolveErrorStatus(err)).json({
+          success: false,
+          error: sanitizeErrorMessage(err, 'Guided QA remediation failed.'),
+        });
       }
     }
   );

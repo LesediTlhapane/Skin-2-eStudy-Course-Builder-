@@ -355,6 +355,38 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
             />
           </div>
         </div>
+        {(() => {
+          const actualK = assessments.items
+            .filter(it => it.assessmentDomain === 'knowledge')
+            .reduce((s, it) => s + (Number(it.weightingPercent) || 0), 0);
+          const actualP = assessments.items
+            .filter(it => it.assessmentDomain === 'practical')
+            .reduce((s, it) => s + (Number(it.weightingPercent) || 0), 0);
+          const totalItemsW = actualK + actualP;
+          const domainSumOk =
+            assessments.knowledgeWeightPercent + assessments.practicalWeightPercent === 100;
+          const itemsOk =
+            assessments.items.length === 0 ||
+            (totalItemsW === 100 &&
+              actualK === assessments.knowledgeWeightPercent &&
+              actualP === assessments.practicalWeightPercent);
+          return (
+            <div
+              className={`px-3 py-2 rounded-lg border text-xs flex flex-wrap items-center justify-between gap-2 ${
+                domainSumOk && itemsOk
+                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800'
+                  : 'bg-red-50 border-red-200 text-red-800'
+              }`}
+            >
+              <span>
+                <strong>Weighting Reconciliation:</strong> Declared {assessments.knowledgeWeightPercent}% Knowledge + {assessments.practicalWeightPercent}% Practical · Actual Items: {actualK}% Knowledge + {actualP}% Practical = {totalItemsW}%
+              </span>
+              <span className="font-bold">
+                {domainSumOk && itemsOk ? 'Balanced (100%)' : 'Mismatch — Must Equal 100% & Match Splits'}
+              </span>
+            </div>
+          );
+        })()}
       </section>
 
       {/* 3-Way Alignment Score & Constructive Alignment Matrix */}

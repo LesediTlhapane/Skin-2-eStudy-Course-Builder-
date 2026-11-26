@@ -381,12 +381,20 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
       );
     }
 
+    children.push(
+      para(
+        'Educational Guidance Disclaimer: Any regulatory, legislative (including POPIA Act 4 of 2013 or PEPUDA Act 4 of 2000), or governance discussions in this course are provided for educational purposes only and do not constitute formal legal advice. Organisations must consult qualified South African legal or compliance advisors before making formal compliance decisions.',
+        'Regulatory & Educational Disclaimer'
+      )
+    );
+
     if (project.sources.length > 0) {
-      children.push(h1('7. Source Register & Verification Status'));
+      children.push(h1('7. Consolidated References & Source Register'));
       children.push(
         buildTable(
-          ['Title', 'Author / Organisation', 'Date', 'Version', 'Reference / URL', 'Status'],
-          project.sources.map(s => [
+          ['Ref', 'Title', 'Author / Organisation', 'Date', 'Version', 'Reference / URL', 'Status'],
+          project.sources.map((s, idx) => [
+            `[Source ${idx + 1}]`,
             s.title,
             s.authorOrOrganisation,
             s.publicationDate,
@@ -456,6 +464,22 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
         });
       }
       children.push(para(mod.summary, 'Module Summary'));
+    }
+    children.push(
+      para(
+        'Educational Guidance Disclaimer: Regulatory and legislative discussions in this manual are provided for workplace training and educational purposes only and do not constitute formal legal advice.',
+        'Disclaimer'
+      )
+    );
+    if (project.sources.length > 0) {
+      children.push(h1('Consolidated References & Sources'));
+      project.sources.forEach((s, idx) => {
+        children.push(
+          para(
+            `[Source ${idx + 1}] ${s.title} — ${s.authorOrOrganisation} (${s.publicationDate || 'n.d.'}) · ${s.referenceOrUrl} [${s.verificationStatus}]`
+          )
+        );
+      });
     }
   } else if (type === 'assessment_document' || type === 'marking_guide') {
     children.push(h1('Assessment Strategy'));
@@ -554,13 +578,36 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
           ])
         )
       );
+      if (qa.durationValidation) {
+        children.push(para(qa.durationValidation.summary, 'Duration Reconciliation'));
+      }
+      if (qa.assessmentValidation) {
+        children.push(
+          para(
+            `Declared ${qa.assessmentValidation.declaredKnowledgeWeight}%/${qa.assessmentValidation.declaredPracticalWeight}% · Items ${qa.assessmentValidation.actualKnowledgeWeight}%/${qa.assessmentValidation.actualPracticalWeight}% (Total ${qa.assessmentValidation.totalItemWeight}%, Pass ${qa.assessmentValidation.passRequirementPercent}%)`,
+            'Assessment Weighting Math'
+          )
+        );
+      }
+      if (qa.verificationSummary) {
+        children.push(
+          para(
+            `Automated: ${qa.verificationSummary.automatedCount} | Verified Sources: ${qa.verificationSummary.externalVerifiedCount} | Unverified: ${qa.verificationSummary.unverifiedCount} | Expert Review Required: ${qa.verificationSummary.expertReviewRequiredCount}. ${qa.verificationSummary.externalVerificationNote}`,
+            'Verification Origin & Scope'
+          )
+        );
+      }
       if (qa.accessibilityAudit?.limitationsNote) {
         children.push(para(qa.accessibilityAudit.limitationsNote, 'Accessibility Audit Scope'));
       }
       if (qa.blockingErrors && qa.blockingErrors.length > 0) {
-        children.push(h2('Blocking Errors Preventing Release'));
+        children.push(h2('Blocking & Critical Issues Preventing Release'));
         for (const err of qa.blockingErrors) {
-          children.push(para(`${err.rule} (${err.affectedSection}): ${err.description} [Fix: ${err.recommendedFix}]`));
+          children.push(
+            para(
+              `[${(err.prioritySeverity || 'critical').toUpperCase()} · ${err.verificationOrigin || 'automated'}] ${err.rule} (${err.affectedSection}): ${err.description} [Fix: ${err.recommendedFix}]`
+            )
+          );
         }
       } else if (qa.criticalFailures.length > 0) {
         children.push(h2('Blocking Critical Failures'));
@@ -569,9 +616,13 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
         }
       }
       if (qa.warnings && qa.warnings.length > 0) {
-        children.push(h2('Advisory Warnings (Non-Blocking)'));
+        children.push(h2('Advisory & High-Priority Warnings'));
         for (const w of qa.warnings) {
-          children.push(para(`${w.rule} (${w.affectedSection}): ${w.description}`));
+          children.push(
+            para(
+              `[${(w.prioritySeverity || 'medium').toUpperCase()} · ${w.verificationOrigin || 'automated'}] ${w.rule} (${w.affectedSection}): ${w.description}`
+            )
+          );
         }
       }
       if (qa.humanSignOff.roles) {
@@ -764,11 +815,13 @@ export function exportDeliverableHtmlOrPrint(
         : '<p>No QA evaluation run yet.</p>'
     }`;
 
+    bodyHtml += `<div class="box"><strong>Educational &amp; Legal Guidance Disclaimer:</strong> Regulatory, statutory (including POPIA Act 4 of 2013 or PEPUDA Act 4 of 2000), and governance discussions in this programme are for educational purposes only and do not constitute formal legal advice.</div>`;
+
     if (project.sources.length > 0) {
-      bodyHtml += `<h2>7. Source Register</h2><table><thead><tr><th>Title</th><th>Author/Org</th><th>Ref</th><th>Status</th></tr></thead><tbody>${project.sources
+      bodyHtml += `<h2>7. Consolidated References &amp; Source Register</h2><table><thead><tr><th>Ref</th><th>Title</th><th>Author/Org</th><th>Ref / URL</th><th>Status</th></tr></thead><tbody>${project.sources
         .map(
-          s =>
-            `<tr><td>${escapeHtml(s.title)}</td><td>${escapeHtml(s.authorOrOrganisation)}</td><td>${escapeHtml(s.referenceOrUrl)}</td><td>${escapeHtml(s.verificationStatus)}</td></tr>`
+          (s, idx) =>
+            `<tr><td>[Source ${idx + 1}]</td><td>${escapeHtml(s.title)}</td><td>${escapeHtml(s.authorOrOrganisation)}</td><td>${escapeHtml(s.referenceOrUrl)}</td><td>${escapeHtml(s.verificationStatus)}</td></tr>`
         )
         .join('')}</tbody></table>`;
     }
@@ -811,6 +864,18 @@ export function exportDeliverableHtmlOrPrint(
     bodyHtml += `<h2>Quality Assurance Report</h2>${
       qa
         ? `<p><strong>Verdict:</strong> ${escapeHtml(qa.verdict)} (${qa.weightedScore}%)</p><p>${escapeHtml(qa.verdictExplanation)}</p>${
+            qa.durationValidation
+              ? `<p><strong>Duration Reconciliation:</strong> ${escapeHtml(qa.durationValidation.summary)}</p>`
+              : ''
+          }${
+            qa.assessmentValidation
+              ? `<p><strong>Assessment Weighting:</strong> Declared ${qa.assessmentValidation.declaredKnowledgeWeight}%/${qa.assessmentValidation.declaredPracticalWeight}% · Items ${qa.assessmentValidation.actualKnowledgeWeight}%/${qa.assessmentValidation.actualPracticalWeight}% (Total ${qa.assessmentValidation.totalItemWeight}%)</p>`
+              : ''
+          }${
+            qa.verificationSummary
+              ? `<p><strong>Verification Origins:</strong> Automated ${qa.verificationSummary.automatedCount} · Verified Sources ${qa.verificationSummary.externalVerifiedCount} · Unverified ${qa.verificationSummary.unverifiedCount} · Expert Review ${qa.verificationSummary.expertReviewRequiredCount}. ${escapeHtml(qa.verificationSummary.externalVerificationNote)}</p>`
+              : ''
+          }${
             qa.accessibilityAudit
               ? `<p><strong>Accessibility Audit:</strong> ${qa.accessibilityAudit.scorePercent}% · ${qa.accessibilityAudit.averageSentenceWords} words/sentence (${escapeHtml(qa.accessibilityAudit.readabilityBand)})</p>`
               : ''

@@ -76,12 +76,15 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
   onJumpToStage,
   onProceedToPublish,
 }) => {
-  const [weights, setWeights] = useState<QADimensionWeight[]>(
-    project.latestQA?.weights || DEFAULT_QA_WEIGHTS
-  );
+  const [weights, setWeights] = useState<QADimensionWeight[]>(() => {
+    const saved = project.latestQA?.weights;
+    return saved && saved.length === DEFAULT_QA_WEIGHTS.length ? saved : DEFAULT_QA_WEIGHTS;
+  });
   const [isRunning, setIsRunning] = useState(false);
+  const [isRemediating, setIsRemediating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [repairNotice, setRepairNotice] = useState<string | null>(null);
+  const [remediationNotes, setRemediationNotes] = useState<string[] | null>(null);
   const [releaseFeedback, setReleaseFeedback] = useState<string | null>(null);
   const [quickSignerName, setQuickSignerName] = useState('');
 
@@ -338,6 +341,47 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     }
   };
 
+  const handleGuidedRemediation = async () => {
+    setIsRemediating(true);
+    setErrorMsg(null);
+    setRemediationNotes(null);
+    try {
+      const res = await apiFetch('/api/v2/qa/remediate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project: compactProjectForApi(project),
+          provider: selectedProvider,
+          model: selectedModel,
+        }),
+      });
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success || !data.updatedProject) {
+        throw new Error(data.error || 'Guided QA remediation failed.');
+      }
+      const changes: string[] = Array.isArray(data.changesSummary) ? data.changesSummary : [];
+      onUpdateProject(
+        prev => ({
+          ...prev,
+          brief: data.updatedProject.brief || prev.brief,
+          curriculum: data.updatedProject.curriculum || prev.curriculum,
+          assessments: data.updatedProject.assessments || prev.assessments,
+          content: data.updatedProject.content || prev.content,
+          updatedAt: new Date().toISOString(),
+        }),
+        {
+          trigger: 'ai_generation',
+          summary: `Applied Guided QA Remediation (${changes.length} targeted update(s))`,
+        }
+      );
+      setRemediationNotes(changes);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Guided QA remediation failed.');
+    } finally {
+      setIsRemediating(false);
+    }
+  };
+
   const allThreeRolesApproved =
     roles.sme.signedOff &&
     Boolean(roles.sme.reviewerName.trim()) &&
@@ -418,8 +462,43 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
   const resolveDimensionStage = (dimId: string): WorkflowStage => {
     if (dimId === 'curriculum_coverage') return 2;
-    if (dimId === 'outcomes_alignment' || dimId === 'assessment_quality') return 4;
+    if (dimId === 'learning_outcomes' || dimId === 'outcomes_alignment') return 3;
+    if (dimId === 'instructional_alignment' || dimId === 'assessment_quality') return 4;
+    if (dimId === 'source_credibility') return 1;
     return 5;
+  };
+
+  const renderSeverityAndOrigin = (issue: QAIssueItem) => {
+    const sev = issue.prioritySeverity || (issue.severity === 'blocking' ? 'critical' : issue.severity === 'warning' ? 'medium' : 'low');
+    const sevStyle =
+      sev === 'critical'
+        ? 'bg-red-100 text-red-900 border-red-300'
+        : sev === 'high'
+        ? 'bg-orange-100 text-orange-900 border-orange-300'
+        : sev === 'medium'
+        ? 'bg-amber-100 text-amber-900 border-amber-300'
+        : 'bg-slate-100 text-slate-700 border-slate-300';
+
+    const origin = issue.verificationOrigin || 'automated';
+    const originLabel =
+      origin === 'external_verified'
+        ? 'Verified Source'
+        : origin === 'unverified'
+        ? 'Unverified'
+        : origin === 'expert_review_required'
+        ? 'Expert / Legal Review'
+        : 'Automated Check';
+
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5 ml-2">
+        <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase rounded border ${sevStyle}`}>
+          {sev}
+        </span>
+        <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded border border-slate-200 bg-white text-slate-600">
+          {originLabel}
+        </span>
+      </span>
+    );
   };
 
   // Governance sign-off no longer blocks Stage 7 release when structural QA passes;
@@ -503,35 +582,82 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             Stage 6: Quality Assurance, Accessibility & Multi-Role Sign-Off
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Separates release-blocking errors from advisory warnings and informational checks across the 7-dimension QA framework.
+            Separates critical release blockers from high/medium/low advisories across the 12-dimension QA framework, with verification-origin tracking.
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={isRunning || totalWeight !== 100}
-          onClick={handleRunQA}
-          className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-        >
-          {isRunning ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Sparkles className="w-3.5 h-3.5" />
+        <div className="flex flex-wrap items-center gap-2">
+          {(activeBlockingErrors.length > 0 || activeWarnings.length > 0) && (
+            <button
+              type="button"
+              disabled={isRemediating || isRunning}
+              onClick={handleGuidedRemediation}
+              className="px-3.5 py-2 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-60 text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              {isRemediating ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+              ) : (
+                <Wrench className="w-3.5 h-3.5 text-accent" />
+              )}
+              <span>
+                {isRemediating ? 'Applying Guided Fixes...' : 'Apply Guided QA Remediation'}
+              </span>
+            </button>
           )}
-          <span>
-            {isRunning
-              ? 'Evaluating QA...'
-              : qa
-              ? 'Re-run Quality Assurance'
-              : 'Run Quality Assurance'}
-          </span>
-        </button>
+          <button
+            type="button"
+            disabled={isRunning || isRemediating || totalWeight !== 100}
+            onClick={handleRunQA}
+            className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+          >
+            {isRunning ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+            <span>
+              {isRunning
+                ? 'Evaluating QA...'
+                : qa
+                ? 'Re-run Quality Assurance'
+                : 'Run Quality Assurance'}
+            </span>
+          </button>
+        </div>
       </div>
 
       {isRunning && (
         <div className="p-3 bg-primary text-primary-contrast border-b-2 border-accent rounded-lg text-xs font-semibold flex items-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin text-accent" />
-          <span>Running 7-dimension AI Quality Assurance & alignment verification...</span>
+          <span>Running 12-dimension AI Quality Assurance, regulatory, technical & alignment verification...</span>
+        </div>
+      )}
+
+      {isRemediating && (
+        <div className="p-3 bg-primary text-primary-contrast border-b-2 border-accent rounded-lg text-xs font-semibold flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-accent" />
+          <span>Applying structure-preserving QA remediation (weights, duration, legal citations, hypothetical labels, ML accuracy & audience tone)...</span>
+        </div>
+      )}
+
+      {remediationNotes && remediationNotes.length > 0 && (
+        <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-xl text-xs text-emerald-950 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold">Guided QA Remediation Applied — Re-run Quality Assurance to verify updated score</span>
+            <button
+              type="button"
+              onClick={handleRunQA}
+              disabled={isRunning || totalWeight !== 100}
+              className="px-3 py-1 rounded bg-primary text-primary-contrast font-bold cursor-pointer"
+            >
+              Re-run QA Now
+            </button>
+          </div>
+          <ul className="list-disc pl-5 space-y-0.5 text-emerald-900">
+            {remediationNotes.map((note, idx) => (
+              <li key={idx}>{note}</li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -607,6 +733,65 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
         </div>
       </section>
 
+      {/* Duration, Assessment Weighting & Source Verification Validation Grid */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-primary">Duration Reconciliation</span>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                liveStructural.durationValidation.status === 'aligned'
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : liveStructural.durationValidation.status === 'fail'
+                  ? 'bg-red-50 text-red-700'
+                  : 'bg-amber-50 text-amber-700'
+              }`}
+            >
+              {liveStructural.durationValidation.status}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            {liveStructural.durationValidation.summary}
+          </p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-primary">Assessment Weighting Math</span>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                liveStructural.assessmentValidation.status === 'aligned'
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-red-50 text-red-700'
+              }`}
+            >
+              {liveStructural.assessmentValidation.status}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            Declared: {liveStructural.assessmentValidation.declaredKnowledgeWeight}% Knowledge /{' '}
+            {liveStructural.assessmentValidation.declaredPracticalWeight}% Practical · Actual Items:{' '}
+            {liveStructural.assessmentValidation.actualKnowledgeWeight}% +{' '}
+            {liveStructural.assessmentValidation.actualPracticalWeight}% ={' '}
+            {liveStructural.assessmentValidation.totalItemWeight}% (Pass{' '}
+            {liveStructural.assessmentValidation.passRequirementPercent}%).
+          </p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-primary">Verification Origin Status</span>
+            <span className="text-[11px] font-mono font-bold text-primary">
+              {liveStructural.sourceVerificationSummary.verifiedSources}/
+              {liveStructural.sourceVerificationSummary.totalSources} Verified
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            {liveStructural.sourceVerificationSummary.externalVerificationNote}
+          </p>
+        </div>
+      </section>
+
       {/* Blocking Errors List (shown immediately whenever any exist, even before running AI QA) */}
       {activeBlockingErrors.length > 0 && (
         <section className="bg-white border border-red-300 rounded-xl p-5 space-y-3">
@@ -647,8 +832,14 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
               <div className="space-y-1">
                 <div className="font-bold text-red-900">
                   {err.rule} ({err.affectedSection})
+                  {renderSeverityAndOrigin(err)}
                 </div>
                 <div className="text-red-800">{err.description}</div>
+                {err.exampleExcerpt && (
+                  <div className="text-[11px] bg-white/80 border border-red-200 rounded px-2 py-1 text-slate-700 italic">
+                    Excerpt: “{err.exampleExcerpt}”
+                  </div>
+                )}
                 <div className="text-slate-700">
                   <strong>Recommended Fix:</strong> {err.recommendedFix}
                 </div>
@@ -676,9 +867,9 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
         <section className="bg-white border border-amber-200 rounded-xl p-5 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-bold text-amber-900">
-              Advisory Warnings ({activeWarnings.length}) — Does Not Block Publishing
+              Advisory & High-Priority Warnings ({activeWarnings.length})
             </h3>
-            <span className="text-[11px] font-semibold text-amber-700">Optional improvements</span>
+            <span className="text-[11px] font-semibold text-amber-700">High/Medium/Low improvements</span>
           </div>
           <div className="space-y-2">
             {activeWarnings.map(w => (
@@ -686,11 +877,17 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                 key={w.id}
                 className="p-3 bg-amber-50/60 border border-amber-200 rounded-lg text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-2"
               >
-                <div className="space-y-0.5">
+                <div className="space-y-1">
                   <div className="font-bold text-amber-950">
                     {w.rule} ({w.affectedSection})
+                    {renderSeverityAndOrigin(w)}
                   </div>
                   <div className="text-amber-900">{w.description}</div>
+                  {w.exampleExcerpt && (
+                    <div className="text-[11px] bg-white/80 border border-amber-200 rounded px-2 py-1 text-slate-700 italic">
+                      Excerpt: “{w.exampleExcerpt}”
+                    </div>
+                  )}
                   <div className="text-slate-600">
                     <strong>Suggestion:</strong> {w.recommendedFix}
                   </div>
@@ -925,7 +1122,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
         <>
           {/* Verdict Banner */}
           <section
-            className={`p-5 rounded-xl border space-y-2 ${
+            className={`p-5 rounded-xl border space-y-3 ${
               qa.verdict === 'PASS'
                 ? 'bg-emerald-50 border-emerald-200'
                 : qa.verdict === 'PASS WITH RECOMMENDATIONS'
@@ -944,6 +1141,32 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
               </div>
             </div>
             <p className="text-xs text-slate-800 leading-relaxed">{qa.verdictExplanation}</p>
+            {qa.verificationSummary && (
+              <div className="flex flex-wrap gap-2 text-[11px] pt-1">
+                <span className="px-2 py-0.5 rounded bg-white/80 border border-slate-200 font-semibold text-slate-700">
+                  Automated Checks: {qa.verificationSummary.automatedCount}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-white/80 border border-emerald-200 font-semibold text-emerald-800">
+                  Verified Sources: {qa.verificationSummary.externalVerifiedCount}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-white/80 border border-amber-200 font-semibold text-amber-800">
+                  Unverified Findings: {qa.verificationSummary.unverifiedCount}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-white/80 border border-purple-200 font-semibold text-purple-800">
+                  Requires Expert/Legal Review: {qa.verificationSummary.expertReviewRequiredCount}
+                </span>
+              </div>
+            )}
+            {qa.humanReviewRequirements && qa.humanReviewRequirements.length > 0 && (
+              <div className="p-3 bg-white/80 border border-slate-200 rounded-lg text-[11px] text-slate-700 space-y-1">
+                <div className="font-bold text-primary">Required Human & Specialist Reviews</div>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  {qa.humanReviewRequirements.map((req, idx) => (
+                    <li key={idx}>{req}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </section>
 
           {/* Dimension Breakdown */}

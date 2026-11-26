@@ -1,13 +1,18 @@
 import type { CourseTemplate, QADimensionWeight } from '../types';
 
 export const DEFAULT_QA_WEIGHTS: QADimensionWeight[] = [
-  { id: 'curriculum_coverage', label: 'Curriculum and subject coverage', weight: 20 },
-  { id: 'outcomes_alignment', label: 'Learning outcomes and alignment', weight: 20 },
-  { id: 'assessment_quality', label: 'Assessment quality', weight: 20 },
-  { id: 'content_accuracy_sources', label: 'Content accuracy and sources', weight: 15 },
-  { id: 'learning_experience', label: 'Learning experience', weight: 10 },
-  { id: 'compliance_accessibility', label: 'Compliance and accessibility', weight: 10 },
-  { id: 'presentation_usability', label: 'Presentation and usability', weight: 5 },
+  { id: 'curriculum_coverage', label: 'Curriculum structure', weight: 10 },
+  { id: 'learning_outcomes', label: 'Learning outcomes', weight: 8 },
+  { id: 'instructional_alignment', label: 'Instructional alignment', weight: 10 },
+  { id: 'assessment_quality', label: 'Assessment quality', weight: 10 },
+  { id: 'factual_accuracy', label: 'Factual accuracy', weight: 10 },
+  { id: 'regulatory_accuracy', label: 'Regulatory accuracy', weight: 10 },
+  { id: 'source_credibility', label: 'Source credibility', weight: 8 },
+  { id: 'technical_accuracy', label: 'Technical accuracy', weight: 10 },
+  { id: 'audience_suitability', label: 'Audience suitability', weight: 8 },
+  { id: 'learning_experience', label: 'Learning experience', weight: 6 },
+  { id: 'accessibility', label: 'Accessibility', weight: 6 },
+  { id: 'presentation_quality', label: 'Presentation quality', weight: 4 },
 ];
 
 export const SYSTEM_TEMPLATES: CourseTemplate[] = [

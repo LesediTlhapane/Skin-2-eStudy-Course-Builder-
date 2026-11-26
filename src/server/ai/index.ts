@@ -22,6 +22,7 @@ export {
   computeAssessmentAlignmentFlags,
   detectDeterministicCriticalFailures,
   evaluateCourseQAWithAI,
+  remediateCourseQualityWithAI,
 } from './qaEngineServer.js';
 export {
   parseFilledTemplateTextDeterministically,

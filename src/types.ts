@@ -294,6 +294,7 @@ export interface AssessmentItem {
   classification: 'formative' | 'summative';
   outcomeIds: string[];
   weightingPercent: number;
+  durationMinutes?: number;
   objective: string;
   instructions: string;
   promptOrQuestion: string;
@@ -447,21 +448,41 @@ export interface LearningContentPlan {
 
 /* ---------------- STAGE 6: QUALITY ASSURANCE ---------------- */
 
+export type QADimensionId =
+  | 'curriculum_coverage'
+  | 'learning_outcomes'
+  | 'instructional_alignment'
+  | 'assessment_quality'
+  | 'factual_accuracy'
+  | 'regulatory_accuracy'
+  | 'source_credibility'
+  | 'technical_accuracy'
+  | 'audience_suitability'
+  | 'learning_experience'
+  | 'accessibility'
+  | 'presentation_quality'
+  // Legacy 7-dimension IDs retained for backward compatibility with stored reports
+  | 'outcomes_alignment'
+  | 'content_accuracy_sources'
+  | 'compliance_accessibility'
+  | 'presentation_usability';
+
+export type QAPrioritySeverity = 'critical' | 'high' | 'medium' | 'low';
+
+export type QAVerificationOrigin =
+  | 'automated'
+  | 'external_verified'
+  | 'unverified'
+  | 'expert_review_required';
+
 export interface QADimensionWeight {
-  id:
-    | 'curriculum_coverage'
-    | 'outcomes_alignment'
-    | 'assessment_quality'
-    | 'content_accuracy_sources'
-    | 'learning_experience'
-    | 'compliance_accessibility'
-    | 'presentation_usability';
+  id: QADimensionId;
   label: string;
   weight: number;
 }
 
 export interface QADimensionResult {
-  id: QADimensionWeight['id'];
+  id: QADimensionId;
   label: string;
   weight: number;
   score: number;
@@ -484,6 +505,9 @@ export interface QACriticalFailure {
   description: string;
   affectedSection: string;
   recommendedFix: string;
+  prioritySeverity?: QAPrioritySeverity;
+  verificationOrigin?: QAVerificationOrigin;
+  exampleExcerpt?: string;
 }
 
 export interface DeterministicCheckItem {
@@ -511,6 +535,39 @@ export interface TechnicalValidationSummary {
   checks: DeterministicCheckItem[];
 }
 
+export interface DurationValidationSummary {
+  declaredDurationText: string;
+  declaredMinutes: number | null;
+  plannedLessonMinutes: number;
+  generatedLessonMinutes: number;
+  assessmentMinutes: number;
+  totalReconciledMinutes: number;
+  varianceMinutes: number | null;
+  status: 'aligned' | 'warning' | 'fail' | 'unspecified';
+  summary: string;
+}
+
+export interface AssessmentValidationSummary {
+  totalItems: number;
+  declaredKnowledgeWeight: number;
+  declaredPracticalWeight: number;
+  actualKnowledgeWeight: number;
+  actualPracticalWeight: number;
+  totalItemWeight: number;
+  passRequirementPercent: number;
+  status: 'aligned' | 'fail';
+  issues: string[];
+}
+
+export interface SourceVerificationSummary {
+  totalSources: number;
+  verifiedSources: number;
+  pendingSources: number;
+  unsupportedClaims: number;
+  unverifiedStatClaims: number;
+  externalVerificationNote: string;
+}
+
 export interface RoleSignOffRecord {
   signedOff: boolean;
   reviewerName: string;
@@ -521,12 +578,15 @@ export interface RoleSignOffRecord {
 export interface QAIssueItem {
   id: string;
   severity: 'blocking' | 'warning' | 'info';
+  prioritySeverity?: QAPrioritySeverity;
+  verificationOrigin?: QAVerificationOrigin;
   rule: string;
   description: string;
   stage: WorkflowStage;
   affectedSection: string;
   moduleNumber?: number;
   field?: string;
+  exampleExcerpt?: string;
   recommendedFix: string;
 }
 
@@ -545,6 +605,17 @@ export interface QAEvaluationReport {
   verdictExplanation: string;
   accessibilityAudit?: AccessibilityAuditSummary;
   technicalValidation?: TechnicalValidationSummary;
+  durationValidation?: DurationValidationSummary;
+  assessmentValidation?: AssessmentValidationSummary;
+  sourceVerificationSummary?: SourceVerificationSummary;
+  verificationSummary?: {
+    automatedCount: number;
+    externalVerifiedCount: number;
+    unverifiedCount: number;
+    expertReviewRequiredCount: number;
+    externalVerificationNote: string;
+  };
+  humanReviewRequirements?: string[];
   humanSignOff: {
     signedOff: boolean;
     reviewerName: string;

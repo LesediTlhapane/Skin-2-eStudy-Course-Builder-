@@ -263,12 +263,13 @@ export async function proposeCurriculumWithAI(params: {
     model: params.model,
     responseFormat: 'json',
     systemInstruction: `You are a Principal Curriculum Architect for eStudy South Africa.
-CRITICAL CURRICULUM PRESERVATION RULES:
+CRITICAL CURRICULUM PRESERVATION & DURATION RULES:
 1. Every subject topic supplied in the brief and sources is AUTHORITATIVE. NEVER silently omit, replace, or over-generalise required subject matter.
-2. Do NOT force every course into 3 modules or a generic AI/SOP structure. Adapt module count, titles, and sequencing to the actual subject, duration (${params.brief.estimatedDuration || 'unspecified'}), and learner level (${params.brief.experienceLevel}).
-3. If AI integration mode is "none", do NOT inject AI modules or AI topics.
-4. If QCTO module pattern is enabled (${params.brief.saCompliance?.qctoModulePattern ? 'YES' : 'NO'}), tag modules appropriately as "Knowledge Module", "Practical Skill Module", or "Work Experience Module"; otherwise use "Standard Module".
-5. Build an exhaustive coverageChecks array comparing EVERY supplied topic against your proposed curriculum (status: "mapped", "omitted", "generalised", "clarification_needed", or "recommended").
+2. Do NOT force every course into 3 modules or a generic AI/SOP structure. Adapt module count, titles, and sequencing to the actual subject, declared duration (${params.brief.estimatedDuration || 'unspecified'}), and learner level (${params.brief.experienceLevel}).
+3. Reconcile total lesson durationMinutes across all modules PLUS estimated assessment time so the sum aligns cleanly with the declared course duration (${params.brief.estimatedDuration || 'unspecified'}). Explicitly explain this time budget in rationale.
+4. If AI integration mode is "none", do NOT inject AI modules or AI topics.
+5. If QCTO module pattern is enabled (${params.brief.saCompliance?.qctoModulePattern ? 'YES' : 'NO'}), tag modules appropriately as "Knowledge Module", "Practical Skill Module", or "Work Experience Module"; otherwise use "Standard Module".
+6. Build an exhaustive coverageChecks array comparing EVERY supplied topic against your proposed curriculum (status: "mapped", "omitted", "generalised", "clarification_needed", or "recommended").
 Return ONLY valid JSON.`,
     prompt: `Design the Stage 2 Curriculum Architecture for:
 Title: ${params.brief.title || 'Untitled Course'}
@@ -496,14 +497,16 @@ export async function designAssessmentsWithAI(params: {
 Design a rigorous, balanced assessment strategy BEFORE course content is written.
 CRITICAL RULES:
 1. Distinguish between Knowledge Assessment ("knowledge") and Practical Competence ("practical").
-2. Use diverse, appropriate formats from: "mcq", "multi_response", "matching", "sequencing", "short_answer", "case_study", "branching_scenario", "problem_solving", "practical_task", "competency_demo", "reflection".
-3. EVERY module outcome in moduleOutcomes MUST be mapped via outcomeIds to at least one assessment item!
-4. If an outcome expects practical demonstration/application (e.g., Apply, Perform, Inspect, Role-play, Troubleshoot), include a practical item (practical_task, competency_demo, case_study, branching_scenario, or problem_solving)—NOT recall MCQs alone.
-5. Every item MUST include: objective, instructions, promptOrQuestion, modelAnswer, explanation, feedbackCorrect, feedbackIncorrect, markingGuide, and a 100%-weighted evaluation rubric for practical/open items.
-6. Weightings across items should clearly distinguish formative vs summative assessments.
+2. STRICT WEIGHTING MATH: knowledgeWeightPercent + practicalWeightPercent MUST equal 100. The sum of weightingPercent across ALL items MUST equal 100. The sum of weightingPercent for "knowledge" items MUST equal knowledgeWeightPercent, and the sum of weightingPercent for "practical" items MUST equal practicalWeightPercent. Never allow weighting totals to mismatch.
+3. Include an explicit realistic durationMinutes for every assessment item and ensure strategySummary states the exact same passRequirementPercent and Knowledge/Practical weight split.
+4. AUDIENCE SUITABILITY: Match task format strictly to target audience/roles ("${params.brief.targetJobRoles || params.brief.targetAudience}", level: "${params.brief.experienceLevel}"). For Executive, Board, Director, or non-technical decision-maker cohorts, NEVER mandate writing Python/Pandas/Fairlearn/SQL code; instead assess governance interpretation, vendor evaluation, risk-threshold sign-off, ethical impact review, and executive decision memos.
+5. Use diverse formats from: "mcq", "multi_response", "matching", "sequencing", "short_answer", "case_study", "branching_scenario", "problem_solving", "practical_task", "competency_demo", "reflection".
+6. EVERY outcome ID across courseOutcomes and moduleOutcomes MUST be mapped via outcomeIds to at least one assessment item!
+7. Every item MUST include: objective, instructions, promptOrQuestion, modelAnswer, explanation, feedbackCorrect, feedbackIncorrect, markingGuide, and a 100%-weighted evaluation rubric for practical/open items.
 Return ONLY valid JSON.`,
     prompt: `Design Stage 4 Assessment Plan for:
 Course: ${params.brief.title} (${params.brief.industryDomain})
+Duration: ${params.brief.estimatedDuration || 'Unspecified'}
 Target Roles: ${params.brief.targetJobRoles || params.brief.targetAudience}
 Experience Level: ${params.brief.experienceLevel}
 Learning Requirements: ${params.brief.learningRequirements}
@@ -516,7 +519,7 @@ ${JSON.stringify(allOutcomes)}
 
 Return JSON:
 {
-  "strategySummary": "Clear strategy balancing knowledge vs practical competence and formative vs summative",
+  "strategySummary": "Clear strategy balancing knowledge vs practical competence (stating exact weights and passRequirementPercent) and formative vs summative",
   "passRequirementPercent": 70,
   "knowledgeWeightPercent": 40,
   "practicalWeightPercent": 60,
@@ -530,6 +533,7 @@ Return JSON:
       "classification": "formative",
       "outcomeIds": ["mo-1-1"],
       "weightingPercent": 10,
+      "durationMinutes": 20,
       "objective": "What this assessment verifies",
       "instructions": "Clear instructions for learner",
       "promptOrQuestion": "Detailed question, scenario, or task prompt",
@@ -592,13 +596,15 @@ export async function generateModuleContentWithAI(params: {
     timeoutMs: 45000,
     maxTokens: 6000,
     systemInstruction: `You are a senior subject-matter educator authoring Module ${params.modulePlan.order} of "${params.brief.title}" for "${params.brief.targetAudience}" (${params.brief.experienceLevel}).
-NON-NEGOTIABLE STANDARDS:
+NON-NEGOTIABLE QUALITY, LEGAL & TECHNICAL ACCURACY STANDARDS:
 1. Teach EVERY topic, subtopic, and lesson in the approved module plan with authentic subject depth.
 2. ${aiRule}
-3. Adapt technical rigour to "${params.brief.experienceLevel}". For technical/STEM topics, preserve exact equations, units, assumptions, and calculations.
-4. NEVER use generic filler, padding, or repeat explanations already covered in other modules (${otherModuleTitles || 'none'}).
-5. Scenarios and case studies MUST reflect "${params.brief.industryDomain}" and job roles "${params.brief.targetJobRoles || params.brief.targetAudience}" in a realistic South African workplace context.
-6. Accessibility & Source Honesty: Whenever referencing a diagram, chart, or figure, include descriptive caption/alt explanation ("This diagram illustrates..."). Tag factual/regulatory claims in sourceClaims as "VERIFIED" only when grounded in supplied sources, "NEEDS REVIEW" when domain expert confirmation is needed, or "UNSUPPORTED" only when making specific unverified statistical/statutory claims.
+3. AUDIENCE SUITABILITY: Match activities strictly to "${params.brief.targetJobRoles || params.brief.targetAudience}" (${params.brief.experienceLevel}). For Executive, Board, Director, or non-technical decision-maker audiences, keep mandatory exercises focused on executive interpretation, risk governance, and vendor interrogation — NEVER assign mandatory Python/Fairlearn/SQL coding unless explicitly tagged "[Optional Technical Appendix]".
+4. SOUTH AFRICAN LEGAL PRECISION: When citing POPIA (Act 4 of 2013), use verified sections accurately (Accountability s8; Processing Limitation s9–12, noting s11(1)(a)–(f) has SIX lawful grounds — consent is NOT the only lawful justification; Purpose Specification s13–14; Further Processing s15; Information Quality s16; Openness s17–18; Security Safeguards s19–22; Data Subject Participation s23–25; Automated Decision-Making s71). Always write PEPUDA's exact title: "Promotion of Equality and Prevention of Unfair Discrimination Act 4 of 2000". Distinguish statute vs regulatory guidance vs governance codes (e.g. King IV), and include an educational non-legal-advice disclaimer when discussing legal duties.
+5. NO FABRICATED EVIDENCE: NEVER invent statistics, percentages, ZAR savings, or real company success stories. Any illustrative numerical or workplace scenario NOT backed by a supplied verified source MUST be explicitly labelled "Illustrative hypothetical scenario (not empirical data)".
+6. AI/ML TECHNICAL PRECISION: Never equate raw model confidence scores to calibrated probability without explaining empirical calibration; never present AUC > 0.8 as a universal readiness rule without prevalence, operating threshold, and asymmetric error cost context; distinguish statistical confidence intervals from prediction intervals and model uncertainty; never claim SHAP values prove real-world causation (SHAP measures correlational feature attribution).
+7. NEVER use generic filler or repeat explanations covered in other modules (${otherModuleTitles || 'none'}).
+8. Accessibility & Citation Honesty: Cite supplied sources inline (e.g. [Source 1]) where supported. Include descriptive alt captions ("This diagram illustrates...") when referencing any visual/diagram. Tag sourceClaims accurately ("VERIFIED", "NEEDS REVIEW", or "UNSUPPORTED").
 Return ONLY valid JSON.`,
     prompt: `Author full learning content for Module ${params.modulePlan.order}: "${params.modulePlan.title}".
 
@@ -742,6 +748,9 @@ export async function generateModuleScaffoldWithAI(params: {
     systemInstruction: `You are a senior educator authoring the module overview, workplace case studies, scenarios, and knowledge checks for Module ${params.modulePlan.order} of "${params.brief.title}" (${params.brief.experienceLevel}).
 ${aiRule}
 Tailor scenarios to "${params.brief.industryDomain}" and roles "${params.brief.targetJobRoles || params.brief.targetAudience}" in a South African workplace context. Do not duplicate other modules (${otherModuleTitles || 'none'}).
+NON-NEGOTIABLE EVIDENCE & ACCURACY RULES:
+- Never fabricate statistics, percentages, ZAR savings, or real-company case results. Label illustrative workplace scenarios explicitly as "Illustrative hypothetical scenario".
+- Ensure any POPIA (Act 4 of 2013) or PEPUDA ("Promotion of Equality and Prevention of Unfair Discrimination Act 4 of 2000") mentions are exact and educational (not legal advice).
 Return ONLY valid JSON.`,
     prompt: `Author the module wrapper (excluding individual lesson essays) for Module ${params.modulePlan.order}: "${params.modulePlan.title}".
 Topics: ${JSON.stringify(params.modulePlan.topics.map(t => t.title))}
@@ -858,9 +867,12 @@ export async function generateSingleLessonWithAI(params: {
     maxTokens: 2200,
     systemInstruction: `You are a senior subject-matter educator writing a single high-rigour lesson for "${params.brief.title}" (${params.brief.experienceLevel}, audience: "${params.brief.targetAudience}").
 ${aiRule}
-Preserve exact equations, units, domain terminology, and South African workplace realism where applicable.
-If mentioning any diagram/chart/figure, describe what it illustrates in plain text ("This diagram illustrates...").
-Tag claims in sourceClaims as "VERIFIED" when grounded in supplied sources, "NEEDS REVIEW" for expert-check domain standards, or "UNSUPPORTED" only for specific unverified empirical/statutory claims.
+QUALITY, LEGAL & TECHNICAL GUARDRAILS:
+- Audience Alignment: Match complexity and guidedActivity to "${params.brief.targetJobRoles || params.brief.targetAudience}". For Executive/Board/Leadership audiences, avoid mandatory coding/Python exercises; focus on strategic oversight, governance checklists, and vendor interrogation.
+- South African Law: Use exact POPIA Act 4 of 2013 sections (s8 Accountability, s11(1)(a)-(f) six lawful grounds beyond consent alone, s16 Information Quality, s19-22 Security Safeguards, s23-25 Participation, s71 Automated Decision-Making) and exact PEPUDA title ("Promotion of Equality and Prevention of Unfair Discrimination Act 4 of 2000"), with an educational non-legal-advice caveat.
+- Anti-Fabrication: Never invent financial savings or statistics; explicitly label illustrative examples as "Illustrative hypothetical scenario" unless backed by a supplied verified source (cite inline as [Source N]).
+- ML Accuracy: Distinguish confidence scores vs model calibration, explain AUC context dependence, separate confidence intervals from prediction intervals, and describe SHAP as associative feature contribution (not causation).
+- Accessibility: Use structured headings, concise paragraphs, and plain-text descriptive alt captions ("This diagram illustrates...") for any visual. Tag sourceClaims honestly ("VERIFIED", "NEEDS REVIEW", or "UNSUPPORTED").
 Return ONLY valid JSON.`,
     prompt: `Author Lesson ${params.lessonIndex + 1} inside Module ${params.modulePlan.order} ("${params.modulePlan.title}").
 Course Domain: ${params.brief.industryDomain} | Purpose: ${params.brief.purpose}

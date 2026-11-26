@@ -1,13 +1,22 @@
 import type {
+  AssessmentValidationSummary,
   CourseProject,
+  DurationValidationSummary,
   QAIssueItem,
+  SourceVerificationSummary,
   WorkflowStage,
 } from '../types.js';
 import { computeFullAlignmentReport, detectVagueOutcomeWarning } from './alignmentHelpers.js';
 import {
+  computeAssessmentValidation,
+  computeDurationValidation,
+  parseEstimatedHours,
   runAccessibilityChecks,
+  runDomainQualityChecks,
   runTechnicalValidationChecks,
 } from './validationChecks.js';
+
+export { parseEstimatedHours };
 
 export interface PlaceholderOccurrence {
   stage: WorkflowStage;
@@ -26,6 +35,9 @@ export interface StructuralAuditResult {
   totalPlannedMinutes: number;
   totalGeneratedMinutes: number;
   declaredDurationHours: number | null;
+  durationValidation: DurationValidationSummary;
+  assessmentValidation: AssessmentValidationSummary;
+  sourceVerificationSummary: SourceVerificationSummary;
 }
 
 const PLACEHOLDER_REGEX =
@@ -126,6 +138,7 @@ export function computeCourseDataSignature(project: CourseProject): string {
       })),
     },
     assessments: {
+      strategySummary: project.assessments?.strategySummary || '',
       passRequirementPercent: project.assessments?.passRequirementPercent,
       knowledgeWeightPercent: project.assessments?.knowledgeWeightPercent,
       practicalWeightPercent: project.assessments?.practicalWeightPercent,
@@ -135,6 +148,7 @@ export function computeCourseDataSignature(project: CourseProject): string {
         type: it.type,
         assessmentDomain: it.assessmentDomain,
         weightingPercent: it.weightingPercent,
+        durationMinutes: it.durationMinutes,
         outcomeIds: it.outcomeIds,
         promptOrQuestion: it.promptOrQuestion,
         options: it.options,
@@ -181,23 +195,6 @@ export function computeCourseDataSignature(project: CourseProject): string {
   };
 
   return fnv1aHash(JSON.stringify(canonical));
-}
-
-export function parseEstimatedHours(raw: string | undefined): number | null {
-  if (!raw) return null;
-  const text = raw.toLowerCase().trim();
-  if (!text || text.includes('to be confirmed') || text === 'tbc') return null;
-
-  const hoursMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:hr|hrs|hour|hours)\b/i);
-  if (hoursMatch) return Number(hoursMatch[1]);
-
-  const daysMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:day|days)\b/i);
-  if (daysMatch) return Number(daysMatch[1]) * 7;
-
-  const minsMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:min|mins|minute|minutes)\b/i);
-  if (minsMatch) return Math.round((Number(minsMatch[1]) / 60) * 10) / 10;
-
-  return null;
 }
 
 export function detectUnresolvedPlaceholders(project: CourseProject): PlaceholderOccurrence[] {
@@ -282,6 +279,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     blockingErrors.push({
       id: 'blk-metadata',
       severity: 'blocking',
+      prioritySeverity: 'critical',
+      verificationOrigin: 'automated',
       rule: 'Mandatory Course Brief Information',
       description: `Required brief fields are missing: ${missingBrief.join(', ')}.`,
       stage: 1,
@@ -429,13 +428,17 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     }
   }
 
-  // 5. Stage 4 Assessments & Weights Integrity
+  // 5. Stage 4 Assessments & Strict Weighting Reconciliation
   const assessments = project.assessments;
   const items = assessments.items || [];
+  const assessmentValidation = computeAssessmentValidation(project);
+
   if (items.length === 0) {
     blockingErrors.push({
       id: 'blk-no-assessments',
       severity: 'blocking',
+      prioritySeverity: 'critical',
+      verificationOrigin: 'automated',
       rule: 'Assessment Plan Required',
       description: 'No assessment items have been designed in Stage 4.',
       stage: 4,
@@ -450,6 +453,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
       blockingErrors.push({
         id: 'blk-invalid-pass-mark',
         severity: 'blocking',
+        prioritySeverity: 'critical',
+        verificationOrigin: 'automated',
         rule: 'Valid Pass Threshold',
         description: `Pass requirement (${assessments.passRequirementPercent}%) must be between 1% and 100%.`,
         stage: 4,
@@ -457,31 +462,19 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
         recommendedFix: 'Set pass mark between 50% and 100% in Stage 4.',
       });
     }
-    const domainWeightSum =
-      (Number(assessments.knowledgeWeightPercent) || 0) +
-      (Number(assessments.practicalWeightPercent) || 0);
-    if (domainWeightSum !== 100) {
-      warnings.push({
-        id: 'warn-domain-weight-sum',
-        severity: 'warning',
-        rule: 'Knowledge vs Practical Weight Balance',
-        description: `Knowledge (${assessments.knowledgeWeightPercent}%) + Practical (${assessments.practicalWeightPercent}%) weights sum to ${domainWeightSum}% instead of 100%.`,
-        stage: 4,
-        affectedSection: 'Stage 4 · Assessment Strategy',
-        recommendedFix: 'Adjust knowledge/practical weights to total 100% in Stage 4.',
-      });
-    }
 
-    const itemWeightSum = items.reduce((s, it) => s + (Number(it.weightingPercent) || 0), 0);
-    if (items.length > 0 && itemWeightSum !== 100) {
-      warnings.push({
-        id: 'warn-item-weights',
-        severity: 'warning',
-        rule: 'Assessment Item Weighting Total',
-        description: `Assessment item weightings total ${itemWeightSum}% (recommended 100% across graded items).`,
+    if (assessmentValidation.issues.length > 0) {
+      blockingErrors.push({
+        id: 'blk-assessment-weight-reconciliation',
+        severity: 'blocking',
+        prioritySeverity: 'critical',
+        verificationOrigin: 'automated',
+        rule: 'Assessment Weighting & Pass Mark Reconciliation',
+        description: assessmentValidation.issues.join(' '),
         stage: 4,
-        affectedSection: 'Stage 4 · Assessment Items',
-        recommendedFix: 'Review item weightings in Stage 4.',
+        affectedSection: 'Stage 4 · Assessment Weights & Strategy',
+        recommendedFix:
+          'Ensure Knowledge item weights match declared Knowledge %, Practical item weights match declared Practical %, total weights sum strictly to 100%, and strategy text matches passRequirementPercent.',
       });
     }
   }
@@ -573,39 +566,58 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     });
   }
 
-  // 8. Duration Consistency Check (Contradiction detection)
-  const totalPlannedMinutes = currModules.reduce(
-    (sum, m) => sum + (m.lessons || []).reduce((ls, l) => ls + (Number(l.durationMinutes) || 0), 0),
-    0
-  );
-  const totalGeneratedMinutes = genModules.reduce(
-    (sum, m) => sum + (m.lessons || []).reduce((ls, l) => ls + (Number(l.durationMinutes) || 0), 0),
-    0
-  );
+  // 8. Duration Consistency Check (Strict Reconciliation)
+  const durationValidation = computeDurationValidation(project);
+  const totalPlannedMinutes = durationValidation.plannedLessonMinutes;
+  const totalGeneratedMinutes = durationValidation.generatedLessonMinutes;
   const declaredDurationHours = parseEstimatedHours(project.brief.estimatedDuration);
-  const activeMinutes = totalGeneratedMinutes > 0 ? totalGeneratedMinutes : totalPlannedMinutes;
-  if (declaredDurationHours && activeMinutes > 0) {
-    const actualHours = activeMinutes / 60;
-    const ratio = actualHours / declaredDurationHours;
-    if (ratio < 0.45 || ratio > 1.75) {
-      warnings.push({
-        id: 'warn-duration-contradiction',
-        severity: 'warning',
-        rule: 'Course Duration Consistency',
-        description: `Declared duration is "${project.brief.estimatedDuration}" (~${declaredDurationHours}h), while scheduled lesson times total ${Math.round(actualHours * 10) / 10}h (${activeMinutes} min). Note: practical/case-study time may explain differences.`,
-        stage: 1,
-        affectedSection: 'Stage 1 Duration vs Stage 2/5 Lesson Minutes',
-        recommendedFix: 'Confirm estimatedDuration or adjust lesson durations to avoid learner time expectations mismatch.',
-      });
+  const activeMinutes = durationValidation.totalReconciledMinutes;
+
+  if (durationValidation.status === 'fail') {
+    warnings.push({
+      id: 'warn-duration-contradiction',
+      severity: 'warning',
+      prioritySeverity: 'high',
+      verificationOrigin: 'automated',
+      rule: 'Course Duration Reconciliation Mismatch',
+      description: durationValidation.summary,
+      stage: 2,
+      affectedSection: 'Stage 1 Duration vs Stage 2/5 Lessons & Stage 4 Assessments',
+      recommendedFix:
+        'Reconcile Stage 2/5 lesson durations and Stage 4 assessment timings so scheduled notional hours align with the declared course duration.',
+    });
+  } else if (durationValidation.status === 'warning') {
+    warnings.push({
+      id: 'warn-duration-variance',
+      severity: 'warning',
+      prioritySeverity: 'medium',
+      verificationOrigin: 'automated',
+      rule: 'Course Duration Minor Variance',
+      description: durationValidation.summary,
+      stage: 2,
+      affectedSection: 'Stage 1 Duration vs Lesson & Assessment Timings',
+      recommendedFix:
+        'Confirm whether breaks/assessments account for the time difference and document exact notional hours.',
+    });
+  }
+
+  // 9. Source, Regulatory, Factual, ML Technical & Audience Checks
+  const techSummary = runTechnicalValidationChecks(project);
+  const domainAudit = runDomainQualityChecks(project);
+  for (const domIssue of domainAudit.issues) {
+    if (domIssue.severity === 'blocking') {
+      blockingErrors.push(domIssue);
+    } else {
+      warnings.push(domIssue);
     }
   }
 
-  // 9. Source & Technical Grounding Checks
-  const techSummary = runTechnicalValidationChecks(project);
   if (techSummary.unsupportedClaimsCount > 0 && project.brief.saCompliance?.enabled) {
     blockingErrors.push({
       id: 'blk-unsupported-regulated',
       severity: 'blocking',
+      prioritySeverity: 'critical',
+      verificationOrigin: 'automated',
       rule: 'Unsupported Claims in Regulated Subject',
       description: `${techSummary.unsupportedClaimsCount} claim(s) are explicitly marked UNSUPPORTED while SA regulatory alignment is enabled.`,
       stage: 5,
@@ -616,6 +628,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     warnings.push({
       id: 'warn-unsupported-claims',
       severity: 'warning',
+      prioritySeverity: 'high',
+      verificationOrigin: 'unverified',
       rule: 'Unsupported Content Claims Flagged',
       description: `${techSummary.unsupportedClaimsCount} factual claim(s) are flagged UNSUPPORTED in Stage 5 lessons.`,
       stage: 5,
@@ -628,6 +642,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     warnings.push({
       id: 'warn-sme-review-claims',
       severity: 'warning',
+      prioritySeverity: 'medium',
+      verificationOrigin: 'expert_review_required',
       rule: 'SME Claim Confirmation Queue',
       description: `${techSummary.needsReviewClaimsCount} technical/domain claim(s) carry status NEEDS REVIEW pending SME verification.`,
       stage: 5,
@@ -641,6 +657,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     warnings.push({
       id: 'warn-unverified-sources',
       severity: 'warning',
+      prioritySeverity: 'medium',
+      verificationOrigin: 'unverified',
       rule: 'Source Register Human Sign-Off',
       description: `${unverifiedSources.length} registered source(s) still marked "${unverifiedSources[0].verificationStatus}" (human verifier & date recommended).`,
       stage: 1,
@@ -649,13 +667,15 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     });
   }
 
-  // 10. Practical Accessibility Checks (non-blocking unless module intros/summaries completely missing)
+  // 10. Practical Accessibility Checks
   const accSummary = runAccessibilityChecks(project);
   for (const chk of accSummary.checks) {
     if (chk.status === 'fail' && chk.id === 'acc-navigation') {
       warnings.push({
         id: `warn-${chk.id}`,
         severity: 'warning',
+        prioritySeverity: 'medium',
+        verificationOrigin: 'automated',
         rule: chk.label,
         description: chk.details,
         stage: 5,
@@ -666,6 +686,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
       warnings.push({
         id: `warn-${chk.id}`,
         severity: 'warning',
+        prioritySeverity: chk.status === 'fail' ? 'high' : 'low',
+        verificationOrigin: 'automated',
         rule: chk.label,
         description: chk.details,
         stage: 5,
@@ -679,8 +701,10 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
   informationalFeedback.push({
     id: 'info-metrics',
     severity: 'info',
+    prioritySeverity: 'low',
+    verificationOrigin: 'automated',
     rule: 'Course Readiness Telemetry',
-    description: `${currModules.length} curriculum module(s), ${genModules.reduce((s, m) => s + m.lessons.length, 0)} generated lesson(s) (${activeMinutes} min total), ${allOutcomes.length} measurable outcome(s), ${items.length} assessment item(s), and ${alignmentReport.scorePercent}% 3-way alignment score.`,
+    description: `${currModules.length} curriculum module(s), ${genModules.reduce((s, m) => s + m.lessons.length, 0)} generated lesson(s) (${activeMinutes} min reconciled total), ${allOutcomes.length} measurable outcome(s), ${items.length} assessment item(s), and ${alignmentReport.scorePercent}% 3-way alignment score.`,
     stage: 6,
     affectedSection: 'Course Summary',
     recommendedFix: 'No action needed.',
@@ -690,6 +714,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     informationalFeedback.push({
       id: 'info-accessibility-scope',
       severity: 'info',
+      prioritySeverity: 'low',
+      verificationOrigin: 'automated',
       rule: 'Automated Accessibility Scope Limitation',
       description: accSummary.limitationsNote,
       stage: 6,
@@ -702,6 +728,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     informationalFeedback.push({
       id: 'info-sa-disclaimer',
       severity: 'info',
+      prioritySeverity: 'low',
+      verificationOrigin: 'expert_review_required',
       rule: 'South African Alignment Governance Reminder',
       description:
         'NQF / QCTO / SAQA / SETA alignment tags prepare the programme for formal academic or regulatory submission and do NOT establish formal accreditation on their own.',
@@ -720,5 +748,8 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     totalPlannedMinutes,
     totalGeneratedMinutes,
     declaredDurationHours,
+    durationValidation,
+    assessmentValidation,
+    sourceVerificationSummary: domainAudit.sourceVerificationSummary,
   };
 }
