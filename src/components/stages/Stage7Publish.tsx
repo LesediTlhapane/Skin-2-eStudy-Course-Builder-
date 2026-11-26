@@ -250,6 +250,54 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
         </div>
       )}
 
+      {/* Featured Master Export: Complete Created Course Document */}
+      <section className="bg-white border border-slate-200 border-t-[3px] border-t-primary rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="space-y-1.5 max-w-3xl">
+          <h3 className="text-base font-bold text-primary">
+            Complete Course Document
+          </h3>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Download the entire created course compiled into one master document — including the Course Brief, Curriculum Architecture, Learning Outcomes &amp; Alignment Matrix, all Modules and Lessons, Case Studies, Scenarios, Knowledge Checks, Assessments, Marking Rubrics, Quality Assurance Summary, and Source Register.
+          </p>
+          <p className="text-[11px] text-slate-500">
+            Brief &amp; Curriculum · {project.content.modules.length} Modules · {project.assessments.items.length} Assessments · {project.sources.length} Sources
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            disabled={busyType === 'complete_course'}
+            onClick={() => handleDocx('complete_course')}
+            className="py-2.5 px-4 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            <span>{busyType === 'complete_course' ? 'Exporting...' : 'Download Full Course (.docx)'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => exportDeliverableHtmlOrPrint(project, 'complete_course', 'print')}
+            className="py-2.5 px-3.5 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+            title="Print or Save Complete Course as PDF"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>PDF</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              exportDeliverableHtmlOrPrint(project, 'complete_course', 'download_html');
+              setExportNotice('Downloaded Complete Course Document HTML file.');
+            }}
+            className="py-2.5 px-3.5 rounded-lg border border-slate-200 hover:border-accent text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+            title="Download standalone Complete Course HTML"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>HTML</span>
+          </button>
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {DELIVERABLES.map(item => (
           <div

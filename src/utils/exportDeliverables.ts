@@ -15,6 +15,7 @@ import { computeFullAlignmentReport } from './alignmentHelpers';
 import { buildScorm12ZipBytes } from './scormExport';
 
 export type DeliverableType =
+  | 'complete_course'
   | 'learner_manual'
   | 'facilitator_guide'
   | 'assessment_document'
@@ -141,7 +142,262 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
     accreditationDisclaimerParagraph(project),
   ];
 
-  if (type === 'learner_manual' || type === 'facilitator_guide') {
+  if (type === 'complete_course') {
+    children.push(h1('1. Course Brief & Workplace Specification'));
+    children.push(para(project.brief.purpose, 'Purpose'));
+    if (project.brief.workplaceProblem) {
+      children.push(para(project.brief.workplaceProblem, 'Workplace Problem Addressed'));
+    }
+    if (project.brief.targetJobRoles) {
+      children.push(para(project.brief.targetJobRoles, 'Target Job Roles'));
+    }
+    if (project.brief.experienceLevel) {
+      children.push(para(project.brief.experienceLevel, 'Experience Level'));
+    }
+    if (project.brief.prerequisites) {
+      children.push(para(project.brief.prerequisites, 'Prerequisites'));
+    }
+    if (project.brief.learningRequirements) {
+      children.push(para(project.brief.learningRequirements, 'Learning Requirements'));
+    }
+    if (project.brief.subjectTopicsInput) {
+      children.push(para(project.brief.subjectTopicsInput, 'Subject Topics Scope'));
+    }
+    children.push(
+      para(
+        `${project.brief.aiIntegrationMode}${project.brief.aiIntegrationRequirements ? ` — ${project.brief.aiIntegrationRequirements}` : ''}`,
+        'AI Integration'
+      )
+    );
+    if (project.brief.saCompliance?.enabled) {
+      const sa = project.brief.saCompliance;
+      children.push(
+        para(
+          [
+            sa.nqfLevel ? `NQF Level ${sa.nqfLevel}` : '',
+            sa.saqaRelevant ? `SAQA${sa.saqaNotes ? ` (${sa.saqaNotes})` : ''}` : '',
+            sa.qctoRelevant ? 'QCTO' : '',
+            sa.setaName ? `SETA: ${sa.setaName}` : '',
+            sa.popiaRelevant ? 'POPIA Relevant' : '',
+            sa.industryLegislation ? `Legislation: ${sa.industryLegislation}` : '',
+            sa.technicalStandards ? `Standards: ${sa.technicalStandards}` : '',
+          ]
+            .filter(Boolean)
+            .join(' | ') || 'Enabled',
+          'Compliance Profile'
+        )
+      );
+    }
+    const customEntries = Object.entries(project.brief.templateFieldValues || {}).filter(
+      ([, v]) => typeof v === 'string' && v.trim().length > 0
+    );
+    if (customEntries.length > 0) {
+      children.push(h2('Template Custom Specifications'));
+      for (const [k, v] of customEntries) {
+        children.push(para(v, k.replace(/_/g, ' ')));
+      }
+    }
+
+    children.push(h1('2. Curriculum Architecture & Coverage Audit'));
+    children.push(para(project.curriculum.rationale, 'Design Rationale'));
+    for (const m of project.curriculum.modules) {
+      children.push(h2(`Module ${m.order}: ${m.title} (${m.qctoModuleType || 'Standard'})`));
+      children.push(para(m.purpose, 'Purpose'));
+      if (m.competencies.length > 0) {
+        children.push(para(m.competencies.join(', '), 'Competencies'));
+      }
+      if (m.lessons.length > 0) {
+        children.push(
+          para(m.lessons.map(l => `${l.title} (${l.durationMinutes}m)`).join(' | '), 'Planned Lessons')
+        );
+      }
+    }
+    if (project.curriculum.coverageChecks.length > 0) {
+      children.push(h2('Curriculum Coverage Matrix'));
+      children.push(
+        buildTable(
+          ['Supplied Topic', 'Status', 'Mapped Location', 'Notes'],
+          project.curriculum.coverageChecks.map(c => [
+            c.originalTopic,
+            c.status.toUpperCase(),
+            c.mappedLocation,
+            c.notes,
+          ])
+        )
+      );
+    }
+
+    children.push(h1('3. Learning Outcomes & Constructive Alignment'));
+    if (project.outcomes.courseOutcomes.length > 0) {
+      children.push(h2('Course-Level Learning Outcomes'));
+      for (const out of project.outcomes.courseOutcomes) {
+        children.push(para(`${out.code} [${out.bloomLevel}]: ${out.statement}`));
+      }
+    }
+    if (project.outcomes.moduleOutcomes.length > 0) {
+      children.push(h2('Module-Level Learning Outcomes'));
+      for (const out of project.outcomes.moduleOutcomes) {
+        children.push(para(`${out.code} [${out.bloomLevel}]: ${out.statement}`));
+      }
+    }
+    const report = computeFullAlignmentReport(project);
+    children.push(h2('3-Way Constructive Alignment Matrix'));
+    children.push(para(`${report.scorePercent}% — ${report.explanation}`, 'Alignment Score'));
+    if (report.rows.length > 0) {
+      children.push(
+        buildTable(
+          ['Code', 'Bloom', 'Outcome Statement', 'Learning Activities / Lessons', 'Assessment Evidence', 'Status'],
+          report.rows.map(r => [
+            r.outcomeCode,
+            r.bloomLevel,
+            r.outcomeStatement,
+            r.learningActivities.map(a => a.title).join('; ') || 'NONE (UNTAUGHT)',
+            r.assessmentEvidence.map(m => `${m.title} (${m.type})`).join('; ') || 'NONE (UNASSESSED)',
+            r.status.toUpperCase(),
+          ])
+        )
+      );
+    }
+
+    children.push(h1('4. Complete Course Modules & Learning Content'));
+    for (const mod of project.content.modules) {
+      children.push(h2(`Module ${mod.moduleNumber}: ${mod.title}`));
+      children.push(para(mod.introduction, 'Introduction'));
+      for (const obj of mod.learningObjectives) {
+        children.push(para(obj, 'Objective'));
+      }
+      for (const lesson of mod.lessons) {
+        children.push(h2(`Lesson: ${lesson.title} (${lesson.durationMinutes} min)`));
+        children.push(para(lesson.explanation));
+        if (lesson.keyTerminology.length > 0) {
+          children.push(
+            para(
+              lesson.keyTerminology.map(k => `${k.term}: ${k.definition}`).join(' | '),
+              'Key Terminology'
+            )
+          );
+        }
+        if (lesson.workedExamples.length > 0) {
+          children.push(para(lesson.workedExamples.join('\n\n'), 'Worked Examples'));
+        }
+        children.push(para(lesson.practicalApplication, 'Practical Workplace Application'));
+        children.push(para(lesson.guidedActivity, 'Guided Activity'));
+      }
+      for (const cs of mod.workplaceCaseStudies) {
+        children.push(h2(`Case Study: ${cs.title}`));
+        children.push(para(cs.background));
+        if (cs.analysisQuestions.length > 0) {
+          children.push(para(cs.analysisQuestions.join(' | '), 'Analysis Questions'));
+        }
+        if (cs.facilitatorNotes) {
+          children.push(para(cs.facilitatorNotes, 'Facilitator Debrief Notes'));
+        }
+      }
+      for (const sc of mod.scenarios) {
+        children.push(h2(`Scenario: ${sc.title} (${sc.contextType})`));
+        children.push(para(sc.situation, 'Situation'));
+        children.push(para(sc.challenge, 'Challenge'));
+        children.push(para(sc.decisionPrompt, 'Decision Point'));
+        if (sc.modelDebrief) {
+          children.push(para(sc.modelDebrief, 'Model Debrief'));
+        }
+        children.push(para(sc.keyTakeaway, 'Key Takeaway'));
+      }
+      if (mod.knowledgeChecks.length > 0) {
+        children.push(h2('Module Knowledge Checks'));
+        mod.knowledgeChecks.forEach((kc, idx) => {
+          children.push(para(`${idx + 1}. ${kc.question}`));
+          kc.options.forEach((opt, oi) => {
+            children.push(para(`   ${String.fromCharCode(65 + oi)}) ${opt}`));
+          });
+          children.push(
+            para(
+              `Correct: ${String.fromCharCode(65 + kc.correctIndex)} — ${kc.explanation}`,
+              'Answer Key'
+            )
+          );
+        });
+      }
+      children.push(para(mod.summary, 'Module Summary'));
+    }
+
+    children.push(h1('5. Assessments, Marking Guides & Rubrics'));
+    children.push(para(project.assessments.strategySummary, 'Strategy'));
+    children.push(
+      para(
+        `${project.assessments.passRequirementPercent}% (Knowledge ${project.assessments.knowledgeWeightPercent}% / Practical ${project.assessments.practicalWeightPercent}%)`,
+        'Pass & Weighting'
+      )
+    );
+    for (const item of project.assessments.items) {
+      children.push(
+        h2(`${item.title} [${item.type.toUpperCase()} · ${item.classification} · ${item.weightingPercent}%]`)
+      );
+      children.push(para(item.objective, 'Objective'));
+      children.push(para(item.instructions, 'Instructions'));
+      children.push(para(item.promptOrQuestion, 'Prompt / Task'));
+      if (item.options && item.options.length > 0) {
+        item.options.forEach((opt, i) =>
+          children.push(para(`   ${String.fromCharCode(65 + i)}) ${opt}`))
+        );
+      }
+      children.push(para(item.modelAnswer, 'Model Answer'));
+      children.push(para(item.markingGuide, 'Marking Guide'));
+      children.push(para(item.feedbackCorrect, 'Feedback (Correct)'));
+      children.push(para(item.feedbackIncorrect, 'Feedback (Incorrect)'));
+      if (item.rubric.length > 0) {
+        children.push(
+          buildTable(
+            ['Criterion', 'Weight %', 'Competent Standard', 'Not Yet Competent'],
+            item.rubric.map(r => [
+              r.criterion,
+              `${r.weightPercent}%`,
+              r.competentStandard,
+              r.notYetCompetentIndicator,
+            ])
+          )
+        );
+      }
+    }
+
+    children.push(h1('6. Quality Assurance & Governance Summary'));
+    const qa = project.latestQA;
+    if (!qa) {
+      children.push(para('No QA evaluation has been executed yet.'));
+    } else {
+      children.push(para(`${qa.verdict} (${qa.weightedScore}%)`, 'Verdict'));
+      children.push(para(qa.verdictExplanation, 'Explanation'));
+      children.push(
+        buildTable(
+          ['Dimension', 'Weight', 'Score', 'Weaknesses', 'Recommended Corrections'],
+          qa.dimensions.map(d => [
+            d.label,
+            `${d.weight}%`,
+            `${d.score}%`,
+            d.weaknesses.join('; ') || 'None',
+            d.recommendedCorrections.join('; ') || 'None',
+          ])
+        )
+      );
+    }
+
+    if (project.sources.length > 0) {
+      children.push(h1('7. Source Register & Verification Status'));
+      children.push(
+        buildTable(
+          ['Title', 'Author / Organisation', 'Date', 'Version', 'Reference / URL', 'Status'],
+          project.sources.map(s => [
+            s.title,
+            s.authorOrOrganisation,
+            s.publicationDate,
+            s.version,
+            s.referenceOrUrl,
+            s.verificationStatus,
+          ])
+        )
+      );
+    }
+  } else if (type === 'learner_manual' || type === 'facilitator_guide') {
     children.push(h1('Programme Overview & Learning Outcomes'));
     children.push(para(project.brief.purpose, 'Purpose'));
     for (const out of project.outcomes.courseOutcomes) {
@@ -410,7 +666,113 @@ export function exportDeliverableHtmlOrPrint(
   const label = type.replace(/_/g, ' ').toUpperCase();
 
   let bodyHtml = '';
-  if (type === 'learner_manual' || type === 'facilitator_guide') {
+  if (type === 'complete_course') {
+    const report = computeFullAlignmentReport(project);
+    bodyHtml += `<h2>1. Course Brief &amp; Workplace Specification</h2>`;
+    bodyHtml += `<p><strong>Purpose:</strong> ${escapeHtml(project.brief.purpose)}</p>`;
+    if (project.brief.workplaceProblem) {
+      bodyHtml += `<p><strong>Workplace Problem:</strong> ${escapeHtml(project.brief.workplaceProblem)}</p>`;
+    }
+    if (project.brief.targetJobRoles) {
+      bodyHtml += `<p><strong>Target Job Roles:</strong> ${escapeHtml(project.brief.targetJobRoles)}</p>`;
+    }
+    if (project.brief.prerequisites) {
+      bodyHtml += `<p><strong>Prerequisites:</strong> ${escapeHtml(project.brief.prerequisites)}</p>`;
+    }
+    if (project.brief.learningRequirements) {
+      bodyHtml += `<p><strong>Learning Requirements:</strong> ${escapeHtml(project.brief.learningRequirements)}</p>`;
+    }
+
+    bodyHtml += `<h2>2. Curriculum Architecture</h2><p><strong>Design Rationale:</strong> ${escapeHtml(project.curriculum.rationale)}</p>`;
+    for (const m of project.curriculum.modules) {
+      bodyHtml += `<h3>Module ${m.order}: ${escapeHtml(m.title)}</h3><p>${escapeHtml(m.purpose)}</p>`;
+      if (m.lessons.length > 0) {
+        bodyHtml += `<p><strong>Lessons:</strong> ${m.lessons.map(l => `${escapeHtml(l.title)} (${l.durationMinutes}m)`).join(' · ')}</p>`;
+      }
+    }
+
+    bodyHtml += `<h2>3. Learning Outcomes &amp; Constructive Alignment (${report.scorePercent}%)</h2>`;
+    bodyHtml += `<ul>${project.outcomes.courseOutcomes
+      .map(o => `<li><strong>${escapeHtml(o.code)} (${escapeHtml(o.bloomLevel)}):</strong> ${escapeHtml(o.statement)}</li>`)
+      .join('')}</ul>`;
+    if (report.rows.length > 0) {
+      bodyHtml += `<table><thead><tr><th>Code</th><th>Outcome</th><th>Learning Activities</th><th>Mapped Assessments</th><th>Status</th></tr></thead><tbody>${report.rows
+        .map(
+          r =>
+            `<tr><td>${escapeHtml(r.outcomeCode)}</td><td>${escapeHtml(r.outcomeStatement)}</td><td>${r.learningActivities.map(a => escapeHtml(a.title)).join(', ') || 'UNTAUGHT'}</td><td>${r.assessmentEvidence.map(m => escapeHtml(m.title)).join(', ') || 'UNASSESSED'}</td><td>${escapeHtml(r.status.toUpperCase())}</td></tr>`
+        )
+        .join('')}</tbody></table>`;
+    }
+
+    bodyHtml += `<div class="page-break"></div><h2>4. Complete Course Modules &amp; Learning Content</h2>`;
+    for (const mod of project.content.modules) {
+      bodyHtml += `<div class="page-break"></div><h3>Module ${mod.moduleNumber}: ${escapeHtml(mod.title)}</h3>`;
+      bodyHtml += `<p><strong>Introduction:</strong> ${escapeHtml(mod.introduction)}</p>`;
+      if (mod.learningObjectives.length > 0) {
+        bodyHtml += `<ul>${mod.learningObjectives.map(o => `<li>${escapeHtml(o)}</li>`).join('')}</ul>`;
+      }
+      for (const l of mod.lessons) {
+        bodyHtml += `<h4>${escapeHtml(l.title)} (${l.durationMinutes} min)</h4><p>${escapeHtml(l.explanation).replace(/\n/g, '<br/>')}</p>`;
+        if (l.keyTerminology.length > 0) {
+          bodyHtml += `<p><strong>Key Terminology:</strong> ${l.keyTerminology.map(k => `${escapeHtml(k.term)}: ${escapeHtml(k.definition)}`).join(' · ')}</p>`;
+        }
+        if (l.workedExamples.length) {
+          bodyHtml += `<p><strong>Worked Examples:</strong><br/>${l.workedExamples.map(e => escapeHtml(e)).join('<br/><br/>')}</p>`;
+        }
+        bodyHtml += `<p><strong>Practical Application:</strong> ${escapeHtml(l.practicalApplication)}</p>`;
+        bodyHtml += `<p><strong>Guided Activity:</strong> ${escapeHtml(l.guidedActivity)}</p>`;
+      }
+      for (const cs of mod.workplaceCaseStudies) {
+        bodyHtml += `<div class="box"><h4>Case Study: ${escapeHtml(cs.title)}</h4><p>${escapeHtml(cs.background)}</p><p><strong>Analysis Questions:</strong> ${cs.analysisQuestions.map(q => escapeHtml(q)).join(' | ')}</p>${cs.facilitatorNotes ? `<p><strong>Facilitator Notes:</strong> ${escapeHtml(cs.facilitatorNotes)}</p>` : ''}</div>`;
+      }
+      for (const sc of mod.scenarios) {
+        bodyHtml += `<div class="box"><h4>Scenario: ${escapeHtml(sc.title)}</h4><p><strong>Situation:</strong> ${escapeHtml(sc.situation)}</p><p><strong>Challenge:</strong> ${escapeHtml(sc.challenge)}</p><p><strong>Decision:</strong> ${escapeHtml(sc.decisionPrompt)}</p>${sc.modelDebrief ? `<p><strong>Model Debrief:</strong> ${escapeHtml(sc.modelDebrief)}</p>` : ''}<p><strong>Key Takeaway:</strong> ${escapeHtml(sc.keyTakeaway)}</p></div>`;
+      }
+      if (mod.knowledgeChecks.length > 0) {
+        bodyHtml += `<div class="box"><h4>Knowledge Checks</h4>${mod.knowledgeChecks
+          .map(
+            (kc, idx) =>
+              `<p><strong>${idx + 1}. ${escapeHtml(kc.question)}</strong><br/>${kc.options
+                .map((opt, oi) => `${String.fromCharCode(65 + oi)}) ${escapeHtml(opt)}`)
+                .join('<br/>')}<br/><em>Answer: ${String.fromCharCode(65 + kc.correctIndex)} — ${escapeHtml(kc.explanation)}</em></p>`
+          )
+          .join('')}</div>`;
+      }
+      bodyHtml += `<p><strong>Module Summary:</strong> ${escapeHtml(mod.summary)}</p>`;
+    }
+
+    bodyHtml += `<div class="page-break"></div><h2>5. Assessments, Marking Guides &amp; Rubrics</h2>`;
+    bodyHtml += `<p>${escapeHtml(project.assessments.strategySummary)}</p>`;
+    bodyHtml += `<p><strong>Pass Requirement:</strong> ${project.assessments.passRequirementPercent}% (Knowledge ${project.assessments.knowledgeWeightPercent}% / Practical ${project.assessments.practicalWeightPercent}%)</p>`;
+    for (const it of project.assessments.items) {
+      bodyHtml += `<div class="box"><h3>${escapeHtml(it.title)} (${escapeHtml(it.type)} · ${it.weightingPercent}%)</h3><p><strong>Objective:</strong> ${escapeHtml(it.objective)}</p><p><strong>Instructions:</strong> ${escapeHtml(it.instructions)}</p><p>${escapeHtml(it.promptOrQuestion)}</p><p><strong>Model Answer:</strong> ${escapeHtml(it.modelAnswer)}</p><p><strong>Marking Guide:</strong> ${escapeHtml(it.markingGuide)}</p>${
+        it.rubric.length > 0
+          ? `<table><thead><tr><th>Criterion</th><th>Weight %</th><th>Competent</th><th>Not Yet Competent</th></tr></thead><tbody>${it.rubric
+              .map(
+                r =>
+                  `<tr><td>${escapeHtml(r.criterion)}</td><td>${r.weightPercent}%</td><td>${escapeHtml(r.competentStandard)}</td><td>${escapeHtml(r.notYetCompetentIndicator)}</td></tr>`
+              )
+              .join('')}</tbody></table>`
+          : ''
+      }</div>`;
+    }
+
+    const qa = project.latestQA;
+    bodyHtml += `<h2>6. Quality Assurance Summary</h2>${
+      qa
+        ? `<p><strong>Verdict:</strong> ${escapeHtml(qa.verdict)} (${qa.weightedScore}%)</p><p>${escapeHtml(qa.verdictExplanation)}</p>`
+        : '<p>No QA evaluation run yet.</p>'
+    }`;
+
+    if (project.sources.length > 0) {
+      bodyHtml += `<h2>7. Source Register</h2><table><thead><tr><th>Title</th><th>Author/Org</th><th>Ref</th><th>Status</th></tr></thead><tbody>${project.sources
+        .map(
+          s =>
+            `<tr><td>${escapeHtml(s.title)}</td><td>${escapeHtml(s.authorOrOrganisation)}</td><td>${escapeHtml(s.referenceOrUrl)}</td><td>${escapeHtml(s.verificationStatus)}</td></tr>`
+        )
+        .join('')}</tbody></table>`;
+    }
+  } else if (type === 'learner_manual' || type === 'facilitator_guide') {
     bodyHtml += `<h2>Programme Overview</h2><p><strong>Purpose:</strong> ${escapeHtml(project.brief.purpose)}</p>`;
     bodyHtml += `<h3>Course Learning Outcomes</h3><ul>${project.outcomes.courseOutcomes
       .map(o => `<li><strong>${escapeHtml(o.code)} (${escapeHtml(o.bloomLevel)}):</strong> ${escapeHtml(o.statement)}</li>`)
