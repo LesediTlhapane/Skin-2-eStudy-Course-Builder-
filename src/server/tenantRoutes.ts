@@ -23,6 +23,7 @@ import {
 import {
   extractCompanyLogoStoragePath,
   getSupabaseAdminClient,
+  getSupabaseAnonAuthClient,
   isSupabaseServerConfigured,
   isValidHexColour,
   isValidUuid,
@@ -32,6 +33,7 @@ import {
   slugifyCompanyName,
   validateLogoImageBuffer,
 } from './supabaseAdmin.js';
+import { validateCourseGovernanceMutation } from '../utils/rbac.js';
 
 const VALID_ROLES: CompanyRole[] = ['company_admin', 'author', 'reviewer', 'viewer'];
 const VALID_LIFECYCLE_STATUSES = new Set([
@@ -124,17 +126,38 @@ export interface TenantServiceAdapter {
     email?: string;
     password?: string;
     fullName?: string;
+    redirectTo?: string;
     companyName: string;
     primaryColour: string;
     secondaryColour: string;
     logoUrl: string | null;
-  }): Promise<{ company: CompanyWorkspace; userId: string; email: string }>;
+  }): Promise<{
+    company: CompanyWorkspace;
+    userId: string;
+    email: string;
+    requiresEmailVerification?: boolean;
+    message?: string;
+  }>;
 
   registerInvitedUser(params: {
     email: string;
     password: string;
     fullName: string;
-  }): Promise<{ userId: string; email: string; activatedMembershipsCount: number }>;
+    redirectTo?: string;
+  }): Promise<{
+    userId: string;
+    email: string;
+    activatedMembershipsCount: number;
+    requiresEmailVerification?: boolean;
+    accountAlreadyConfirmed?: boolean;
+    invitedPending?: boolean;
+    message?: string;
+  }>;
+
+  acceptPendingInvitations?(
+    userId: string,
+    email: string
+  ): Promise<{ activatedMembershipsCount: number; memberships: CompanyMembership[] }>;
 
   updateCompany(
     companyId: string,
@@ -167,6 +190,7 @@ export interface TenantServiceAdapter {
     fullName: string;
     role: CompanyRole;
     temporaryPassword?: string;
+    redirectTo?: string;
   }): Promise<CompanyMembership>;
 
   updateMember(params: {
@@ -178,6 +202,7 @@ export interface TenantServiceAdapter {
   }): Promise<CompanyMembership>;
 
   listCourses(companyId: string): Promise<CourseProject[]>;
+  getCourse?(companyId: string, courseIdParam: string): Promise<CourseProject | null>;
   saveCourse(
     companyId: string,
     userId: string,
@@ -269,6 +294,57 @@ class SupabaseTenantService implements TenantServiceAdapter {
     return false;
   }
 
+  private async findAuthUserByEmail(email: string): Promise<{
+    id: string;
+    email: string;
+    fullName: string;
+    emailConfirmed: boolean;
+  } | null> {
+    const admin = getSupabaseAdminClient();
+    const normalized = email.trim().toLowerCase();
+
+    const { data: profileRow } = await admin
+      .from('user_profiles')
+      .select('id, email, full_name')
+      .ilike('email', normalized)
+      .maybeSingle();
+
+    if (profileRow?.id) {
+      const { data: authLookup } = await admin.auth.admin.getUserById(String(profileRow.id));
+      const u = authLookup?.user;
+      if (u) {
+        return {
+          id: u.id,
+          email: String(u.email || normalized).toLowerCase(),
+          fullName: String(profileRow.full_name || (u.user_metadata as any)?.full_name || ''),
+          emailConfirmed: Boolean(u.email_confirmed_at),
+        };
+      }
+    }
+
+    for (let page = 1; page <= 5; page++) {
+      const { data: listData, error: listErr } = await admin.auth.admin.listUsers({
+        page,
+        perPage: 200,
+      });
+      if (listErr || !listData?.users?.length) break;
+      const found = listData.users.find(
+        u => String(u.email || '').trim().toLowerCase() === normalized
+      );
+      if (found) {
+        return {
+          id: found.id,
+          email: String(found.email || normalized).toLowerCase(),
+          fullName: String((found.user_metadata as any)?.full_name || ''),
+          emailConfirmed: Boolean(found.email_confirmed_at),
+        };
+      }
+      if (listData.users.length < 200) break;
+    }
+
+    return null;
+  }
+
   async registerCompany(params: {
     existingUserId?: string;
     existingEmail?: string;
@@ -276,6 +352,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
     email?: string;
     password?: string;
     fullName?: string;
+    redirectTo?: string;
     companyName: string;
     primaryColour: string;
     secondaryColour: string;
@@ -285,25 +362,85 @@ class SupabaseTenantService implements TenantServiceAdapter {
     let userId = params.existingUserId;
     let userEmail = String(params.existingEmail || params.email || '').trim().toLowerCase();
     let createdAuthUser = false;
+    let requiresEmailVerification = false;
 
     if (!userId) {
       if (!userEmail || !params.password || params.password.length < 8) {
         throw new Error('Valid email and a password of at least 8 characters are required.');
       }
-      const { data: authCreated, error: authErr } = await admin.auth.admin.createUser({
-        email: userEmail,
-        password: params.password,
-        email_confirm: true,
-        user_metadata: {
-          full_name: (params.fullName || '').trim(),
-        },
-      });
-      if (authErr || !authCreated?.user) {
-        throw new Error(authErr?.message || 'Could not create user account.');
+
+      const existing = await this.findAuthUserByEmail(userEmail);
+      if (existing) {
+        if (existing.emailConfirmed) {
+          throw new Error(
+            'An account with this email already exists. Please sign in first, then create your new company workspace.'
+          );
+        }
+        const anon = getSupabaseAnonAuthClient();
+        if (anon) {
+          await anon.auth
+            .resend({
+              type: 'signup',
+              email: userEmail,
+              options: params.redirectTo ? { emailRedirectTo: params.redirectTo } : undefined,
+            })
+            .catch(() => {});
+        }
+        throw new Error(
+          'An account with this email is awaiting email verification. Please verify your email inbox first and sign in to create a company workspace.'
+        );
       }
-      userId = authCreated.user.id;
-      userEmail = String(authCreated.user.email || userEmail).toLowerCase();
-      createdAuthUser = true;
+
+      const fullNameTrimmed = (params.fullName || '').trim();
+      const anon = getSupabaseAnonAuthClient();
+
+      if (anon) {
+        const { data: signUpData, error: signUpErr } = await anon.auth.signUp({
+          email: userEmail,
+          password: params.password,
+          options: {
+            data: { full_name: fullNameTrimmed },
+            emailRedirectTo: params.redirectTo,
+          },
+        });
+        if (signUpErr || !signUpData?.user) {
+          throw new Error(signUpErr?.message || 'Could not create user account.');
+        }
+        // Supabase returns empty identities if user already existed when enumeration protection is enabled
+        if (Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
+          throw new Error(
+            'An account with this email already exists. Please sign in first, then create your new company workspace.'
+          );
+        }
+        userId = signUpData.user.id;
+        userEmail = String(signUpData.user.email || userEmail).toLowerCase();
+        createdAuthUser = true;
+        requiresEmailVerification = !signUpData.user.email_confirmed_at;
+      } else {
+        const { data: authCreated, error: authErr } = await admin.auth.admin.createUser({
+          email: userEmail,
+          password: params.password,
+          email_confirm: false,
+          user_metadata: {
+            full_name: fullNameTrimmed,
+          },
+        });
+        if (authErr || !authCreated?.user) {
+          throw new Error(authErr?.message || 'Could not create user account.');
+        }
+        await admin.auth.admin
+          .generateLink({
+            type: 'signup',
+            email: userEmail,
+            password: params.password,
+            options: params.redirectTo ? { redirectTo: params.redirectTo } : undefined,
+          })
+          .catch(() => {});
+        userId = authCreated.user.id;
+        userEmail = String(authCreated.user.email || userEmail).toLowerCase();
+        createdAuthUser = true;
+        requiresEmailVerification = true;
+      }
     }
 
     try {
@@ -343,7 +480,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
         company_id: companyRow.id,
         user_id: userId,
         role: 'company_admin',
-        membership_status: 'active',
+        membership_status: requiresEmailVerification ? 'invited' : 'active',
       });
 
       if (memErr) {
@@ -357,13 +494,20 @@ class SupabaseTenantService implements TenantServiceAdapter {
         action: 'company_registered',
         resource_type: 'company',
         resource_id: companyRow.id,
-        details: { companyName: companyRow.company_name },
+        details: {
+          companyName: companyRow.company_name,
+          requiresEmailVerification,
+        },
       });
 
       return {
         company: mapCompany(companyRow),
         userId,
         email: userEmail,
+        requiresEmailVerification,
+        message: requiresEmailVerification
+          ? 'Company registered! Please verify your email address via the confirmation link sent to your inbox before signing in.'
+          : 'Company workspace created and activated.',
       };
     } catch (err) {
       if (createdAuthUser && userId) {
@@ -373,38 +517,158 @@ class SupabaseTenantService implements TenantServiceAdapter {
     }
   }
 
-  async registerInvitedUser(params: { email: string; password: string; fullName: string }) {
+  async registerInvitedUser(params: {
+    email: string;
+    password: string;
+    fullName: string;
+    redirectTo?: string;
+  }) {
     const admin = getSupabaseAdminClient();
     const email = params.email.trim().toLowerCase();
+    const fullName = params.fullName.trim();
 
-    const { data: authCreated, error: authErr } = await admin.auth.admin.createUser({
-      email,
-      password: params.password,
-      email_confirm: true,
-      user_metadata: { full_name: params.fullName.trim() },
-    });
-    if (authErr || !authCreated?.user) {
-      throw new Error(authErr?.message || 'Could not register user account.');
+    const existing = await this.findAuthUserByEmail(email);
+
+    if (existing) {
+      await admin.from('user_profiles').upsert({
+        id: existing.id,
+        email,
+        full_name: fullName || existing.fullName,
+      });
+
+      if (existing.emailConfirmed) {
+        return {
+          userId: existing.id,
+          email,
+          activatedMembershipsCount: 0,
+          requiresEmailVerification: false,
+          accountAlreadyConfirmed: true,
+          message:
+            'An account with this email is already verified. Please sign in with your password (or use Forgot Password) to access your company workspace.',
+        };
+      }
+
+      // User exists from admin inviteUserByEmail or unconfirmed signup — never overwrite password or auto-confirm without email ownership!
+      const { error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
+        data: { full_name: fullName || existing.fullName },
+        redirectTo: params.redirectTo,
+      });
+      if (inviteErr) {
+        const anon = getSupabaseAnonAuthClient();
+        if (anon) {
+          await anon.auth
+            .resend({
+              type: 'signup',
+              email,
+              options: params.redirectTo ? { emailRedirectTo: params.redirectTo } : undefined,
+            })
+            .catch(() => {});
+        }
+      }
+
+      return {
+        userId: existing.id,
+        email,
+        activatedMembershipsCount: 0,
+        requiresEmailVerification: true,
+        invitedPending: true,
+        message:
+          'We sent a fresh invitation / verification link to your email address. Click that link to confirm email ownership, set your password, and activate your workspace.',
+      };
     }
 
-    const userId = authCreated.user.id;
+    const anon = getSupabaseAnonAuthClient();
+    let userId: string;
+
+    if (anon) {
+      const { data: signUpData, error: signUpErr } = await anon.auth.signUp({
+        email,
+        password: params.password,
+        options: {
+          data: { full_name: fullName },
+          emailRedirectTo: params.redirectTo,
+        },
+      });
+      if (signUpErr || !signUpData?.user) {
+        throw new Error(signUpErr?.message || 'Could not register user account.');
+      }
+      userId = signUpData.user.id;
+    } else {
+      const { data: authCreated, error: authErr } = await admin.auth.admin.createUser({
+        email,
+        password: params.password,
+        email_confirm: false,
+        user_metadata: { full_name: fullName },
+      });
+      if (authErr || !authCreated?.user) {
+        throw new Error(authErr?.message || 'Could not register user account.');
+      }
+      userId = authCreated.user.id;
+      await admin.auth.admin
+        .generateLink({
+          type: 'signup',
+          email,
+          password: params.password,
+          options: params.redirectTo ? { redirectTo: params.redirectTo } : undefined,
+        })
+        .catch(() => {});
+    }
+
     await admin.from('user_profiles').upsert({
       id: userId,
       email,
-      full_name: params.fullName.trim(),
+      full_name: fullName,
     });
-
-    const { data: activated } = await admin
-      .from('company_memberships')
-      .update({ membership_status: 'active' })
-      .eq('user_id', userId)
-      .eq('membership_status', 'invited')
-      .select('id');
 
     return {
       userId,
       email,
+      activatedMembershipsCount: 0,
+      requiresEmailVerification: true,
+      message:
+        'Account created. Please click the verification link sent to your email address before signing in.',
+    };
+  }
+
+  async acceptPendingInvitations(userId: string, _email: string) {
+    const admin = getSupabaseAdminClient();
+    const { data: activated, error: actErr } = await admin
+      .from('company_memberships')
+      .update({ membership_status: 'active' })
+      .eq('user_id', userId)
+      .eq('membership_status', 'invited')
+      .select('id, company_id');
+
+    if (actErr) {
+      throw new Error(actErr.message || 'Failed to activate pending invitations.');
+    }
+
+    const { data: membershipRows, error: memError } = await admin
+      .from('company_memberships')
+      .select(
+        'id, company_id, user_id, role, membership_status, created_at, companies ( id, company_name, company_slug, logo_url, primary_colour, secondary_colour, subscription_status, created_at, updated_at )'
+      )
+      .eq('user_id', userId)
+      .eq('membership_status', 'active')
+      .order('created_at', { ascending: true });
+
+    if (memError) {
+      throw new Error(memError.message || 'Failed to load company memberships.');
+    }
+
+    const memberships: CompanyMembership[] = (membershipRows || []).map((row: any) => ({
+      id: String(row.id),
+      companyId: String(row.company_id),
+      userId: String(row.user_id),
+      role: row.role as CompanyRole,
+      membershipStatus: row.membership_status as MembershipStatus,
+      createdAt: String(row.created_at),
+      company: row.companies ? mapCompany(row.companies) : undefined,
+    }));
+
+    return {
       activatedMembershipsCount: Array.isArray(activated) ? activated.length : 0,
+      memberships,
     };
   }
 
@@ -626,51 +890,92 @@ class SupabaseTenantService implements TenantServiceAdapter {
     fullName: string;
     role: CompanyRole;
     temporaryPassword?: string;
+    redirectTo?: string;
   }): Promise<CompanyMembership> {
     const admin = getSupabaseAdminClient();
     const email = params.email.trim().toLowerCase();
+    const trimmedName = params.fullName.trim();
 
-    const { data: existingProfile } = await admin
-      .from('user_profiles')
-      .select('id, full_name, email')
-      .ilike('email', email)
-      .maybeSingle();
+    const existingAuthUser = await this.findAuthUserByEmail(email);
 
-    let targetUserId = existingProfile?.id as string | undefined;
-    let status: MembershipStatus = 'active';
+    let targetUserId = existingAuthUser?.id;
+    let status: MembershipStatus = 'invited';
 
-    if (!targetUserId) {
-      if (params.temporaryPassword && params.temporaryPassword.length >= 8) {
-        const { data: created, error } = await admin.auth.admin.createUser({
-          email,
-          password: params.temporaryPassword,
-          email_confirm: true,
-          user_metadata: { full_name: params.fullName.trim() },
-        });
-        if (error || !created?.user) {
-          throw new Error(error?.message || 'Could not create team member account.');
-        }
-        targetUserId = created.user.id;
+    if (existingAuthUser) {
+      // Ensure user_profiles exists without touching existing confirmed user's credentials
+      await admin.from('user_profiles').upsert({
+        id: existingAuthUser.id,
+        email,
+        full_name: existingAuthUser.fullName || trimmedName,
+      });
+
+      const { data: existingMembership } = await admin
+        .from('company_memberships')
+        .select('id, membership_status')
+        .eq('company_id', params.companyId)
+        .eq('user_id', existingAuthUser.id)
+        .maybeSingle();
+
+      if (existingMembership?.membership_status === 'active') {
         status = 'active';
-      } else {
-        const { data: invited, error } = await admin.auth.admin.inviteUserByEmail(email, {
-          data: { full_name: params.fullName.trim() },
-        });
-        if (error || !invited?.user) {
-          throw new Error(
-            error?.message ||
-              'Could not send Supabase invitation email. You can also supply a temporary password (min 8 chars).'
-          );
-        }
-        targetUserId = invited.user.id;
+      } else if (!existingAuthUser.emailConfirmed && !params.temporaryPassword) {
+        // Re-send invite email for still-unconfirmed user safely
+        await admin.auth.admin
+          .inviteUserByEmail(email, {
+            data: { full_name: trimmedName },
+            redirectTo: params.redirectTo,
+          })
+          .catch(() => {});
         status = 'invited';
+      } else {
+        // Existing confirmed user from another workspace or previous membership: invite without duplicate error
+        status = existingAuthUser.emailConfirmed ? 'invited' : 'invited';
       }
-
+    } else if (params.temporaryPassword && params.temporaryPassword.length >= 8) {
+      const { data: created, error } = await admin.auth.admin.createUser({
+        email,
+        password: params.temporaryPassword,
+        email_confirm: false,
+        user_metadata: { full_name: trimmedName },
+      });
+      if (error || !created?.user) {
+        throw new Error(error?.message || 'Could not create team member account.');
+      }
+      targetUserId = created.user.id;
+      status = 'invited';
       await admin.from('user_profiles').upsert({
         id: targetUserId,
         email,
-        full_name: params.fullName.trim(),
+        full_name: trimmedName,
       });
+      await admin.auth.admin
+        .inviteUserByEmail(email, {
+          data: { full_name: trimmedName },
+          redirectTo: params.redirectTo,
+        })
+        .catch(() => {});
+    } else {
+      const { data: invited, error } = await admin.auth.admin.inviteUserByEmail(email, {
+        data: { full_name: trimmedName },
+        redirectTo: params.redirectTo,
+      });
+      if (error || !invited?.user) {
+        throw new Error(
+          error?.message ||
+            'Could not send Supabase invitation email. Verify SMTP/Auth settings in Supabase.'
+        );
+      }
+      targetUserId = invited.user.id;
+      status = 'invited';
+      await admin.from('user_profiles').upsert({
+        id: targetUserId,
+        email,
+        full_name: trimmedName,
+      });
+    }
+
+    if (!targetUserId) {
+      throw new Error('Could not resolve invited user account.');
     }
 
     const { data: memRow, error: memErr } = await admin
@@ -812,6 +1117,11 @@ class SupabaseTenantService implements TenantServiceAdapter {
 
     if (error) throw new Error(error.message);
     return (data || []).map(mapCourseRowToProject);
+  }
+
+  async getCourse(companyId: string, courseIdParam: string): Promise<CourseProject | null> {
+    const row = await this.findCourseRow(companyId, courseIdParam);
+    return row ? mapCourseRowToProject(row) : null;
   }
 
   async saveCourse(
@@ -1326,6 +1636,13 @@ export function attachTenantRoutes(
         if (!session) {
           return res.status(401).json({ success: false, error: 'Invalid session token.' });
         }
+        if (session.emailVerified === false) {
+          return res.status(403).json({
+            success: false,
+            code: 'EMAIL_NOT_VERIFIED',
+            error: 'Please verify your email address before creating a company workspace.',
+          });
+        }
         existingUserId = session.userId;
         existingEmail = session.email;
         existingFullName = session.profile.fullName;
@@ -1354,6 +1671,7 @@ export function attachTenantRoutes(
         email: body.email,
         password: body.password,
         fullName: body.fullName,
+        redirectTo: sanitizeHttpUrl(body.redirectTo) || undefined,
         companyName,
         primaryColour,
         secondaryColour,
@@ -1362,9 +1680,11 @@ export function attachTenantRoutes(
 
       return res.status(201).json({ success: true, ...result });
     } catch (err: any) {
-      return res.status(400).json({
+      const msg = String(err?.message || 'Company registration failed.');
+      const status = msg.toLowerCase().includes('already exists') ? 409 : 400;
+      return res.status(status).json({
         success: false,
-        error: String(err?.message || 'Company registration failed.'),
+        error: msg,
       });
     }
   });
@@ -1405,8 +1725,13 @@ export function attachTenantRoutes(
         });
       }
 
-      const result = await service.registerInvitedUser({ email, password, fullName });
-      return res.status(201).json({ success: true, ...result });
+      const result = await service.registerInvitedUser({
+        email,
+        password,
+        fullName,
+        redirectTo: sanitizeHttpUrl(body.redirectTo) || undefined,
+      });
+      return res.status(result.accountAlreadyConfirmed ? 200 : 201).json({ success: true, ...result });
     } catch (err: any) {
       return res.status(400).json({
         success: false,
@@ -1414,6 +1739,31 @@ export function attachTenantRoutes(
       });
     }
   });
+
+  // Accept pending invitations for the authenticated, email-verified user
+  router.post(
+    '/v2/tenant/invitations/accept',
+    requireUserSession,
+    async (req: AuthenticatedRequest, res: express.Response) => {
+      try {
+        const session = req.userSession!;
+        if (!service.acceptPendingInvitations) {
+          return res.json({
+            success: true,
+            activatedMembershipsCount: 0,
+            memberships: session.memberships,
+          });
+        }
+        const result = await service.acceptPendingInvitations(session.userId, session.email);
+        return res.json({ success: true, ...result });
+      } catch (err: any) {
+        return res.status(400).json({
+          success: false,
+          error: String(err?.message || 'Could not accept pending invitations.'),
+        });
+      }
+    }
+  );
 
   // Authenticated session bootstrap
   router.get(
@@ -1615,7 +1965,7 @@ export function attachTenantRoutes(
     requireCompanyRole(['company_admin']),
     async (req: AuthenticatedRequest, res: express.Response) => {
       try {
-        const { email, fullName, role, temporaryPassword } = req.body || {};
+        const { email, fullName, role, temporaryPassword, redirectTo } = req.body || {};
         if (hasForbiddenPrivilegeInjection(req.body || {})) {
           return res.status(400).json({ success: false, error: 'Invalid role parameter.' });
         }
@@ -1636,6 +1986,7 @@ export function attachTenantRoutes(
           fullName: String(fullName || normalizedEmail.split('@')[0]),
           role,
           temporaryPassword: temporaryPassword ? String(temporaryPassword) : undefined,
+          redirectTo: sanitizeHttpUrl(redirectTo) || undefined,
         });
         return res.status(201).json({ success: true, member });
       } catch (err: any) {
@@ -1707,6 +2058,14 @@ export function attachTenantRoutes(
         if (!project || typeof project !== 'object') {
           return res.status(400).json({ success: false, error: 'Missing course project payload.' });
         }
+        const govCheck = validateCourseGovernanceMutation({
+          actorRole: req.tenantAuth!.role,
+          incomingProject: project,
+          existingProject: null,
+        });
+        if (govCheck.ok === false) {
+          return res.status(govCheck.status).json({ success: false, error: govCheck.error });
+        }
         const saved = await service.saveCourse(
           req.tenantAuth!.companyId,
           req.tenantAuth!.userId,
@@ -1731,6 +2090,17 @@ export function attachTenantRoutes(
         const project = req.body?.project as CourseProject | undefined;
         if (!project || typeof project !== 'object') {
           return res.status(400).json({ success: false, error: 'Missing course project payload.' });
+        }
+        const existingProject = service.getCourse
+          ? await service.getCourse(req.tenantAuth!.companyId, req.params.courseId)
+          : null;
+        const govCheck = validateCourseGovernanceMutation({
+          actorRole: req.tenantAuth!.role,
+          incomingProject: project,
+          existingProject,
+        });
+        if (govCheck.ok === false) {
+          return res.status(govCheck.status).json({ success: false, error: govCheck.error });
         }
         const result = await service.saveCourse(
           req.tenantAuth!.companyId,

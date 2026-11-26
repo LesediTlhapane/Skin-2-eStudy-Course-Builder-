@@ -50,6 +50,8 @@ export function isSupabaseServerConfigured(): boolean {
 
 let cachedAdminClient: SupabaseClient | null = null;
 let cachedConfigKey = '';
+let cachedAnonClient: SupabaseClient | null = null;
+let cachedAnonConfigKey = '';
 
 export function getSupabaseAdminClient(): SupabaseClient {
   const env = resolveSupabaseServerEnv();
@@ -69,6 +71,29 @@ export function getSupabaseAdminClient(): SupabaseClient {
     cachedConfigKey = cacheKey;
   }
   return cachedAdminClient;
+}
+
+export function getSupabaseAnonAuthClient(): SupabaseClient | null {
+  const env = resolveSupabaseServerEnv();
+  if (
+    !env.url.startsWith('https://') ||
+    !env.anonKey ||
+    PLACEHOLDER_VALUES.has(env.anonKey) ||
+    env.anonKey.includes('YOUR_SUPABASE')
+  ) {
+    return null;
+  }
+  const cacheKey = `${env.url}::${env.anonKey.slice(-8)}`;
+  if (!cachedAnonClient || cachedAnonConfigKey !== cacheKey) {
+    cachedAnonClient = createClient(env.url, env.anonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+    cachedAnonConfigKey = cacheKey;
+  }
+  return cachedAnonClient;
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

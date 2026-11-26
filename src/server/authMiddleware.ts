@@ -24,6 +24,7 @@ export interface VerifiedTenantContext {
 export interface VerifiedUserSession {
   userId: string;
   email: string;
+  emailVerified?: boolean;
   profile: UserProfile;
   memberships: CompanyMembership[];
 }
@@ -64,7 +65,22 @@ class SupabaseTenantVerifier implements TenantAuthVerifier {
 
     const authUser = userResult.user;
     const email = String(authUser.email || '').trim().toLowerCase();
+    const emailVerified = Boolean(authUser.email_confirmed_at);
     const metaName = String((authUser.user_metadata as any)?.full_name || '').trim();
+
+    if (!emailVerified) {
+      return {
+        userId: authUser.id,
+        email,
+        emailVerified: false,
+        profile: {
+          id: authUser.id,
+          fullName: metaName,
+          email,
+        },
+        memberships: [],
+      };
+    }
 
     // Ensure profile row exists
     const { data: profileRow } = await admin
@@ -130,6 +146,7 @@ class SupabaseTenantVerifier implements TenantAuthVerifier {
     return {
       userId: authUser.id,
       email: profile.email,
+      emailVerified: true,
       profile,
       memberships,
     };
@@ -175,6 +192,13 @@ export function createUserSessionMiddleware(verifier: TenantAuthVerifier = defau
           error: 'Invalid or expired authentication session. Please sign in again.',
         });
       }
+      if (session.emailVerified === false) {
+        return res.status(403).json({
+          success: false,
+          code: 'EMAIL_NOT_VERIFIED',
+          error: 'Please verify your email address before accessing your account or workspace.',
+        });
+      }
       req.userSession = session;
       return next();
     } catch (err: any) {
@@ -213,6 +237,13 @@ export function createTenantAuthMiddleware(verifier: TenantAuthVerifier = defaul
         return res.status(401).json({
           success: false,
           error: 'Invalid or expired authentication session.',
+        });
+      }
+      if (session.emailVerified === false) {
+        return res.status(403).json({
+          success: false,
+          code: 'EMAIL_NOT_VERIFIED',
+          error: 'Please verify your email address before accessing protected workspace endpoints.',
         });
       }
 

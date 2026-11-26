@@ -28,7 +28,11 @@ import {
   requireCompanyRole,
   type AuthenticatedRequest,
 } from './authMiddleware.js';
-import { aiUsageContextStorage, isSupabaseServerConfigured } from './supabaseAdmin.js';
+import {
+  aiUsageContextStorage,
+  getSupabaseAdminClient,
+  isSupabaseServerConfigured,
+} from './supabaseAdmin.js';
 import { attachTenantRoutes, type TenantRouterDependencies } from './tenantRoutes.js';
 
 const ALLOWED_UPLOAD_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md', '.csv', '.json'];
@@ -90,40 +94,179 @@ function validateUploadPayload(body: any): { error?: string } {
   return {};
 }
 
-export function createRateLimiter(options?: { maxRequests?: number; windowMs?: number }) {
+export interface RateLimitConsumeResult {
+  allowed: boolean;
+  count: number;
+  retryAfterSeconds: number;
+}
+
+export interface RateLimitStore {
+  consume(key: string, maxRequests: number, windowMs: number): Promise<RateLimitConsumeResult>;
+}
+
+export class MemoryRateLimitStore implements RateLimitStore {
+  private buckets = new Map<string, number[]>();
+
+  async consume(
+    key: string,
+    maxRequests: number,
+    windowMs: number
+  ): Promise<RateLimitConsumeResult> {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const timestamps = (this.buckets.get(key) || []).filter(t => t > cutoff);
+
+    if (timestamps.length >= maxRequests) {
+      const oldest = timestamps[0];
+      const retryAfterSeconds = Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+      return { allowed: false, count: timestamps.length, retryAfterSeconds };
+    }
+
+    timestamps.push(now);
+    this.buckets.set(key, timestamps);
+    if (this.buckets.size > 1000) {
+      for (const [k, list] of this.buckets.entries()) {
+        if (list.every(t => t <= cutoff)) this.buckets.delete(k);
+      }
+    }
+    return {
+      allowed: true,
+      count: timestamps.length,
+      retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)),
+    };
+  }
+}
+
+export class UpstashRedisRateLimitStore implements RateLimitStore {
+  constructor(
+    private readonly restUrl: string,
+    private readonly restToken: string,
+    private readonly fallback = new MemoryRateLimitStore()
+  ) {}
+
+  async consume(
+    key: string,
+    maxRequests: number,
+    windowMs: number
+  ): Promise<RateLimitConsumeResult> {
+    try {
+      const redisKey = `estudy:rl:${key}`;
+      const resp = await fetch(`${this.restUrl.replace(/\/+$/, '')}/pipeline`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.restToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify([
+          ['INCR', redisKey],
+          ['PTTL', redisKey],
+        ]),
+      });
+      if (!resp.ok) {
+        return this.fallback.consume(key, maxRequests, windowMs);
+      }
+      const results = (await resp.json()) as Array<{ result?: number; error?: string }>;
+      const count = Number(results?.[0]?.result || 1);
+      let ttlMs = Number(results?.[1]?.result ?? -1);
+      if (count === 1 || ttlMs < 0) {
+        await fetch(`${this.restUrl.replace(/\/+$/, '')}/pexpire/${encodeURIComponent(redisKey)}/${windowMs}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.restToken}` },
+        }).catch(() => {});
+        ttlMs = windowMs;
+      }
+      const retryAfterSeconds = Math.max(1, Math.ceil((ttlMs > 0 ? ttlMs : windowMs) / 1000));
+      return {
+        allowed: count <= maxRequests,
+        count,
+        retryAfterSeconds,
+      };
+    } catch {
+      return this.fallback.consume(key, maxRequests, windowMs);
+    }
+  }
+}
+
+export class SupabaseRateLimitStore implements RateLimitStore {
+  private warnedFallback = false;
+
+  constructor(private readonly fallback = new MemoryRateLimitStore()) {}
+
+  async consume(
+    key: string,
+    maxRequests: number,
+    windowMs: number
+  ): Promise<RateLimitConsumeResult> {
+    try {
+      const admin = getSupabaseAdminClient();
+      const { data, error } = await admin.rpc('consume_rate_limit', {
+        p_key: key,
+        p_max_requests: maxRequests,
+        p_window_ms: windowMs,
+      });
+      if (error) {
+        if (!this.warnedFallback) {
+          this.warnedFallback = true;
+          console.warn(
+            'Supabase consume_rate_limit RPC unavailable; falling back to local memory store until 004_rate_limits.sql is applied.'
+          );
+        }
+        return this.fallback.consume(key, maxRequests, windowMs);
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) {
+        return this.fallback.consume(key, maxRequests, windowMs);
+      }
+      return {
+        allowed: Boolean(row.allowed),
+        count: Number(row.current_count || 1),
+        retryAfterSeconds: Math.max(1, Number(row.retry_after_seconds || 1)),
+      };
+    } catch {
+      return this.fallback.consume(key, maxRequests, windowMs);
+    }
+  }
+}
+
+export function resolveDefaultRateLimitStore(): RateLimitStore {
+  const upstashUrl = String(process.env.UPSTASH_REDIS_REST_URL || '').trim();
+  const upstashToken = String(process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
+  if (upstashUrl && upstashToken) {
+    return new UpstashRedisRateLimitStore(upstashUrl, upstashToken);
+  }
+  if (isSupabaseServerConfigured()) {
+    return new SupabaseRateLimitStore();
+  }
+  return new MemoryRateLimitStore();
+}
+
+export function createRateLimiter(options?: {
+  maxRequests?: number;
+  windowMs?: number;
+  store?: RateLimitStore;
+}) {
   const maxRequests =
     options?.maxRequests || Math.max(5, Number(process.env.RATE_LIMIT_MAX_PER_MIN) || 60);
   const windowMs = options?.windowMs || 60_000;
-  const buckets = new Map<string, number[]>();
+  const store = options?.store || resolveDefaultRateLimitStore();
 
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const fwd = req.headers['x-forwarded-for'];
     const rawIp =
       (Array.isArray(fwd) ? fwd[0] : String(fwd || '').split(',')[0].trim()) ||
       req.ip ||
       'local';
-    const now = Date.now();
-    const cutoff = now - windowMs;
-    const timestamps = (buckets.get(rawIp) || []).filter(t => t > cutoff);
+    const result = await store.consume(`v2:${rawIp}`, maxRequests, windowMs);
 
-    if (timestamps.length >= maxRequests) {
-      const oldest = timestamps[0];
-      const retryAfterSeconds = Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
-      res.setHeader('Retry-After', String(retryAfterSeconds));
+    if (!result.allowed) {
+      res.setHeader('Retry-After', String(result.retryAfterSeconds));
       return res.status(429).json({
         success: false,
-        error: `Too many requests (${maxRequests}/min limit). Please wait ${retryAfterSeconds}s and retry.`,
-        retryAfterSeconds,
+        error: `Too many requests (${maxRequests}/min limit). Please wait ${result.retryAfterSeconds}s and retry.`,
+        retryAfterSeconds: result.retryAfterSeconds,
       });
     }
 
-    timestamps.push(now);
-    buckets.set(rawIp, timestamps);
-    if (buckets.size > 500) {
-      for (const [key, list] of buckets.entries()) {
-        if (list.every(t => t <= cutoff)) buckets.delete(key);
-      }
-    }
     return next();
   };
 }
@@ -143,6 +286,7 @@ function runWithAiTelemetry<T>(
 
 export function createApiRouter(options?: {
   rateLimitMaxPerMin?: number;
+  rateLimitStore?: RateLimitStore;
   tenantDeps?: TenantRouterDependencies;
 }): express.Router {
   const router = express.Router();
@@ -183,9 +327,10 @@ export function createApiRouter(options?: {
 
   router.use(
     '/v2',
-    createRateLimiter(
-      options?.rateLimitMaxPerMin ? { maxRequests: options.rateLimitMaxPerMin } : undefined
-    )
+    createRateLimiter({
+      maxRequests: options?.rateLimitMaxPerMin,
+      store: options?.rateLimitStore,
+    })
   );
 
   // Attach multi-tenant onboarding, workspace, RBAC, storage, and persistence routes

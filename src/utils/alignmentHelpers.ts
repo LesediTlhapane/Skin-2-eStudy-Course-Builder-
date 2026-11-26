@@ -35,7 +35,7 @@ export function computeClientAlignmentFlags(
   const outcomeIdSet = new Set(allOutcomes.map(o => o.id));
 
   for (const out of allOutcomes) {
-    const mapped = items.filter(it => it.outcomeIds.includes(out.id));
+    const mapped = items.filter(it => Array.isArray(it.outcomeIds) && it.outcomeIds.includes(out.id));
     if (mapped.length === 0) {
       flags.push({
         id: `flag-unassessed-${out.id}`,
@@ -88,7 +88,9 @@ export function computeClientAlignmentFlags(
         targetId: item.id,
       });
     } else {
-      const invalidRefs = item.outcomeIds.filter(id => !outcomeIdSet.has(id));
+      const invalidRefs = (Array.isArray(item.outcomeIds) ? item.outcomeIds : []).filter(
+        id => !outcomeIdSet.has(id)
+      );
       if (invalidRefs.length > 0) {
         flags.push({
           id: `flag-invalid-ref-${item.id}`,
@@ -253,7 +255,9 @@ export function computeFullAlignmentReport(project: CourseProject): AlignmentRep
       );
     }
 
-    const mappedAssessments = items.filter(it => it.outcomeIds.includes(out.id));
+    const mappedAssessments = items.filter(
+      it => Array.isArray(it.outcomeIds) && it.outcomeIds.includes(out.id)
+    );
 
     if (teachingLessons.length === 0) {
       flags.push({
