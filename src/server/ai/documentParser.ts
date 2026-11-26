@@ -118,7 +118,9 @@ function inflateZipSlice(
         .toString('utf8');
     } catch (inflateErr: any) {
       if (String(inflateErr?.code) === 'ERR_BUFFER_TOO_LARGE') {
-        throw new Error('Invalid request: DOCX content exceeds safe decompression limit.');
+        throw new Error('Invalid request: DOCX content exceeds safe decompression limit.', {
+          cause: inflateErr,
+        });
       }
       return '';
     }

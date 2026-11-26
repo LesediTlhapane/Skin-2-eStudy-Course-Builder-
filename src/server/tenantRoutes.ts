@@ -899,7 +899,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
     const existingAuthUser = await this.findAuthUserByEmail(email);
 
     let targetUserId = existingAuthUser?.id;
-    let status: MembershipStatus = 'invited';
+    let status: MembershipStatus;
 
     if (existingAuthUser) {
       // Ensure user_profiles exists without touching existing confirmed user's credentials
@@ -929,7 +929,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
         status = 'invited';
       } else {
         // Existing confirmed user from another workspace or previous membership: invite without duplicate error
-        status = existingAuthUser.emailConfirmed ? 'invited' : 'invited';
+        status = 'invited';
       }
     } else if (params.temporaryPassword && params.temporaryPassword.length >= 8) {
       const { data: created, error } = await admin.auth.admin.createUser({
@@ -1404,7 +1404,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
     templateIdParam: string
   ): Promise<{ deleted: boolean; forbiddenSystem?: boolean }> {
     const admin = getSupabaseAdminClient();
-    let existing: any = null;
+    let existing: any;
     if (isValidUuid(templateIdParam)) {
       const { data } = await admin
         .from('templates')

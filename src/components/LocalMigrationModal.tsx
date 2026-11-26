@@ -12,6 +12,7 @@ import {
   apiFetch,
   compactProjectForCloudPayload,
   parseApiJson,
+  utf8ByteLength,
 } from '../utils/apiClient';
 
 interface LocalMigrationModalProps {
@@ -77,13 +78,19 @@ export const LocalMigrationModal: React.FC<LocalMigrationModalProps> = ({
       // 1. Migrate custom templates first (individually to stay well under request size limits)
       for (let i = 0; i < localTemplates.length; i++) {
         setProgressLabel(`Migrating custom template ${i + 1} of ${localTemplates.length}...`);
+        const templatePayload = JSON.stringify({
+          projects: [],
+          customTemplates: [localTemplates[i]],
+        });
+        if (utf8ByteLength(templatePayload) > 3_800_000) {
+          throw new Error(
+            `Custom template "${localTemplates[i]?.name || i + 1}" exceeds the 4.5 MB Vercel request limit even on its own.`
+          );
+        }
         const res = await apiFetch('/api/v2/courses/migrate-local', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projects: [],
-            customTemplates: [localTemplates[i]],
-          }),
+          body: templatePayload,
         });
         const data = await parseApiJson<any>(res);
         if (!res.ok || !data.success) {
@@ -102,13 +109,20 @@ export const LocalMigrationModal: React.FC<LocalMigrationModalProps> = ({
         const { project: compacted, trimmed } = compactProjectForCloudPayload(proj, 2_800_000);
         if (trimmed) trimmedCourses += 1;
 
+        const coursePayload = JSON.stringify({
+          projects: [compacted],
+          customTemplates: [],
+        });
+        if (utf8ByteLength(coursePayload) > 3_800_000) {
+          throw new Error(
+            `Course ${i + 1}${title} still exceeds the 4.5 MB Vercel upload limit after compacting attachments and version history.`
+          );
+        }
+
         const res = await apiFetch('/api/v2/courses/migrate-local', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projects: [compacted],
-            customTemplates: [],
-          }),
+          body: coursePayload,
         });
         const data = await parseApiJson<any>(res);
         if (!res.ok || !data.success) {

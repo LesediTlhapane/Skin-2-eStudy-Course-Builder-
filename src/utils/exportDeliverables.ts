@@ -686,12 +686,11 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
   return children;
 }
 
-export async function exportDeliverableDocx(project: CourseProject, type: DeliverableType): Promise<void> {
-  if (type === 'lms_package') {
-    exportLmsPackageJson(project);
-    return;
-  }
-  const doc = new Document({
+export function buildDeliverableDocxDocument(
+  project: CourseProject,
+  type: Exclude<DeliverableType, 'lms_package'>
+): Document {
+  return new Document({
     sections: [
       {
         properties: {},
@@ -699,6 +698,14 @@ export async function exportDeliverableDocx(project: CourseProject, type: Delive
       },
     ],
   });
+}
+
+export async function exportDeliverableDocx(project: CourseProject, type: DeliverableType): Promise<void> {
+  if (type === 'lms_package') {
+    exportLmsPackageJson(project);
+    return;
+  }
+  const doc = buildDeliverableDocxDocument(project, type);
   const blob = await Packer.toBlob(doc);
   downloadBlob(blob, `${slugify(project.brief.title)}-${type}.docx`);
 }

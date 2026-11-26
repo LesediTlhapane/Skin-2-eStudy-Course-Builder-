@@ -23,6 +23,7 @@ interface TenantContextValue {
   activeCompany: CompanyWorkspace | null;
   activeRole: CompanyRole | null;
   isPasswordRecoveryMode: boolean;
+  isPasswordSetupMode: boolean;
   authError: string | null;
   workspaceNotice: string | null;
   setWorkspaceNotice: (msg: string | null) => void;
@@ -32,6 +33,7 @@ interface TenantContextValue {
   resetThemePreview: () => void;
   setActiveCompanyId: (companyId: string) => Promise<void>;
   refreshTenantContext: (overrideToken?: string, preferredCompanyId?: string) => Promise<void>;
+  acceptPendingInvitations: (overrideToken?: string) => Promise<number>;
   signInWithPassword: (
     email: string,
     password: string,
@@ -40,6 +42,7 @@ interface TenantContextValue {
   sendPasswordResetEmail: (email: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
   clearPasswordRecoveryMode: () => void;
+  clearPasswordSetupMode: () => void;
   signOut: () => Promise<void>;
   updateLocalActiveCompany: (company: CompanyWorkspace) => void;
 }
@@ -56,6 +59,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [activeCompany, setActiveCompany] = useState<CompanyWorkspace | null>(null);
   const [activeRole, setActiveRole] = useState<CompanyRole | null>(null);
   const [isPasswordRecoveryMode, setIsPasswordRecoveryMode] = useState(false);
+  const [isPasswordSetupMode, setIsPasswordSetupMode] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
   const [surfaceMode, setSurfaceModeState] = useState<BrandSurfaceMode>(() =>
@@ -65,8 +69,10 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const tokenRef = useRef<string | null>(null);
   const companyIdRef = useRef<string | null>(null);
 
-  tokenRef.current = session?.access_token || null;
-  companyIdRef.current = activeCompany?.id || null;
+  useEffect(() => {
+    tokenRef.current = session?.access_token || null;
+    companyIdRef.current = activeCompany?.id || null;
+  }, [session?.access_token, activeCompany?.id]);
 
   useEffect(() => {
     setApiAuthContext({
@@ -82,16 +88,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [activeCompany?.id]);
 
-  // Apply official eStudy identity on public auth/recovery screens; apply company branding once inside a workspace
+  // Apply official eStudy identity on public auth/recovery/invite screens; apply company branding once inside a workspace
   useEffect(() => {
-    if (!activeCompany || isPasswordRecoveryMode) {
+    if (!activeCompany || isPasswordRecoveryMode || isPasswordSetupMode) {
       applyBrandThemeToDocument('#052B66', '#45CC42', 'vibrant');
       return;
     }
     const primary = activeCompany.primaryColour || '#052B66';
     const secondary = activeCompany.secondaryColour || '#45CC42';
     applyBrandThemeToDocument(primary, secondary, surfaceMode);
-  }, [activeCompany, isPasswordRecoveryMode, surfaceMode]);
+  }, [activeCompany, isPasswordRecoveryMode, isPasswordSetupMode, surfaceMode]);
 
   const setSurfaceMode = useCallback(
     (mode: BrandSurfaceMode) => {
@@ -109,14 +115,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const resetThemePreview = useCallback(() => {
-    if (!activeCompany || isPasswordRecoveryMode) {
+    if (!activeCompany || isPasswordRecoveryMode || isPasswordSetupMode) {
       applyBrandThemeToDocument('#052B66', '#45CC42', 'vibrant');
       return;
     }
     const primary = activeCompany.primaryColour || '#052B66';
     const secondary = activeCompany.secondaryColour || '#45CC42';
     applyBrandThemeToDocument(primary, secondary, surfaceMode);
-  }, [activeCompany, isPasswordRecoveryMode, surfaceMode]);
+  }, [activeCompany, isPasswordRecoveryMode, isPasswordSetupMode, surfaceMode]);
 
   // Query backend health once for server Supabase status
   useEffect(() => {
@@ -164,13 +170,22 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // Stored company may belong to another previous user; clear and retry cleanly
         try {
           localStorage.removeItem(ACTIVE_COMPANY_STORAGE_KEY);
-        } catch {}
+        } catch {
+          /* ignore storage unavailable */
+        }
         res = await fetch('/api/v2/tenant/me', {
           headers: { Authorization: `Bearer ${token}` },
         });
       }
 
       const data = await parseApiJson<any>(res);
+      if (res.status === 403 && data?.code === 'EMAIL_NOT_VERIFIED') {
+        const msg =
+          data.error ||
+          'Please verify your email address via the confirmation link sent to your inbox before signing in.';
+        setAuthError(msg);
+        throw new Error(msg);
+      }
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to load tenant workspace profile.');
       }
@@ -190,7 +205,9 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         companyIdRef.current = nextCompany.id;
         try {
           localStorage.setItem(ACTIVE_COMPANY_STORAGE_KEY, nextCompany.id);
-        } catch {}
+        } catch {
+          /* ignore storage unavailable */
+        }
       } else {
         companyIdRef.current = null;
       }
@@ -198,7 +215,28 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     []
   );
 
-  // Initialize Supabase session & listen for auth changes (including password recovery)
+  const acceptPendingInvitations = useCallback(
+    async (overrideToken?: string): Promise<number> => {
+      const token = overrideToken || tokenRef.current;
+      if (!token) return 0;
+      const res = await fetch('/api/v2/tenant/invitations/accept', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Could not accept pending invitations.');
+      }
+      await refreshTenantContext(token);
+      return Number(data.activatedMembershipsCount || 0);
+    },
+    [refreshTenantContext]
+  );
+
+  // Initialize Supabase session & listen for auth changes (including password recovery and team invitations)
   useEffect(() => {
     const client = getSupabaseClient();
     if (!client) {
@@ -206,8 +244,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return;
     }
 
-    if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
-      setIsPasswordRecoveryMode(true);
+    if (typeof window !== 'undefined') {
+      const urlSignal = `${window.location.hash}&${window.location.search}`;
+      if (urlSignal.includes('type=recovery')) {
+        setIsPasswordRecoveryMode(true);
+      }
+      if (urlSignal.includes('type=invite')) {
+        setIsPasswordSetupMode(true);
+      }
     }
 
     let mounted = true;
@@ -234,6 +278,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (!mounted) return;
       if (event === 'PASSWORD_RECOVERY') {
         setIsPasswordRecoveryMode(true);
+      }
+      if (
+        event === 'SIGNED_IN' &&
+        typeof window !== 'undefined' &&
+        `${window.location.hash}&${window.location.search}`.includes('type=invite')
+      ) {
+        setIsPasswordSetupMode(true);
       }
       setSession(nextSession);
       tokenRef.current = nextSession?.access_token || null;
@@ -306,20 +357,36 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, []);
 
-  const updatePassword = useCallback(async (newPassword: string) => {
-    const client = getSupabaseClient();
-    if (!client) {
-      throw new Error('Supabase client is not configured.');
-    }
-    const { error } = await client.auth.updateUser({ password: newPassword });
-    if (error) {
-      throw new Error(error.message);
-    }
-    setIsPasswordRecoveryMode(false);
-    if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
-      window.history.replaceState(null, '', window.location.pathname);
-    }
-  }, []);
+  const updatePassword = useCallback(
+    async (newPassword: string) => {
+      const client = getSupabaseClient();
+      if (!client) {
+        throw new Error('Supabase client is not configured.');
+      }
+      const { data, error } = await client.auth.updateUser({ password: newPassword });
+      if (error) {
+        throw new Error(error.message);
+      }
+      const wasInviteSetup = isPasswordSetupMode;
+      setIsPasswordRecoveryMode(false);
+      setIsPasswordSetupMode(false);
+      if (
+        typeof window !== 'undefined' &&
+        (window.location.hash.includes('type=recovery') ||
+          window.location.hash.includes('type=invite'))
+      ) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+      const latestSession = await client.auth.getSession();
+      const token = latestSession.data?.session?.access_token || tokenRef.current;
+      if (token && (wasInviteSetup || data?.user)) {
+        await acceptPendingInvitations(token).catch(async () => {
+          await refreshTenantContext(token);
+        });
+      }
+    },
+    [acceptPendingInvitations, isPasswordSetupMode, refreshTenantContext]
+  );
 
   const signOut = useCallback(async () => {
     const client = getSupabaseClient();
@@ -332,11 +399,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setActiveCompany(null);
     setActiveRole(null);
     setIsPasswordRecoveryMode(false);
+    setIsPasswordSetupMode(false);
     tokenRef.current = null;
     companyIdRef.current = null;
     try {
       localStorage.removeItem(ACTIVE_COMPANY_STORAGE_KEY);
-    } catch {}
+    } catch {
+      /* ignore storage unavailable */
+    }
   }, []);
 
   const updateLocalActiveCompany = useCallback((company: CompanyWorkspace) => {
@@ -359,6 +429,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         activeCompany,
         activeRole,
         isPasswordRecoveryMode,
+        isPasswordSetupMode,
         authError,
         workspaceNotice,
         setWorkspaceNotice,
@@ -368,10 +439,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         resetThemePreview,
         setActiveCompanyId,
         refreshTenantContext,
+        acceptPendingInvitations,
         signInWithPassword,
         sendPasswordResetEmail,
         updatePassword,
         clearPasswordRecoveryMode: () => setIsPasswordRecoveryMode(false),
+        clearPasswordSetupMode: () => setIsPasswordSetupMode(false),
         signOut,
         updateLocalActiveCompany,
       }}

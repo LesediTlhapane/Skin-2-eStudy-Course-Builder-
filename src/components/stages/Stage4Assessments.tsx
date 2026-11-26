@@ -20,6 +20,7 @@ import { apiFetch, parseApiJson } from '../../utils/apiClient';
 
 interface Stage4AssessmentsProps {
   project: CourseProject;
+  readOnly?: boolean;
   selectedProvider: AIProvider;
   selectedModel: string;
   onUpdateProject: (
@@ -45,6 +46,7 @@ const ITEM_TYPES: Array<{ value: AssessmentItemType; label: string }> = [
 
 export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
   project,
+  readOnly = false,
   selectedProvider,
   selectedModel,
   onUpdateProject,
@@ -230,18 +232,19 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
   };
 
   const toggleOutcomeLink = (item: AssessmentItem, outcomeId: string) => {
-    const exists = item.outcomeIds.includes(outcomeId);
+    const existingIds = Array.isArray(item.outcomeIds) ? item.outcomeIds : [];
+    const exists = existingIds.includes(outcomeId);
     const nextIds = exists
-      ? item.outcomeIds.filter(id => id !== outcomeId)
-      : [...item.outcomeIds, outcomeId];
+      ? existingIds.filter(id => id !== outcomeId)
+      : [...existingIds, outcomeId];
     updateItem(item.id, { outcomeIds: nextIds });
   };
 
   const criticalFlags = liveFlags.filter(f => f.severity === 'critical');
-  const canApprove = assessments.items.length > 0 && criticalFlags.length === 0;
+  const canApprove = !readOnly && assessments.items.length > 0 && criticalFlags.length === 0;
 
   return (
-    <div className="space-y-6">
+    <fieldset disabled={readOnly} className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <h2 className="text-xl font-bold text-primary">
@@ -255,7 +258,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            disabled={isDesigning || allOutcomes.length === 0}
+            disabled={readOnly || isDesigning || allOutcomes.length === 0}
             onClick={() => handleDesignWithAI(false)}
             className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
@@ -657,7 +660,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
                   <span className="text-[11px] font-bold text-slate-600">Mapped Outcomes:</span>
                   <div className="flex flex-wrap gap-2">
                     {allOutcomes.map(out => {
-                      const checked = item.outcomeIds.includes(out.id);
+                      const checked = Array.isArray(item.outcomeIds) && item.outcomeIds.includes(out.id);
                       return (
                         <label
                           key={out.id}
@@ -1110,6 +1113,6 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
           <span>Approve Assessments & Continue to Stage 5</span>
         </button>
       </div>
-    </div>
+    </fieldset>
   );
 };

@@ -19,6 +19,7 @@ import { apiFetch, compactSourcesForApi, parseApiJson } from '../../utils/apiCli
 
 interface Stage2CurriculumProps {
   project: CourseProject;
+  readOnly?: boolean;
   selectedProvider: AIProvider;
   selectedModel: string;
   onUpdateProject: (
@@ -30,6 +31,7 @@ interface Stage2CurriculumProps {
 
 export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
   project,
+  readOnly = false,
   selectedProvider,
   selectedModel,
   onUpdateProject,
@@ -171,10 +173,10 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
   const omittedCount = curriculum.coverageChecks.filter(c => c.status === 'omitted').length;
   const unresolvedConflicts = curriculum.conflicts.filter(c => !c.resolved).length;
   const canApprove =
-    curriculum.modules.length > 0 && omittedCount === 0 && unresolvedConflicts === 0;
+    !readOnly && curriculum.modules.length > 0 && omittedCount === 0 && unresolvedConflicts === 0;
 
   return (
-    <div className="space-y-6">
+    <fieldset disabled={readOnly} className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <h2 className="text-xl font-bold text-primary">
@@ -645,6 +647,6 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
           <span>Approve Curriculum & Continue to Stage 3</span>
         </button>
       </div>
-    </div>
+    </fieldset>
   );
 };

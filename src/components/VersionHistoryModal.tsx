@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import { History, RotateCcw, Save, X } from 'lucide-react';
-import type { CourseProject } from '../types';
+import React, { useEffect, useState } from 'react';
+import { AlertTriangle, History, Loader2, RotateCcw, Save, X } from 'lucide-react';
+import type { CourseProject, CourseVersionSnapshot } from '../types';
 
 interface VersionHistoryModalProps {
   isOpen: boolean;
   project: CourseProject;
+  readOnly?: boolean;
+  onLoadVersions?: (projectId: string) => Promise<CourseVersionSnapshot[] | void>;
   onClose: () => void;
   onSaveSnapshot: (summary: string) => void;
   onRestoreVersion: (snapshotId: string) => void;
@@ -13,11 +15,34 @@ interface VersionHistoryModalProps {
 export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
   isOpen,
   project,
+  readOnly = false,
+  onLoadVersions,
   onClose,
   onSaveSnapshot,
   onRestoreVersion,
 }) => {
   const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !onLoadVersions) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    onLoadVersions(project.id)
+      .catch((err: any) => {
+        if (!cancelled) {
+          setLoadError(err?.message || 'Unable to load cloud version history.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, project.id, onLoadVersions]);
 
   if (!isOpen) return null;
 
@@ -37,26 +62,42 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
         </div>
 
         <div className="p-6 overflow-y-auto space-y-5">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              placeholder="Snapshot note (e.g. 'Before SME curriculum review')..."
-              className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                onSaveSnapshot(note.trim() || 'Manual developer snapshot');
-                setNote('');
-              }}
-              className="px-3.5 py-2 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Save className="w-3.5 h-3.5 text-accent" />
-              <span>Save Snapshot</span>
-            </button>
-          </div>
+          {!readOnly && (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                placeholder="Snapshot note (e.g. 'Before SME curriculum review')..."
+                className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  onSaveSnapshot(note.trim() || 'Manual developer snapshot');
+                  setNote('');
+                }}
+                className="px-3.5 py-2 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5 text-accent" />
+                <span>Save Snapshot</span>
+              </button>
+            </div>
+          )}
+
+          {loading && (
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <Loader2 className="w-4 h-4 animate-spin text-accent-ink" />
+              <span>Synchronising version history from cloud...</span>
+            </div>
+          )}
+
+          {loadError && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{loadError}</span>
+            </div>
+          )}
 
           {project.versions.length === 0 ? (
             <p className="text-xs text-slate-500 text-center py-6">
@@ -78,17 +119,19 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
                       {new Date(ver.createdAt).toLocaleString('en-ZA')}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onRestoreVersion(ver.id);
-                      onClose();
-                    }}
-                    className="px-3 py-1.5 text-xs font-bold border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1 shrink-0 cursor-pointer"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5 text-accent-ink" />
-                    <span>Restore</span>
-                  </button>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onRestoreVersion(ver.id);
+                        onClose();
+                      }}
+                      className="px-3 py-1.5 text-xs font-bold border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1 shrink-0 cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-accent-ink" />
+                      <span>Restore</span>
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

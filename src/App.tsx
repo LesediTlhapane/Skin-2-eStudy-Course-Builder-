@@ -12,6 +12,8 @@ import { AuthScreens } from './components/auth/AuthScreens';
 import { CompanySettingsModal } from './components/CompanySettingsModal';
 import { LocalMigrationModal } from './components/LocalMigrationModal';
 
+import { getRolePermissions } from './utils/rbac';
+
 export default function App() {
   const {
     isInitializing,
@@ -22,6 +24,7 @@ export default function App() {
     activeCompany,
     activeRole,
     isPasswordRecoveryMode,
+    isPasswordSetupMode,
     workspaceNotice,
     setWorkspaceNotice,
     setActiveCompanyId,
@@ -39,6 +42,8 @@ export default function App() {
   const [isCompanySettingsOpen, setIsCompanySettingsOpen] = useState(false);
   const [isLocalMigrationOpen, setIsLocalMigrationOpen] = useState(false);
 
+  const perms = getRolePermissions(activeRole);
+
   if (isInitializing) {
     return (
       <div className="min-h-screen bg-surface flex items-center justify-center p-6">
@@ -50,7 +55,7 @@ export default function App() {
     );
   }
 
-  if (!session || !activeCompany || isPasswordRecoveryMode) {
+  if (!session || !activeCompany || isPasswordRecoveryMode || isPasswordSetupMode) {
     return <AuthScreens />;
   }
 
@@ -70,14 +75,35 @@ export default function App() {
         pendingLocalMigrationCount={store.pendingLocalMigrationCount}
         onNavigate={store.setRoute}
         onOpenNewCourse={() => {
+          if (!perms.canCreateOrDeleteCourse) return;
           setPreselectedTemplateId(undefined);
           setIsNewCourseModalOpen(true);
         }}
         onSwitchCompany={companyId => void setActiveCompanyId(companyId)}
         onOpenCompanySettings={() => setIsCompanySettingsOpen(true)}
-        onOpenLocalMigration={() => setIsLocalMigrationOpen(true)}
+        onOpenLocalMigration={() => {
+          if (!perms.canCreateOrDeleteCourse) return;
+          setIsLocalMigrationOpen(true);
+        }}
         onSignOut={() => void signOut()}
       />
+
+      {store.saveError && (
+        <div className="bg-red-50 border-b border-red-200 px-4 sm:px-6 py-2.5 text-xs text-red-800 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>{store.saveError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={store.clearSaveError}
+            aria-label="Dismiss save error"
+            className="p-1 text-red-700 hover:text-red-900 cursor-pointer shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {workspaceNotice && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-2.5 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-3">
@@ -113,10 +139,14 @@ export default function App() {
           projects={store.projects}
           templates={store.allTemplates}
           activeCompany={activeCompany}
+          activeRole={activeRole}
           pendingLocalMigrationCount={store.pendingLocalMigrationCount}
-          onOpenLocalMigration={() => setIsLocalMigrationOpen(true)}
+          onOpenLocalMigration={() => {
+            if (perms.canCreateOrDeleteCourse) setIsLocalMigrationOpen(true);
+          }}
           onOpenProject={id => store.openProject(id)}
           onCreateNewCourse={() => {
+            if (!perms.canCreateOrDeleteCourse) return;
             setPreselectedTemplateId(undefined);
             setIsNewCourseModalOpen(true);
           }}
@@ -131,16 +161,20 @@ export default function App() {
       {store.route === 'templates' && (
         <TemplateStudio
           templates={store.allTemplates}
+          activeRole={activeRole}
           selectedProvider={store.selectedProvider}
           selectedModel={store.selectedModel}
           onSaveTemplate={store.saveTemplate}
           onDuplicateTemplate={store.duplicateTemplate}
           onDeleteTemplate={store.deleteTemplate}
           onUseTemplate={tplId => {
+            if (!perms.canCreateOrDeleteCourse) return;
             setPreselectedTemplateId(tplId);
             setIsNewCourseModalOpen(true);
           }}
-          onCreateCourseFromFilledDoc={project => store.createProject(project)}
+          onCreateCourseFromFilledDoc={
+            perms.canCreateOrDeleteCourse ? project => store.createProject(project) : undefined
+          }
         />
       )}
 
@@ -148,6 +182,7 @@ export default function App() {
         <CourseWorkspace
           project={store.activeProject}
           template={activeTemplate}
+          activeRole={activeRole}
           saveState={store.saveState}
           lastSavedAt={store.lastSavedAt}
           saveError={store.saveError}
@@ -155,37 +190,44 @@ export default function App() {
           selectedModel={store.selectedModel}
           onBackToDashboard={() => store.setRoute('dashboard')}
           onFlushSaveNow={store.flushSaveNow}
-          onUpdateProject={(updater, snapshot) =>
-            store.updateProject(store.activeProject!.id, updater, snapshot)
-          }
-          onRestoreVersion={snapshotId =>
-            store.restoreProjectVersion(store.activeProject!.id, snapshotId)
-          }
+          onLoadVersions={store.loadCourseVersions}
+          onUpdateProject={(updater, snapshot) => {
+            if (perms.isReadOnly) return;
+            store.updateProject(store.activeProject!.id, updater, snapshot);
+          }}
+          onRestoreVersion={snapshotId => {
+            if (perms.isReadOnly) return;
+            store.restoreProjectVersion(store.activeProject!.id, snapshotId);
+          }}
         />
       )}
 
-      <CreateCourseModal
-        isOpen={isNewCourseModalOpen}
-        templates={store.allTemplates}
-        selectedProvider={store.selectedProvider}
-        selectedModel={store.selectedModel}
-        initialTemplateId={preselectedTemplateId}
-        onClose={() => setIsNewCourseModalOpen(false)}
-        onCreateProject={store.createProject}
-      />
+      {perms.canCreateOrDeleteCourse && (
+        <CreateCourseModal
+          isOpen={isNewCourseModalOpen}
+          templates={store.allTemplates}
+          selectedProvider={store.selectedProvider}
+          selectedModel={store.selectedModel}
+          initialTemplateId={preselectedTemplateId}
+          onClose={() => setIsNewCourseModalOpen(false)}
+          onCreateProject={store.createProject}
+        />
+      )}
 
       <CompanySettingsModal
         isOpen={isCompanySettingsOpen}
         onClose={() => setIsCompanySettingsOpen(false)}
       />
 
-      <LocalMigrationModal
-        isOpen={isLocalMigrationOpen}
-        companyName={activeCompany.companyName}
-        readLocalBackup={readLocalBackupSnapshot}
-        onClose={() => setIsLocalMigrationOpen(false)}
-        onMigrationComplete={store.reloadCloudWorkspace}
-      />
+      {perms.canCreateOrDeleteCourse && (
+        <LocalMigrationModal
+          isOpen={isLocalMigrationOpen}
+          companyName={activeCompany.companyName}
+          readLocalBackup={readLocalBackupSnapshot}
+          onClose={() => setIsLocalMigrationOpen(false)}
+          onMigrationComplete={store.reloadCloudWorkspace}
+        />
+      )}
     </div>
   );
 }

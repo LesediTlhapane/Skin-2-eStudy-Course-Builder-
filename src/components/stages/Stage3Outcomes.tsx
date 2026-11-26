@@ -6,6 +6,7 @@ import { apiFetch, parseApiJson } from '../../utils/apiClient';
 
 interface Stage3OutcomesProps {
   project: CourseProject;
+  readOnly?: boolean;
   selectedProvider: AIProvider;
   selectedModel: string;
   onUpdateProject: (
@@ -26,6 +27,7 @@ const BLOOM_LEVELS: BloomLevel[] = [
 
 export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
   project,
+  readOnly = false,
   selectedProvider,
   selectedModel,
   onUpdateProject,
@@ -140,12 +142,13 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
   const allOutcomes = [...outcomes.courseOutcomes, ...outcomes.moduleOutcomes];
   const vagueWarnings = allOutcomes.filter(o => Boolean(detectVagueOutcomeWarning(o.statement)));
   const canApprove =
+    !readOnly &&
     allOutcomes.length > 0 &&
     allOutcomes.every(o => o.statement.trim().length > 5) &&
     vagueWarnings.length === 0;
 
   return (
-    <div className="space-y-6">
+    <fieldset disabled={readOnly} className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <h2 className="text-xl font-bold text-primary">
@@ -396,6 +399,6 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
           <span>Approve Outcomes & Continue to Stage 4</span>
         </button>
       </div>
-    </div>
+    </fieldset>
   );
 };

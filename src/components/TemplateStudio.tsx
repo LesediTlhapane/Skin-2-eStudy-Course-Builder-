@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type {
   AIProvider,
+  CompanyRole,
   CourseProject,
   CourseTemplate,
   TemplateField,
@@ -26,9 +27,11 @@ import {
   uploadAndParseFilledTemplateFile,
 } from '../utils/templateDocx';
 import { TemplateCopilotDrawer } from './TemplateCopilotDrawer';
+import { getRolePermissions } from '../utils/rbac';
 
 interface TemplateStudioProps {
   templates: CourseTemplate[];
+  activeRole?: CompanyRole | null;
   selectedProvider: AIProvider;
   selectedModel: string;
   onSaveTemplate: (template: CourseTemplate) => void;
@@ -40,6 +43,7 @@ interface TemplateStudioProps {
 
 export const TemplateStudio: React.FC<TemplateStudioProps> = ({
   templates,
+  activeRole,
   selectedProvider,
   selectedModel,
   onSaveTemplate,
@@ -48,6 +52,10 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
   onUseTemplate,
   onCreateCourseFromFilledDoc,
 }) => {
+  const perms = getRolePermissions(activeRole);
+  const canManageTemplates = perms.canManageTemplates;
+  const canCreateCourse = perms.canCreateOrDeleteCourse;
+
   const [selectedId, setSelectedId] = useState<string>(templates[0]?.id || '');
   const [draft, setDraft] = useState<CourseTemplate | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
@@ -329,62 +337,64 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".pdf,.docx,.txt,.md,.json"
-            onChange={handleUploadTemplateFile}
-            className="hidden"
-          />
-          <input
-            ref={filledDocRef}
-            type="file"
-            accept=".docx,.pdf,.txt,.md"
-            onChange={handleUploadFilledWordCourse}
-            className="hidden"
-          />
-          {onCreateCourseFromFilledDoc && (
+        {canManageTemplates && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".pdf,.docx,.txt,.md,.json"
+              onChange={handleUploadTemplateFile}
+              className="hidden"
+            />
+            <input
+              ref={filledDocRef}
+              type="file"
+              accept=".docx,.pdf,.txt,.md"
+              onChange={handleUploadFilledWordCourse}
+              className="hidden"
+            />
+            {onCreateCourseFromFilledDoc && canCreateCourse && (
+              <button
+                type="button"
+                disabled={isImportingFilled}
+                onClick={() => filledDocRef.current?.click()}
+                className="px-3.5 py-2 text-xs font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shadow-xs transition-colors"
+              >
+                {isImportingFilled ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5" />
+                )}
+                <span>Upload Filled Word (.docx)</span>
+              </button>
+            )}
             <button
               type="button"
-              disabled={isImportingFilled}
-              onClick={() => filledDocRef.current?.click()}
-              className="px-3.5 py-2 text-xs font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shadow-xs transition-colors"
+              disabled={isUploading}
+              onClick={() => fileRef.current?.click()}
+              className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
             >
-              {isImportingFilled ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <FileText className="w-3.5 h-3.5" />
-              )}
-              <span>Upload Filled Word (.docx)</span>
+              {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5 text-accent-ink" />}
+              <span>Import Structure</span>
             </button>
-          )}
-          <button
-            type="button"
-            disabled={isUploading}
-            onClick={() => fileRef.current?.click()}
-            className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
-          >
-            {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5 text-accent-ink" />}
-            <span>Import Structure</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsCopilotOpen(!isCopilotOpen)}
-            className="px-3.5 py-2 text-xs font-bold bg-primary hover:bg-primary-dark text-primary-contrast rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-accent" />
-            <span>Template Copilot</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleCreateBlank}
-            className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5 text-accent-ink" />
-            <span>New Template</span>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => setIsCopilotOpen(!isCopilotOpen)}
+              className="px-3.5 py-2 text-xs font-bold bg-primary hover:bg-primary-dark text-primary-contrast rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-accent" />
+              <span>Template Copilot</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleCreateBlank}
+              className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5 text-accent-ink" />
+              <span>New Template</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {uploadError && (
@@ -427,16 +437,18 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                 </div>
                 <p className="text-xs text-slate-600 mt-2 line-clamp-2">{tpl.description}</p>
                 <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={e => {
-                      e.stopPropagation();
-                      onUseTemplate(tpl.id);
-                    }}
-                    className="px-2.5 py-1 text-[11px] font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded cursor-pointer transition-colors"
-                  >
-                    Use Template
-                  </button>
+                  {canCreateCourse && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onUseTemplate(tpl.id);
+                      }}
+                      className="px-2.5 py-1 text-[11px] font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded cursor-pointer transition-colors"
+                    >
+                      Use Template
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={downloadingId === tpl.id}
@@ -454,22 +466,24 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                     )}
                     <span>Word (.docx)</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={e => {
-                      e.stopPropagation();
-                      const copy = onDuplicateTemplate(tpl.id);
-                      if (copy) {
-                        setSelectedId(copy.id);
-                        setDraft(copy);
-                      }
-                    }}
-                    className="px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-primary flex items-center gap-1 cursor-pointer"
-                  >
-                    <Copy className="w-3 h-3" />
-                    <span>Duplicate</span>
-                  </button>
-                  {!tpl.isSystemReference && (
+                  {canManageTemplates && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        const copy = onDuplicateTemplate(tpl.id);
+                        if (copy) {
+                          setSelectedId(copy.id);
+                          setDraft(copy);
+                        }
+                      }}
+                      className="px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-primary flex items-center gap-1 cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Duplicate</span>
+                    </button>
+                  )}
+                  {canManageTemplates && !tpl.isSystemReference && (
                     <button
                       type="button"
                       onClick={e => {
@@ -526,32 +540,34 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
                     <Eye className="w-3.5 h-3.5" />
                     <span>{previewMode ? 'Back to Structure' : 'Preview'}</span>
                   </button>
-                  {!draft ? (
-                    <button
-                      type="button"
-                      onClick={() => beginEdit(activeTemplate)}
-                      className="px-3.5 py-1.5 text-xs font-bold bg-primary hover:bg-primary-dark text-primary-contrast rounded-lg cursor-pointer"
-                    >
-                      {activeTemplate.isSystemReference ? 'Edit Copy' : 'Edit Template'}
-                    </button>
-                  ) : (
-                    <>
+                  {canManageTemplates && (
+                    !draft ? (
                       <button
                         type="button"
-                        onClick={() => setDraft(null)}
-                        className="px-3 py-1.5 text-xs font-semibold text-slate-600 cursor-pointer"
+                        onClick={() => beginEdit(activeTemplate)}
+                        className="px-3.5 py-1.5 text-xs font-bold bg-primary hover:bg-primary-dark text-primary-contrast rounded-lg cursor-pointer"
                       >
-                        Cancel
+                        {activeTemplate.isSystemReference ? 'Edit Copy' : 'Edit Template'}
                       </button>
-                      <button
-                        type="button"
-                        onClick={handleSave}
-                        className="px-4 py-1.5 text-xs font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded-lg flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        <span>Save Template</span>
-                      </button>
-                    </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setDraft(null)}
+                          className="px-3 py-1.5 text-xs font-semibold text-slate-600 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSave}
+                          className="px-4 py-1.5 text-xs font-bold bg-accent hover:bg-accent-dark text-accent-contrast rounded-lg flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>Save Template</span>
+                        </button>
+                      </>
+                    )
                   )}
                 </div>
               </div>

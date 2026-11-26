@@ -19,6 +19,7 @@ import { apiFetch, compactProjectForApi, compactSourcesForApi, parseApiJson } fr
 
 interface Stage5ContentProps {
   project: CourseProject;
+  readOnly?: boolean;
   selectedProvider: AIProvider;
   selectedModel: string;
   initialModuleNumber?: number;
@@ -32,6 +33,7 @@ interface Stage5ContentProps {
 
 export const Stage5Content: React.FC<Stage5ContentProps> = ({
   project,
+  readOnly = false,
   selectedProvider,
   selectedModel,
   initialModuleNumber,
@@ -384,11 +386,12 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={Boolean(generatingStatus) || plannedModules.length === 0}
-            onClick={handleGenerateMissingModules}
+        {!readOnly && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={Boolean(generatingStatus) || plannedModules.length === 0}
+              onClick={handleGenerateMissingModules}
             className="px-4 py-2 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center gap-1.5 cursor-pointer"
           >
             {generatingStatus ? (
@@ -403,6 +406,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
             </span>
           </button>
         </div>
+        )}
       </div>
 
       {generatingStatus && (
@@ -467,7 +471,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           </button>
         </div>
       ) : activePlan && activeGenerated ? (
-        <div className="space-y-5">
+        <fieldset disabled={readOnly} className="space-y-5">
           {/* Selective Regeneration Guidance Bar */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -1346,7 +1350,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
               />
             </div>
           </section>
-        </div>
+        </fieldset>
       ) : null}
 
       <div className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1355,6 +1359,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
             ? 'All planned modules have generated content. Proceed to Quality Assurance.'
             : `Generated ${generatedModules.length} of ${plannedModules.length} modules.`}
         </div>
+        {!readOnly && (
         <button
           type="button"
           disabled={!allModulesGenerated}
@@ -1382,6 +1387,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           <CheckCircle2 className="w-4 h-4 text-accent" />
           <span>Approve Content & Continue to Stage 6 QA</span>
         </button>
+        )}
       </div>
     </div>
   );

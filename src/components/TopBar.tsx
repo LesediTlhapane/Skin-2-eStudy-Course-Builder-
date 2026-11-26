@@ -17,6 +17,7 @@ import type {
 } from '../types';
 import type { AppRoute } from '../hooks/useV2Store';
 import { BrandLogo } from './BrandLogo';
+import { getRolePermissions } from '../utils/rbac';
 
 interface TopBarProps {
   route: AppRoute;
@@ -50,6 +51,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSignOut,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const perms = getRolePermissions(activeRole);
 
   const primaryColour = activeCompany?.primaryColour || '#052B66';
   const secondaryColour = activeCompany?.secondaryColour || '#45CC42';
@@ -133,14 +135,16 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={onOpenNewCourse}
-          className="px-3.5 py-2 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer shadow-xs"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Course</span>
-        </button>
+        {perms.canCreateOrDeleteCourse && (
+          <button
+            type="button"
+            onClick={onOpenNewCourse}
+            className="px-3.5 py-2 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer shadow-xs"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Course</span>
+          </button>
+        )}
 
         {profile && (
           <div className="relative">
@@ -211,7 +215,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     </button>
                   )}
 
-                  {onOpenLocalMigration && (
+                  {perms.canCreateOrDeleteCourse && onOpenLocalMigration && (
                     <button
                       type="button"
                       onClick={() => {

@@ -10,7 +10,7 @@ import {
   Printer,
   ShieldAlert,
 } from 'lucide-react';
-import type { CourseProject, WorkflowStage } from '../../types';
+import type { CompanyRole, CourseProject, WorkflowStage } from '../../types';
 import {
   type DeliverableType,
   exportDeliverableDocx,
@@ -19,9 +19,11 @@ import {
   exportScorm12PackageZip,
 } from '../../utils/exportDeliverables';
 import { runStructuralAndConsistencyAudit } from '../../utils/courseValidation';
+import { hasGenuineHumanGovernanceSignOff } from '../../utils/rbac';
 
 interface Stage7PublishProps {
   project: CourseProject;
+  activeRole?: CompanyRole | null;
   onJumpToStage?: (stage: WorkflowStage, context?: { moduleNumber?: number; reason?: string }) => void;
 }
 
@@ -77,23 +79,22 @@ const DELIVERABLES: Array<{
   },
 ];
 
-export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToStage }) => {
+export const Stage7Publish: React.FC<Stage7PublishProps> = ({
+  project,
+  activeRole,
+  onJumpToStage,
+}) => {
   const [busyType, setBusyType] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const isViewer = activeRole === 'viewer';
 
   const structuralAudit = useMemo(() => runStructuralAndConsistencyAudit(project), [project]);
   const qa = project.latestQA;
   const isQaStale = Boolean(
     qa?.evaluatedDataSignature && qa.evaluatedDataSignature !== structuralAudit.dataSignature
   );
-  const roles = qa?.humanSignOff?.roles;
-  const roleValues = roles ? [roles.sme, roles.instructionalDesigner, roles.complianceAuthorizer] : [];
-  const allRolesSigned = Boolean(
-    roleValues.length === 3 && roleValues.every(r => r.signedOff && r.reviewerName.trim())
-  );
-  const hasProvisionalAiSignOff = roleValues.some(r =>
-    r.reviewerName.includes('AI QA Auto-Sign-Off')
-  );
+  const signOffCheck = hasGenuineHumanGovernanceSignOff(qa?.humanSignOff);
+  const allRolesSigned = signOffCheck.valid;
 
   const handleDocx = async (type: DeliverableType) => {
     setBusyType(type);
@@ -176,18 +177,10 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
             <div className="text-[11px] text-slate-500">Multi-Role Sign-Off</div>
             <div
               className={`font-bold mt-0.5 ${
-                allRolesSigned && !hasProvisionalAiSignOff
-                  ? 'text-emerald-700'
-                  : allRolesSigned
-                  ? 'text-primary'
-                  : 'text-amber-700'
+                allRolesSigned ? 'text-emerald-700' : 'text-amber-700'
               }`}
             >
-              {allRolesSigned && !hasProvisionalAiSignOff
-                ? 'All 3 Human Roles Signed'
-                : allRolesSigned
-                ? 'AI QA Provisional Sign-Off'
-                : 'Provisional / Optional'}
+              {allRolesSigned ? 'All 3 Human Roles Signed' : 'Pending Human Governance Sign-Off'}
             </div>
           </div>
           <div className="p-3 rounded-lg bg-surface border border-slate-200">
@@ -250,7 +243,14 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
         </div>
       )}
 
+      {isViewer && (
+        <div className="p-3.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-700">
+          <strong>Viewer Read-Only Mode:</strong> You can inspect readiness metrics above. Publishing and deliverable downloads are restricted to Authors, Reviewers, and Company Administrators.
+        </div>
+      )}
+
       {/* Featured Master Export: Complete Created Course Document */}
+      <fieldset disabled={isViewer} className="space-y-4 disabled:opacity-60">
       <section className="bg-white border border-slate-200 border-t-[3px] border-t-primary rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1.5 max-w-3xl">
           <h3 className="text-base font-bold text-primary">
@@ -365,6 +365,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({ project, onJumpToS
           </div>
         ))}
       </div>
+      </fieldset>
     </div>
   );
 };

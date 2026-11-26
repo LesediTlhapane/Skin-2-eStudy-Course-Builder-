@@ -181,8 +181,10 @@ export const AuthScreens: React.FC = () => {
     session,
     profile,
     isPasswordRecoveryMode,
+    isPasswordSetupMode,
     authError,
     setWorkspaceNotice,
+    acceptPendingInvitations,
     signInWithPassword,
     sendPasswordResetEmail,
     updatePassword,
@@ -281,6 +283,7 @@ export const AuthScreens: React.FC = () => {
       if (session?.access_token) {
         headers.Authorization = `Bearer ${session.access_token}`;
       }
+      const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
       const res = await fetch('/api/v2/auth/register-company', {
         method: 'POST',
         headers,
@@ -289,6 +292,7 @@ export const AuthScreens: React.FC = () => {
           fullName: adminFullName.trim(),
           email: adminEmail.trim().toLowerCase(),
           password: adminPassword,
+          redirectTo,
           primaryColour,
           secondaryColour,
         }),
@@ -296,6 +300,22 @@ export const AuthScreens: React.FC = () => {
       const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Company workspace registration failed.');
+      }
+
+      if (data.requiresEmailVerification && !session?.access_token) {
+        const logoNote = pendingLogo
+          ? ' Once verified and signed in, upload your company logo in Organisation Branding & Team.'
+          : '';
+        setSuccessMsg(
+          (data.message ||
+            'Company workspace registered! Please check your email and click the verification link before signing in.') +
+            logoNote
+        );
+        setAdminPassword('');
+        setAdminConfirmPassword('');
+        setLoginEmail(adminEmail.trim().toLowerCase());
+        setTab('login');
+        return;
       }
 
       const createdCompanyId = data.company?.id as string | undefined;
@@ -356,6 +376,7 @@ export const AuthScreens: React.FC = () => {
 
     setBusy(true);
     try {
+      const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
       const res = await fetch('/api/v2/auth/register-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -363,11 +384,36 @@ export const AuthScreens: React.FC = () => {
           fullName: userFullName.trim(),
           email: userEmail.trim().toLowerCase(),
           password: userPassword,
+          redirectTo,
         }),
       });
       const data = await parseApiJson<any>(res);
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Account registration failed.');
+      }
+
+      if (data.accountAlreadyConfirmed) {
+        setSuccessMsg(
+          data.message ||
+            'An account with this email is already verified. Sign in with your existing password to access your workspaces.'
+        );
+        setLoginEmail(userEmail.trim().toLowerCase());
+        setUserPassword('');
+        setUserConfirmPassword('');
+        setTab('login');
+        return;
+      }
+
+      if (data.requiresEmailVerification || data.invitedPending) {
+        setSuccessMsg(
+          data.message ||
+            'Check your email and click the invitation / verification link to confirm your email and activate your workspace.'
+        );
+        setUserPassword('');
+        setUserConfirmPassword('');
+        setLoginEmail(userEmail.trim().toLowerCase());
+        setTab('login');
+        return;
       }
 
       await signInWithPassword(userEmail.trim().toLowerCase(), userPassword);
@@ -422,8 +468,8 @@ export const AuthScreens: React.FC = () => {
     }
   };
 
-  // Show password reset view whenever recovery mode is triggered by Supabase recovery link
-  if (isPasswordRecoveryMode) {
+  // Show password setup/reset view whenever recovery OR team invitation link triggers
+  if (isPasswordRecoveryMode || isPasswordSetupMode) {
     return (
       <EstudyMotionBackground
         intensity={motionIntensity}
@@ -437,9 +483,13 @@ export const AuthScreens: React.FC = () => {
               className="h-8 w-auto object-contain"
               referrerPolicy="no-referrer"
             />
-            <h1 className="text-lg font-bold tracking-tight">Set New Password</h1>
+            <h1 className="text-lg font-bold tracking-tight">
+              {isPasswordSetupMode ? 'Accept Invitation & Set Password' : 'Set New Password'}
+            </h1>
             <p className="text-xs text-slate-200 leading-relaxed">
-              Choose a new password (minimum 8 characters) for your Master Course Builder account.
+              {isPasswordSetupMode
+                ? 'Choose your personal password (minimum 8 characters) to activate your company workspace invitation.'
+                : 'Choose a new password (minimum 8 characters) for your Master Course Builder account.'}
             </p>
           </div>
           <div className="p-6 sm:p-7 space-y-4">
@@ -485,7 +535,9 @@ export const AuthScreens: React.FC = () => {
                 className="w-full py-2.5 rounded-lg bg-[#052B66] hover:bg-[#042150] text-white border-b-2 border-[#45CC42] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
               >
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4 text-[#45CC42]" />}
-                <span>Update Password</span>
+                <span>
+                  {isPasswordSetupMode ? 'Set Password & Enter Workspace' : 'Update Password'}
+                </span>
               </button>
             </form>
           </div>
@@ -536,6 +588,42 @@ export const AuthScreens: React.FC = () => {
               </div>
             )}
 
+            {session.user?.email_confirmed_at ? (
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700">
+                <span>Waiting on a team invitation? Check for pending company invites.</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setErrorMsg(null);
+                    try {
+                      const count = await acceptPendingInvitations();
+                      if (count === 0) {
+                        setErrorMsg('No pending company invitations found for your account yet.');
+                      }
+                    } catch (err: any) {
+                      setErrorMsg(err?.message || 'Could not check pending invitations.');
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[#052B66] text-white font-semibold hover:bg-[#042150] cursor-pointer"
+                >
+                  Accept Pending Invitation
+                </button>
+              </div>
+            ) : (
+              <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900 space-y-1">
+                <div className="font-bold">Email Verification Required</div>
+                <p>
+                  Verify your email address via the confirmation link sent to{' '}
+                  <strong>{session.user?.email}</strong> before accessing or creating a company workspace.
+                </p>
+              </div>
+            )}
+
+            {session.user?.email_confirmed_at && (
             <form onSubmit={handleRegisterCompany} className="space-y-5">
               <label className="block space-y-1.5 text-xs font-semibold text-slate-700">
                 <span>Company / Organisation Name</span>
@@ -627,6 +715,7 @@ export const AuthScreens: React.FC = () => {
                 <span>Create Company Workspace</span>
               </button>
             </form>
+            )}
           </div>
         </div>
       </EstudyMotionBackground>

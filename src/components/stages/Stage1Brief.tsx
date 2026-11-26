@@ -24,6 +24,7 @@ import {
 interface Stage1BriefProps {
   project: CourseProject;
   template: CourseTemplate | undefined;
+  readOnly?: boolean;
   selectedProvider: AIProvider;
   selectedModel: string;
   onUpdateProject: (
@@ -46,6 +47,7 @@ const PROTECTED_KEYS = [
 export const Stage1Brief: React.FC<Stage1BriefProps> = ({
   project,
   template,
+  readOnly = false,
   selectedProvider,
   selectedModel,
   onUpdateProject,
@@ -341,10 +343,10 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
     onApproveAndContinue();
   };
 
-  const canApprove = Boolean(brief.title.trim() && brief.purpose.trim() && brief.targetAudience.trim());
+  const canApprove = !readOnly && Boolean(brief.title.trim() && brief.purpose.trim() && brief.targetAudience.trim());
 
   return (
-    <div className="space-y-6">
+    <fieldset disabled={readOnly} className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <h2 className="text-xl font-bold text-primary">Stage 1: Course Brief & Metadata</h2>
@@ -945,6 +947,6 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
           <span>Approve Brief & Continue to Stage 2</span>
         </button>
       </div>
-    </div>
+    </fieldset>
   );
 };

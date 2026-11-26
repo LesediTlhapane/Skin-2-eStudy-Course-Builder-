@@ -204,6 +204,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
           fullName: inviteFullName.trim(),
           role: inviteRole,
           temporaryPassword: inviteTempPassword.trim() || undefined,
+          redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
         }),
       });
       const data = await parseApiJson<any>(res);

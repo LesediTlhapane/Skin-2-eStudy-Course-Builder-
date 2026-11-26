@@ -103,7 +103,7 @@ function parseRetryDelayMs(err: any): number {
 }
 
 export class GroqProvider implements AIProviderAdapter {
-  provider: 'groq' = 'groq';
+  provider = 'groq' as const;
   name = 'Groq Cloud';
 
   isConfigured(): boolean {

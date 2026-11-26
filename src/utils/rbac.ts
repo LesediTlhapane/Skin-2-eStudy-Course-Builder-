@@ -1,4 +1,4 @@
-import type { CompanyRole, CourseProject, HumanSignOffRecord } from '../types.js';
+import type { CompanyRole, CourseProject, QAEvaluationReport } from '../types.js';
 
 export interface RolePermissions {
   role: CompanyRole;
@@ -69,7 +69,9 @@ export function isAiPlaceholderReviewerName(name?: string | null): boolean {
   );
 }
 
-export function hasGenuineHumanGovernanceSignOff(signOff?: HumanSignOffRecord | null): {
+export function hasGenuineHumanGovernanceSignOff(
+  signOff?: QAEvaluationReport['humanSignOff'] | null
+): {
   valid: boolean;
   reason?: string;
 } {

@@ -20,6 +20,8 @@ import { apiFetch, compactSourcesForApi, parseApiJson } from '../utils/apiClient
 interface SourceManagerModalProps {
   isOpen: boolean;
   project: CourseProject;
+  readOnly?: boolean;
+  canDeleteSource?: boolean;
   selectedProvider: AIProvider;
   selectedModel: string;
   onClose: () => void;
@@ -29,12 +31,15 @@ interface SourceManagerModalProps {
 export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
   isOpen,
   project,
+  readOnly = false,
+  canDeleteSource = true,
   selectedProvider,
   selectedModel,
   onClose,
   onUpdateProject,
 }) => {
   const [isAnalysing, setIsAnalysing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [manualTitle, setManualTitle] = useState('');
   const [manualRef, setManualRef] = useState('');
@@ -88,6 +93,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
       // Upload original file securely into private per-company Supabase Storage bucket
       let storagePath: string | undefined;
       let cloudDocumentId: string | undefined;
+      let storageWarning: string | null = null;
       try {
         const uploadRes = await apiFetch('/api/v2/sources/upload', {
           method: 'POST',
@@ -103,12 +109,13 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
           }),
         });
         const uploadData = await parseApiJson<any>(uploadRes);
-        if (uploadRes.ok && uploadData.success) {
-          storagePath = uploadData.storagePath;
-          cloudDocumentId = uploadData.sourceId;
+        if (!uploadRes.ok || !uploadData.success) {
+          throw new Error(uploadData.error || 'Cloud file storage upload failed.');
         }
-      } catch {
-        // Keep extracted analysis even if storage upload is unconfigured/unavailable
+        storagePath = uploadData.storagePath;
+        cloudDocumentId = uploadData.sourceId;
+      } catch (uploadErr: any) {
+        storageWarning = uploadErr?.message || 'Cloud file storage upload failed.';
       }
 
       // All uploaded / AI-parsed sources MUST start as NEEDS REVIEW until human verification.
@@ -149,6 +156,11 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
         sources: [newSource, ...prev.sources],
         sourceConflicts: [...newConflicts, ...prev.sourceConflicts],
       }));
+      if (storageWarning) {
+        setErrorMsg(
+          `Source text was analysed and added to the register, but private cloud file upload failed: ${storageWarning}`
+        );
+      }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to process source document.');
     } finally {
@@ -226,29 +238,31 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-6">
+        <fieldset disabled={readOnly} className="p-6 overflow-y-auto space-y-6">
           {/* Upload Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-surface border border-slate-200 rounded-lg">
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".pdf,.docx,.txt,.md,.csv,.json"
-              onChange={handleUploadFile}
-              className="hidden"
-            />
-            <div className="text-xs text-slate-600">
-              Upload technical manuals, legislation, policies, or approved reference materials (max 4 MB).
+          {!readOnly && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-surface border border-slate-200 rounded-lg">
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,.docx,.txt,.md,.csv,.json"
+                onChange={handleUploadFile}
+                className="hidden"
+              />
+              <div className="text-xs text-slate-600">
+                Upload technical manuals, legislation, policies, or approved reference materials (max 4 MB).
+              </div>
+              <button
+                type="button"
+                disabled={isAnalysing}
+                onClick={() => fileRef.current?.click()}
+                className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                {isAnalysing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5 text-accent" />}
+                <span>{isAnalysing ? 'Analysing Document...' : 'Upload & Analyse Source'}</span>
+              </button>
             </div>
-            <button
-              type="button"
-              disabled={isAnalysing}
-              onClick={() => fileRef.current?.click()}
-              className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
-            >
-              {isAnalysing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5 text-accent" />}
-              <span>{isAnalysing ? 'Analysing Document...' : 'Upload & Analyse Source'}</span>
-            </button>
-          </div>
+          )}
 
           {errorMsg && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
@@ -383,23 +397,42 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
                         <span>Download</span>
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (src.cloudDocumentId) {
-                          void apiFetch(`/api/v2/sources/${encodeURIComponent(src.cloudDocumentId)}`, {
-                            method: 'DELETE',
-                          }).catch(() => {});
-                        }
-                        onUpdateProject(prev => ({
-                          ...prev,
-                          sources: prev.sources.filter(s => s.id !== src.id),
-                        }));
-                      }}
-                      className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {!readOnly && canDeleteSource && (
+                      <button
+                        type="button"
+                        disabled={deletingId === src.id}
+                        onClick={async () => {
+                          setErrorMsg(null);
+                          if (src.cloudDocumentId) {
+                            setDeletingId(src.id);
+                            try {
+                              const res = await apiFetch(
+                                `/api/v2/sources/${encodeURIComponent(src.cloudDocumentId)}`,
+                                { method: 'DELETE' }
+                              );
+                              const d = await parseApiJson<any>(res);
+                              if (!res.ok || !d.success) {
+                                throw new Error(d.error || 'Failed to delete source document from cloud.');
+                              }
+                            } catch (delErr: any) {
+                              setDeletingId(null);
+                              setErrorMsg(
+                                delErr?.message || 'Failed to delete source document from cloud.'
+                              );
+                              return;
+                            }
+                            setDeletingId(null);
+                          }
+                          onUpdateProject(prev => ({
+                            ...prev,
+                            sources: prev.sources.filter(s => s.id !== src.id),
+                          }));
+                        }}
+                        className="p-1 text-slate-400 hover:text-red-600 cursor-pointer disabled:opacity-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
@@ -507,7 +540,7 @@ export const SourceManagerModal: React.FC<SourceManagerModalProps> = ({
               <span>Add to Source Register</span>
             </button>
           </div>
-        </div>
+        </fieldset>
       </div>
     </div>
   );

@@ -12,9 +12,11 @@ import {
 } from 'lucide-react';
 import type {
   AIProvider,
+  CompanyRole,
   CopilotProposedChange,
   CourseProject,
   CourseTemplate,
+  CourseVersionSnapshot,
   SelectedTextContext,
   WorkflowStage,
 } from '../types';
@@ -34,10 +36,12 @@ import {
   type ApplyProposalResult,
 } from '../utils/copilotApply';
 import { computeCourseDataSignature } from '../utils/courseValidation';
+import { getRolePermissions } from '../utils/rbac';
 
 interface CourseWorkspaceProps {
   project: CourseProject;
   template: CourseTemplate | undefined;
+  activeRole?: CompanyRole | null;
   saveState: 'saved' | 'saving';
   lastSavedAt?: string | null;
   saveError?: string | null;
@@ -45,6 +49,7 @@ interface CourseWorkspaceProps {
   selectedModel: string;
   onBackToDashboard: () => void;
   onFlushSaveNow?: () => Promise<void>;
+  onLoadVersions?: (projectId: string) => Promise<CourseVersionSnapshot[] | void>;
   onUpdateProject: (
     updater: (prev: CourseProject) => CourseProject,
     snapshot?: {
@@ -68,6 +73,7 @@ const STAGES: Array<{ num: WorkflowStage; label: string; desc: string }> = [
 export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   project,
   template,
+  activeRole,
   saveState,
   lastSavedAt,
   saveError,
@@ -75,9 +81,15 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   selectedModel,
   onBackToDashboard,
   onFlushSaveNow,
+  onLoadVersions,
   onUpdateProject,
   onRestoreVersion,
 }) => {
+  const perms = getRolePermissions(activeRole);
+  const isReadOnly = perms.isReadOnly;
+  const [viewerStage, setViewerStage] = useState<WorkflowStage>(project.currentStage);
+  const effectiveStage = isReadOnly ? viewerStage : project.currentStage;
+
   const [isSourcesOpen, setIsSourcesOpen] = useState(false);
   const [isVersionsOpen, setIsVersionsOpen] = useState(false);
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
@@ -121,6 +133,11 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   };
 
   const setStage = (stage: WorkflowStage) => {
+    if (isReadOnly) {
+      if (stage === 7 && !isStage7Unlocked) return;
+      setViewerStage(stage);
+      return;
+    }
     if (stage === 7 && !isStage7Unlocked) {
       setSectionFocusContext({
         stage: 6,
@@ -352,7 +369,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                   ? `Saved ${formattedSavedTime}`
                   : 'Saved'}
               </span>
-              {onFlushSaveNow && (
+              {onFlushSaveNow && !isReadOnly && (
                 <button
                   type="button"
                   onClick={() => void onFlushSaveNow()}
@@ -373,7 +390,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
 
           <nav className="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0">
             {STAGES.map(st => {
-              const active = project.currentStage === st.num;
+              const active = effectiveStage === st.num;
               const approved = isStageApproved(st.num);
               const lockedStage7 = st.num === 7 && !isStage7Unlocked;
               return (
@@ -433,30 +450,40 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
             </span>
             <span className="font-mono text-accent font-bold tabular-nums">{project.versions.length}</span>
           </button>
-          <button
-            type="button"
-            onClick={() => setIsCopilotOpen(!isCopilotOpen)}
-            className="w-full py-2.5 px-3 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-xs"
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            <span>{isCopilotOpen ? 'Hide Course Copilot' : 'Open Course Copilot'}</span>
-          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={() => setIsCopilotOpen(!isCopilotOpen)}
+              className="w-full py-2.5 px-3 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-xs"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>{isCopilotOpen ? 'Hide Course Copilot' : 'Open Course Copilot'}</span>
+            </button>
+          )}
         </div>
       </aside>
 
       {/* Main Stage Content */}
       <main
         ref={mainRef}
-        onMouseUp={handleSelectionCapture}
-        onKeyUp={handleSelectionCapture}
+        onMouseUp={!isReadOnly ? handleSelectionCapture : undefined}
+        onKeyUp={!isReadOnly ? handleSelectionCapture : undefined}
         className="flex-1 p-5 sm:p-8 overflow-y-auto relative"
       >
         <div className="max-w-5xl mx-auto">
-          {sectionFocusContext && sectionFocusContext.stage === project.currentStage && (
+          {isReadOnly && (
+            <div className="mb-5 p-3.5 bg-slate-100 border border-slate-300 rounded-xl text-xs text-slate-700 flex items-center justify-between gap-2">
+              <span>
+                <strong>Viewer Read-Only Mode:</strong> You can navigate stages, review content, and inspect QA &amp; Version History records. Editing, AI generation, sign-offs, and exports are disabled for Viewer accounts.
+              </span>
+            </div>
+          )}
+
+          {sectionFocusContext && sectionFocusContext.stage === effectiveStage && (
             <div className="mb-5 p-4 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="text-xs text-amber-950 space-y-0.5">
                 <div className="font-bold">
-                  {project.currentStage === 6
+                  {effectiveStage === 6
                     ? 'Stage 7 Publish Gate · Action Required in Stage 6 QA'
                     : sectionFocusContext.source === 'qa'
                     ? 'Fixing Stage 6 QA Issue'
@@ -466,7 +493,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                     : ''}
                 </div>
                 <p className="text-amber-900">{sectionFocusContext.reason}</p>
-                {project.currentStage !== 6 && (
+                {effectiveStage !== 6 && (
                   <p className="text-[11px] text-amber-800">
                     {sectionFocusContext.source === 'qa'
                       ? 'Edit directly below or use the AI regenerate button on this stage, then return to Stage 6 to re-run QA.'
@@ -475,7 +502,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {project.currentStage !== 6 && sectionFocusContext.source === 'qa' ? (
+                {effectiveStage !== 6 && sectionFocusContext.source === 'qa' ? (
                   <button
                     type="button"
                     onClick={() => setStage(6)}
@@ -483,7 +510,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                   >
                     ← Back to Stage 6 QA
                   </button>
-                ) : project.currentStage !== 6 ? (
+                ) : effectiveStage !== 6 && !isReadOnly ? (
                   <button
                     type="button"
                     onClick={() => setIsCopilotOpen(true)}
@@ -503,10 +530,11 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
             </div>
           )}
 
-          {project.currentStage === 1 && (
+          {effectiveStage === 1 && (
             <Stage1Brief
               project={project}
               template={template}
+              readOnly={isReadOnly}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               onUpdateProject={onUpdateProject}
@@ -514,36 +542,40 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
               onApproveAndContinue={() => setStage(2)}
             />
           )}
-          {project.currentStage === 2 && (
+          {effectiveStage === 2 && (
             <Stage2Curriculum
               project={project}
+              readOnly={isReadOnly}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               onUpdateProject={onUpdateProject}
               onApproveAndContinue={() => setStage(3)}
             />
           )}
-          {project.currentStage === 3 && (
+          {effectiveStage === 3 && (
             <Stage3Outcomes
               project={project}
+              readOnly={isReadOnly}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               onUpdateProject={onUpdateProject}
               onApproveAndContinue={() => setStage(4)}
             />
           )}
-          {project.currentStage === 4 && (
+          {effectiveStage === 4 && (
             <Stage4Assessments
               project={project}
+              readOnly={isReadOnly}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               onUpdateProject={onUpdateProject}
               onApproveAndContinue={() => setStage(5)}
             />
           )}
-          {project.currentStage === 5 && (
+          {effectiveStage === 5 && (
             <Stage5Content
               project={project}
+              readOnly={isReadOnly}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               initialModuleNumber={
@@ -556,9 +588,10 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
               onApproveAndContinue={() => setStage(6)}
             />
           )}
-          {project.currentStage === 6 && (
+          {effectiveStage === 6 && (
             <Stage6QA
               project={project}
+              activeRole={activeRole}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               onUpdateProject={onUpdateProject}
@@ -566,23 +599,27 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
               onProceedToPublish={() => setSectionFocusContext(null)}
             />
           )}
-          {project.currentStage === 7 && (
-            <Stage7Publish project={project} onJumpToStage={handleJumpFromQA} />
+          {effectiveStage === 7 && (
+            <Stage7Publish
+              project={project}
+              activeRole={activeRole}
+              onJumpToStage={handleJumpFromQA}
+            />
           )}
         </div>
 
         {/* Floating Selection Action Bar for Highlighted Workspace Text */}
-        {pendingSelectionText.length >= 10 && (
+        {!isReadOnly && pendingSelectionText.length >= 10 && (
           <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-30 max-w-[94vw] bg-primary text-primary-contrast px-3 py-2 rounded-xl shadow-2xl border border-accent/60 flex flex-wrap items-center gap-1.5 text-xs">
             <span className="inline-flex items-center gap-1 font-bold text-accent pr-1.5 border-r border-white/20">
               <Sparkles className="w-3.5 h-3.5" />
               <span>
-                {project.currentStage >= 6
+                {effectiveStage >= 6
                   ? `Ask Copilot (${pendingSelectionText.length} chars):`
                   : `AI Selection (${pendingSelectionText.length} chars):`}
               </span>
             </span>
-            {(project.currentStage >= 6
+            {(effectiveStage >= 6
               ? ([
                   ['explain', 'Explain', 'Explain what this selected QA/publish item or guidance means and what action I should take next.'],
                   ['fix_clarity', 'Suggest Course Fix', 'Based on this selected QA/publish item, suggest concrete fixes in the relevant authoring stage (Stages 1–5) without modifying UI labels.'],
@@ -620,6 +657,8 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
       <SourceManagerModal
         isOpen={isSourcesOpen}
         project={project}
+        readOnly={isReadOnly}
+        canDeleteSource={perms.canDeleteSource}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
         onClose={() => setIsSourcesOpen(false)}
@@ -629,6 +668,8 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
       <VersionHistoryModal
         isOpen={isVersionsOpen}
         project={project}
+        readOnly={isReadOnly}
+        onLoadVersions={onLoadVersions}
         onClose={() => setIsVersionsOpen(false)}
         onSaveSnapshot={summary =>
           onUpdateProject(prev => prev, { trigger: 'manual_snapshot', summary })
@@ -636,20 +677,22 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
         onRestoreVersion={onRestoreVersion}
       />
 
-      <CourseCopilotDrawer
-        isOpen={isCopilotOpen}
-        project={project}
-        selectedProvider={selectedProvider}
-        selectedModel={selectedModel}
-        selectedTextContext={selectedTextContext}
-        queuedSelectionPrompt={queuedSelectionPrompt}
-        onClearSelectedTextContext={() => setSelectedTextContext(null)}
-        onClose={() => setIsCopilotOpen(false)}
-        onApplyProposedChange={handleApplyCopilotProposal}
-        onApplySelectedTextReplacement={handleApplySelectedTextReplacement}
-        onApplyRegeneratedSection={handleApplyRegeneratedSection}
-        onNavigateToSection={handleNavigateFromCopilot}
-      />
+      {!isReadOnly && (
+        <CourseCopilotDrawer
+          isOpen={isCopilotOpen}
+          project={project}
+          selectedProvider={selectedProvider}
+          selectedModel={selectedModel}
+          selectedTextContext={selectedTextContext}
+          queuedSelectionPrompt={queuedSelectionPrompt}
+          onClearSelectedTextContext={() => setSelectedTextContext(null)}
+          onClose={() => setIsCopilotOpen(false)}
+          onApplyProposedChange={handleApplyCopilotProposal}
+          onApplySelectedTextReplacement={handleApplySelectedTextReplacement}
+          onApplyRegeneratedSection={handleApplyRegeneratedSection}
+          onNavigateToSection={handleNavigateFromCopilot}
+        />
+      )}
     </div>
   );
 };

@@ -218,7 +218,9 @@ export function useV2Store(options?: UseV2StoreOptions) {
     try {
       const saved = localStorage.getItem(AI_MODEL_KEY);
       if (saved && !saved.toLowerCase().includes('gemini')) return saved;
-    } catch {}
+    } catch {
+      /* ignore localStorage unavailable */
+    }
     return 'openai/gpt-oss-120b';
   });
 
@@ -228,6 +230,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
   });
 
   const dirtyProjectIdsRef = useRef<Set<string>>(new Set());
+  const clearSaveError = useCallback(() => setSaveError(null), []);
 
   // Load AI models & configured keys from backend
   useEffect(() => {
@@ -247,7 +250,9 @@ export function useV2Store(options?: UseV2StoreOptions) {
           });
         }
       })
-      .catch(() => {});
+      .catch(err => {
+        console.warn('Could not load AI models metadata:', err);
+      });
   }, []);
 
   const reloadCloudWorkspace = useCallback(async () => {
@@ -338,7 +343,9 @@ export function useV2Store(options?: UseV2StoreOptions) {
             if (Array.isArray(parsed)) setProjects(parsed.map(normalizeProjectSchema));
           }
           if (tRaw) setCustomTemplates(JSON.parse(tRaw));
-        } catch {}
+        } catch {
+          /* ignore localStorage unavailable */
+        }
       } finally {
         setIsLoaded(true);
       }
@@ -385,7 +392,9 @@ export function useV2Store(options?: UseV2StoreOptions) {
             localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(tplList));
             setLastSavedAt(new Date().toISOString());
             return;
-          } catch {}
+          } catch {
+            /* ignore localStorage unavailable */
+          }
         }
         setSaveError(
           err?.message ||
@@ -439,19 +448,25 @@ export function useV2Store(options?: UseV2StoreOptions) {
     setSelectedProviderState('groq');
     try {
       localStorage.setItem(AI_PROVIDER_KEY, 'groq');
-    } catch {}
+    } catch {
+      /* ignore localStorage unavailable */
+    }
     const defaultModel = 'openai/gpt-oss-120b';
     setSelectedModelState(defaultModel);
     try {
       localStorage.setItem(AI_MODEL_KEY, defaultModel);
-    } catch {}
+    } catch {
+      /* ignore localStorage unavailable */
+    }
   }, []);
 
   const setModel = useCallback((model: string) => {
     setSelectedModelState(model);
     try {
       localStorage.setItem(AI_MODEL_KEY, model);
-    } catch {}
+    } catch {
+      /* ignore localStorage unavailable */
+    }
   }, []);
 
   const createProject = useCallback(
@@ -547,47 +562,125 @@ export function useV2Store(options?: UseV2StoreOptions) {
           data: compactProjectForCloudPayload(snap.data as CourseProject, 2_500_000)
             .project,
         };
-        void apiFetch(`/api/v2/courses/${encodeURIComponent(projectId)}/versions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ snapshot: snapshotPayload }),
-        }).catch(() => {});
+        void (async () => {
+          try {
+            const res = await apiFetch(
+              `/api/v2/courses/${encodeURIComponent(projectId)}/versions`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ snapshot: snapshotPayload }),
+              }
+            );
+            const data = await parseApiJson<any>(res);
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || 'Failed to persist version snapshot to cloud.');
+            }
+          } catch (err: any) {
+            setSaveError(err?.message || 'Failed to persist version snapshot to cloud.');
+          }
+        })();
       }
     },
     [isCloudMode]
   );
 
-  const restoreProjectVersion = useCallback(
-    (projectId: string, snapshotId: string) => {
-      if (isCloudMode) dirtyProjectIdsRef.current.add(projectId);
+  const loadCourseVersions = useCallback(
+    async (projectId: string): Promise<CourseVersionSnapshot[]> => {
+      const localExisting = projects.find(p => p.id === projectId)?.versions || [];
+      if (!isCloudMode) {
+        return localExisting;
+      }
+      const res = await apiFetch(
+        `/api/v2/courses/${encodeURIComponent(projectId)}/versions`
+      );
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success) {
+        const message = data.error || 'Failed to load course version history from cloud.';
+        setSaveError(message);
+        throw new Error(message);
+      }
+      const cloudVersions: CourseVersionSnapshot[] = Array.isArray(data.versions)
+        ? data.versions
+        : [];
       setProjects(prev =>
         prev.map(p => {
           if (p.id !== projectId) return p;
-          const target = p.versions.find(v => v.id === snapshotId);
-          if (!target) return p;
-          const { versions: _curr, ...currentRest } = p;
-          const backupBeforeRestore: CourseVersionSnapshot = {
-            id: `ver-${Date.now()}`,
-            versionNumber: p.versions.length + 1,
-            createdAt: new Date().toISOString(),
-            stage: p.currentStage,
-            trigger: 'restore',
-            summary: `Auto-saved before restoring v${target.versionNumber}`,
-            data: JSON.parse(JSON.stringify(currentRest)),
-          };
-          const restored = JSON.parse(JSON.stringify(target.data)) as Omit<
-            CourseProject,
-            'versions'
-          >;
-          return {
-            ...restored,
-            updatedAt: new Date().toISOString(),
-            versions: [backupBeforeRestore, ...p.versions].slice(0, 30),
-          };
+          const byId = new Map<string, CourseVersionSnapshot>();
+          for (const v of cloudVersions) {
+            if (v?.id) byId.set(v.id, v);
+          }
+          for (const v of p.versions || []) {
+            if (v?.id && !byId.has(v.id)) byId.set(v.id, v);
+          }
+          const merged = Array.from(byId.values()).sort(
+            (a, b) => b.versionNumber - a.versionNumber
+          );
+          return { ...p, versions: merged };
         })
       );
+      return cloudVersions;
     },
-    [isCloudMode]
+    [isCloudMode, projects]
+  );
+
+  const restoreProjectVersion = useCallback(
+    (projectId: string, snapshotId: string) => {
+      const current = projects.find(p => p.id === projectId);
+      const target = current?.versions.find(v => v.id === snapshotId);
+      if (!current || !target) return;
+
+      const { versions: _curr, ...currentRest } = current;
+      const now = new Date().toISOString();
+      const backupBeforeRestore: CourseVersionSnapshot = {
+        id: `ver-${Date.now()}`,
+        versionNumber: current.versions.length + 1,
+        createdAt: now,
+        stage: current.currentStage,
+        trigger: 'restore',
+        summary: `Auto-saved before restoring v${target.versionNumber}`,
+        data: JSON.parse(JSON.stringify(currentRest)),
+      };
+      const restored = normalizeProjectSchema({
+        ...JSON.parse(JSON.stringify(target.data)),
+        id: current.id,
+        companyId: current.companyId,
+        updatedAt: now,
+        versions: [backupBeforeRestore, ...current.versions].slice(0, 30),
+      });
+
+      if (isCloudMode) dirtyProjectIdsRef.current.add(projectId);
+      setProjects(prev => prev.map(p => (p.id === projectId ? restored : p)));
+
+      if (isCloudMode) {
+        void (async () => {
+          try {
+            const snapshotPayload: CourseVersionSnapshot = {
+              ...backupBeforeRestore,
+              data: compactProjectForCloudPayload(
+                backupBeforeRestore.data as CourseProject,
+                2_500_000
+              ).project,
+            };
+            const verRes = await apiFetch(
+              `/api/v2/courses/${encodeURIComponent(projectId)}/versions`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ snapshot: snapshotPayload }),
+              }
+            );
+            const verData = await parseApiJson<any>(verRes);
+            if (!verRes.ok || !verData.success) {
+              throw new Error(verData.error || 'Failed to archive pre-restore version snapshot.');
+            }
+          } catch (err: any) {
+            setSaveError(err?.message || 'Failed to persist version restore snapshot to cloud.');
+          }
+        })();
+      }
+    },
+    [projects, isCloudMode]
   );
 
   const duplicateProject = useCallback(
@@ -608,12 +701,27 @@ export function useV2Store(options?: UseV2StoreOptions) {
       setProjects(prev => [copy, ...prev]);
 
       if (isCloudMode) {
-        const compacted = compactProjectForCloudPayload(copy, 2_800_000).project;
-        void apiFetch('/api/v2/courses', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: compacted }),
-        }).catch(() => {});
+        void (async () => {
+          setSaveState('saving');
+          try {
+            const compacted = compactProjectForCloudPayload(copy, 2_800_000).project;
+            const res = await apiFetch('/api/v2/courses', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ project: compacted }),
+            });
+            const data = await parseApiJson<any>(res);
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || 'Failed to duplicate course in cloud.');
+            }
+            setLastSavedAt(new Date().toISOString());
+          } catch (err: any) {
+            setProjects(prev => prev.filter(p => p.id !== copy.id));
+            setSaveError(err?.message || 'Failed to duplicate course in cloud.');
+          } finally {
+            setSaveState('saved');
+          }
+        })();
       }
     },
     [projects, isCloudMode]
@@ -621,6 +729,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
 
   const deleteProject = useCallback(
     (projectId: string) => {
+      const removed = projects.find(p => p.id === projectId);
       dirtyProjectIdsRef.current.delete(projectId);
       setProjects(prev => prev.filter(p => p.id !== projectId));
       if (activeProjectId === projectId) {
@@ -628,12 +737,25 @@ export function useV2Store(options?: UseV2StoreOptions) {
         setRoute('dashboard');
       }
       if (isCloudMode) {
-        void apiFetch(`/api/v2/courses/${encodeURIComponent(projectId)}`, {
-          method: 'DELETE',
-        }).catch(() => {});
+        void (async () => {
+          try {
+            const res = await apiFetch(`/api/v2/courses/${encodeURIComponent(projectId)}`, {
+              method: 'DELETE',
+            });
+            const data = await parseApiJson<any>(res);
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || 'Failed to delete course from cloud.');
+            }
+          } catch (err: any) {
+            if (removed) {
+              setProjects(prev => [removed, ...prev]);
+            }
+            setSaveError(err?.message || 'Failed to delete course from cloud.');
+          }
+        })();
       }
     },
-    [activeProjectId, isCloudMode]
+    [projects, activeProjectId, isCloudMode]
   );
 
   const saveTemplate = useCallback(
@@ -653,11 +775,21 @@ export function useV2Store(options?: UseV2StoreOptions) {
         return [updatedTpl, ...prev];
       });
       if (isCloudMode) {
-        void apiFetch('/api/v2/templates', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ template: updatedTpl }),
-        }).catch(() => {});
+        void (async () => {
+          try {
+            const res = await apiFetch('/api/v2/templates', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ template: updatedTpl }),
+            });
+            const data = await parseApiJson<any>(res);
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || 'Failed to save template to cloud.');
+            }
+          } catch (err: any) {
+            setSaveError(err?.message || 'Failed to save template to cloud.');
+          }
+        })();
       }
     },
     [isCloudMode]
@@ -679,11 +811,22 @@ export function useV2Store(options?: UseV2StoreOptions) {
       };
       setCustomTemplates(prev => [copy, ...prev]);
       if (isCloudMode) {
-        void apiFetch('/api/v2/templates', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ template: copy }),
-        }).catch(() => {});
+        void (async () => {
+          try {
+            const res = await apiFetch('/api/v2/templates', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ template: copy }),
+            });
+            const data = await parseApiJson<any>(res);
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || 'Failed to save duplicated template to cloud.');
+            }
+          } catch (err: any) {
+            setCustomTemplates(prev => prev.filter(t => t.id !== copy.id));
+            setSaveError(err?.message || 'Failed to save duplicated template to cloud.');
+          }
+        })();
       }
       return copy;
     },
@@ -692,14 +835,28 @@ export function useV2Store(options?: UseV2StoreOptions) {
 
   const deleteTemplate = useCallback(
     (templateId: string) => {
+      const removed = customTemplates.find(t => t.id === templateId);
       setCustomTemplates(prev => prev.filter(t => t.id !== templateId));
       if (isCloudMode) {
-        void apiFetch(`/api/v2/templates/${encodeURIComponent(templateId)}`, {
-          method: 'DELETE',
-        }).catch(() => {});
+        void (async () => {
+          try {
+            const res = await apiFetch(`/api/v2/templates/${encodeURIComponent(templateId)}`, {
+              method: 'DELETE',
+            });
+            const data = await parseApiJson<any>(res);
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || 'Failed to delete template from cloud.');
+            }
+          } catch (err: any) {
+            if (removed) {
+              setCustomTemplates(prev => [removed, ...prev]);
+            }
+            setSaveError(err?.message || 'Failed to delete template from cloud.');
+          }
+        })();
       }
     },
-    [isCloudMode]
+    [customTemplates, isCloudMode]
   );
 
   const exportWorkspaceJson = useCallback(() => {
@@ -727,47 +884,59 @@ export function useV2Store(options?: UseV2StoreOptions) {
       const importedTemplates: CourseTemplate[] = [];
 
       if (Array.isArray(parsed?.projects)) {
-        setProjects(prev => {
-          const ids = new Set(prev.map(p => p.id));
-          const incoming = parsed.projects
-            .filter((p: any) => p && p.id && !ids.has(p.id))
-            .map(normalizeProjectSchema);
-          importedProjects.push(...incoming);
-          return [...incoming, ...prev];
-        });
+        const existingIds = new Set(projects.map(p => p.id));
+        const incoming = parsed.projects
+          .filter((p: any) => p && p.id && !existingIds.has(p.id))
+          .map(normalizeProjectSchema);
+        importedProjects.push(...incoming);
+        if (incoming.length > 0) {
+          setProjects(prev => [...incoming, ...prev]);
+        }
       }
       if (Array.isArray(parsed?.customTemplates)) {
-        setCustomTemplates(prev => {
-          const ids = new Set(prev.map(t => t.id));
-          const incoming = parsed.customTemplates.filter(
-            (t: CourseTemplate) => t.id && !ids.has(t.id)
-          );
-          importedTemplates.push(...incoming);
-          return [...incoming, ...prev];
-        });
+        const existingIds = new Set(customTemplates.map(t => t.id));
+        const incoming = parsed.customTemplates.filter(
+          (t: CourseTemplate) => t?.id && !existingIds.has(t.id)
+        );
+        importedTemplates.push(...incoming);
+        if (incoming.length > 0) {
+          setCustomTemplates(prev => [...incoming, ...prev]);
+        }
       }
       if (isCloudMode && (importedProjects.length > 0 || importedTemplates.length > 0)) {
         void (async () => {
-          for (const tpl of importedTemplates) {
-            await apiFetch('/api/v2/courses/migrate-local', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ projects: [], customTemplates: [tpl] }),
-            });
+          try {
+            for (const tpl of importedTemplates) {
+              const res = await apiFetch('/api/v2/courses/migrate-local', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projects: [], customTemplates: [tpl] }),
+              });
+              const data = await parseApiJson<any>(res);
+              if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Failed to import template to cloud.');
+              }
+            }
+            for (const proj of importedProjects) {
+              const compacted = compactProjectForCloudPayload(proj, 2_800_000).project;
+              const res = await apiFetch('/api/v2/courses/migrate-local', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projects: [compacted], customTemplates: [] }),
+              });
+              const data = await parseApiJson<any>(res);
+              if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Failed to import course to cloud.');
+              }
+            }
+            await reloadCloudWorkspace();
+          } catch (err: any) {
+            setSaveError(err?.message || 'Cloud import failed.');
           }
-          for (const proj of importedProjects) {
-            const compacted = compactProjectForCloudPayload(proj, 2_800_000).project;
-            await apiFetch('/api/v2/courses/migrate-local', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ projects: [compacted], customTemplates: [] }),
-            });
-          }
-          await reloadCloudWorkspace();
         })();
       }
     },
-    [isCloudMode, reloadCloudWorkspace]
+    [projects, customTemplates, isCloudMode, reloadCloudWorkspace]
   );
 
   return {
@@ -781,6 +950,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
     saveState,
     lastSavedAt,
     saveError,
+    clearSaveError,
     pendingLocalMigrationCount,
     reloadCloudWorkspace,
     flushSaveNow,
@@ -793,6 +963,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
     createProject,
     openProject,
     updateProject,
+    loadCourseVersions,
     restoreProjectVersion,
     duplicateProject,
     deleteProject,

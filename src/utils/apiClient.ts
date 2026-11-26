@@ -141,6 +141,32 @@ export function compactProjectForCloudPayload(
       extractedText: (s.extractedText || s.summary || '').slice(0, 250),
     })),
   };
+  if (fits(candidate)) return { project: candidate, trimmed: true };
+
+  // Strip source extractedText completely if still over cap
+  candidate = {
+    ...candidate,
+    sources: (candidate.sources || []).map(s => ({
+      ...s,
+      extractedText: '',
+    })),
+  };
+  if (fits(candidate)) return { project: candidate, trimmed: true };
+
+  // Trim secondary content fields (sourceClaims excerpts & lengthy module worked examples) as last resort
+  candidate = {
+    ...candidate,
+    content: {
+      ...candidate.content,
+      modules: (candidate.content?.modules || []).map(m => ({
+        ...m,
+        lessons: (m.lessons || []).map(l => ({
+          ...l,
+          sourceClaims: (l.sourceClaims || []).slice(0, 5),
+        })),
+      })),
+    },
+  };
 
   return { project: candidate, trimmed: true };
 }
