@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { computeFullAlignmentReport } from '../src/utils/alignmentHelpers.js';
 import { runStructuralAndConsistencyAudit } from '../src/utils/courseValidation.js';
 import {
+  getRolePermissions,
   hasGenuineHumanGovernanceSignOff,
   isAiPlaceholderReviewerName,
   validateCourseGovernanceMutation,
@@ -15,6 +16,8 @@ import {
   buildGenuineHumanSignOff,
   buildSampleCourseProject,
   buildSampleQAReport,
+  COMPANY_A_ID,
+  COMPANY_B_ID,
 } from './helpers/testFixtures.js';
 
 describe('QA, Regulatory Alignment & Governance Validation Regressions', () => {
@@ -56,7 +59,7 @@ describe('QA, Regulatory Alignment & Governance Validation Regressions', () => {
     expect(hasConsentWarning).toBe(true);
   });
 
-  it('identifies AI placeholder reviewer names and requires 3 distinct human governance sign-offs', () => {
+  it('enforces identity-bound 3-person human governance approvals and aligned RBAC permissions', () => {
     expect(isAiPlaceholderReviewerName('AI QA Auto-Sign-Off (Provisional)')).toBe(true);
     expect(isAiPlaceholderReviewerName('Pending Human Review')).toBe(true);
     expect(isAiPlaceholderReviewerName('Dr. Thabo Mokoena')).toBe(false);
@@ -67,16 +70,75 @@ describe('QA, Regulatory Alignment & Governance Validation Regressions', () => {
     });
     expect(missingResult.valid).toBe(false);
 
-    const genuineResult = hasGenuineHumanGovernanceSignOff(buildGenuineHumanSignOff());
+    // Rejects same userId signing off multiple governance roles (three-person rule)
+    const duplicateUserSignOff = buildGenuineHumanSignOff();
+    duplicateUserSignOff!.roles!.instructionalDesigner!.reviewerUserId = 'user-sme-a';
+    const sameUserCheck = hasGenuineHumanGovernanceSignOff(duplicateUserSignOff, {
+      companyId: COMPANY_A_ID,
+      courseId: 'course-1',
+    });
+    expect(sameUserCheck.valid).toBe(false);
+    expect(sameUserCheck.reason).toMatch(/three-person/i);
+
+    // Rejects cross-company scoped approval
+    const wrongCompanyCheck = hasGenuineHumanGovernanceSignOff(buildGenuineHumanSignOff(), {
+      companyId: COMPANY_B_ID,
+      courseId: 'course-1',
+    });
+    expect(wrongCompanyCheck.valid).toBe(false);
+
+    const genuineResult = hasGenuineHumanGovernanceSignOff(buildGenuineHumanSignOff(), {
+      companyId: COMPANY_A_ID,
+      courseId: 'course-1',
+    });
     expect(genuineResult.valid).toBe(true);
 
-    const adminCompletion = validateCourseGovernanceMutation({
+    // RBAC permission alignment checks
+    const reviewerPerms = getRolePermissions('reviewer', []);
+    expect(reviewerPerms.canUploadSource).toBe(false);
+    expect(reviewerPerms.canCreateOrDeleteCourse).toBe(false);
+    expect(reviewerPerms.canManageTemplates).toBe(false);
+    expect(reviewerPerms.canEditCourse).toBe(true);
+    expect(reviewerPerms.canApproveGovernance).toBe(false);
+    expect(reviewerPerms.canPublishCourse).toBe(true);
+
+    const unassignedAdminPerms = getRolePermissions('company_admin', []);
+    expect(unassignedAdminPerms.canApproveGovernance).toBe(false);
+    expect(unassignedAdminPerms.canPublishCourse).toBe(false);
+
+    const authorisedAdminPerms = getRolePermissions('company_admin', ['sme']);
+    expect(authorisedAdminPerms.canApproveGovernance).toBe(true);
+    expect(authorisedAdminPerms.canPublishCourse).toBe(true);
+
+    // Unassigned company_admin cannot complete course even if server holds 3 approvals -> 403
+    const authoritativeSignOff = buildGenuineHumanSignOff();
+    const existingWithApprovals = buildSampleCourseProject({
+      lifecycleStatus: 'awaiting_review',
+      latestQA: buildSampleQAReport({ humanSignOff: authoritativeSignOff }),
+    });
+    const unassignedAdminCompletion = validateCourseGovernanceMutation({
       actorRole: 'company_admin',
+      actorGovernanceRoles: [],
       incomingProject: buildSampleCourseProject({
         lifecycleStatus: 'completed',
-        latestQA: buildSampleQAReport({ humanSignOff: buildGenuineHumanSignOff() }),
+        latestQA: buildSampleQAReport({ humanSignOff: authoritativeSignOff }),
       }),
-      existingProject: buildSampleCourseProject({ lifecycleStatus: 'awaiting_review' }),
+      existingProject: existingWithApprovals,
+    });
+    expect(unassignedAdminCompletion.ok).toBe(false);
+    if (unassignedAdminCompletion.ok === false) {
+      expect(unassignedAdminCompletion.status).toBe(403);
+    }
+
+    // Separately authorised company_admin CAN complete course when server holds all 3 distinct approvals
+    const adminCompletion = validateCourseGovernanceMutation({
+      actorRole: 'company_admin',
+      actorGovernanceRoles: ['compliance_authorizer'],
+      incomingProject: buildSampleCourseProject({
+        lifecycleStatus: 'completed',
+        latestQA: buildSampleQAReport({ humanSignOff: authoritativeSignOff }),
+      }),
+      existingProject: existingWithApprovals,
     });
     expect(adminCompletion).toEqual({ ok: true });
   });

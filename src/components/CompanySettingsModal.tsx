@@ -17,8 +17,10 @@ import type {
   AiUsageSummary,
   CompanyMembership,
   CompanyRole,
+  GovernanceRole,
   MembershipStatus,
 } from '../types';
+import { GOVERNANCE_ROLE_LABELS, VALID_GOVERNANCE_ROLES } from '../utils/rbac';
 import { useTenant } from '../context/TenantContext';
 import { apiFetch, parseApiJson } from '../utils/apiClient';
 import {
@@ -76,6 +78,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteFullName, setInviteFullName] = useState('');
   const [inviteRole, setInviteRole] = useState<CompanyRole>('author');
+  const [inviteGovernanceRoles, setInviteGovernanceRoles] = useState<GovernanceRole[]>([]);
   const [inviteTempPassword, setInviteTempPassword] = useState('');
 
   useEffect(() => {
@@ -196,6 +199,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
     setErrorMsg(null);
     setNotice(null);
     try {
+      const eligibleForGov = inviteRole === 'reviewer' || inviteRole === 'company_admin';
       const res = await apiFetch('/api/v2/tenant/members/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -203,6 +207,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
           email: inviteEmail.trim().toLowerCase(),
           fullName: inviteFullName.trim(),
           role: inviteRole,
+          governanceRoles: eligibleForGov ? inviteGovernanceRoles : [],
           temporaryPassword: inviteTempPassword.trim() || undefined,
           redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
         }),
@@ -218,6 +223,7 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
       setInviteEmail('');
       setInviteFullName('');
       setInviteTempPassword('');
+      setInviteGovernanceRoles([]);
       setNotice(`Added ${data.member.profile?.email || 'team member'} (${data.member.role}).`);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Team invitation failed.');
@@ -228,7 +234,11 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
 
   const handleUpdateMember = async (
     memberId: string,
-    patch: { role?: CompanyRole; membershipStatus?: MembershipStatus }
+    patch: {
+      role?: CompanyRole;
+      membershipStatus?: MembershipStatus;
+      governanceRoles?: GovernanceRole[];
+    }
   ) => {
     if (!isAdmin) return;
     setErrorMsg(null);
@@ -676,6 +686,10 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
 
           {tab === 'team' && (
             <div className="space-y-5">
+              <div className="p-3 bg-surface border border-slate-200 rounded-lg text-[11px] text-slate-600 leading-relaxed">
+                <strong className="text-primary">Governance Role Separation:</strong> Signing off Stage 6 human governance roles (SME, Instructional Designer, Compliance Authoriser) requires explicit assignment below — even for <strong>company_admin</strong> accounts — and three distinct authenticated reviewers must sign off each role.
+              </div>
+
               {isAdmin && (
                 <form
                   onSubmit={handleInviteMember}
@@ -703,13 +717,19 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                     />
                     <select
                       value={inviteRole}
-                      onChange={e => setInviteRole(e.target.value as CompanyRole)}
+                      onChange={e => {
+                        const nextRole = e.target.value as CompanyRole;
+                        setInviteRole(nextRole);
+                        if (nextRole !== 'reviewer' && nextRole !== 'company_admin') {
+                          setInviteGovernanceRoles([]);
+                        }
+                      }}
                       className="px-3 py-1.5 text-xs bg-white border border-slate-200 rounded"
                     >
                       <option value="author">Author (create & edit courses)</option>
-                      <option value="reviewer">Reviewer (review & approve)</option>
+                      <option value="reviewer">Reviewer (review, QA & assigned governance)</option>
                       <option value="viewer">Viewer (read-only)</option>
-                      <option value="company_admin">Company Admin (full workspace control)</option>
+                      <option value="company_admin">Company Admin (workspace control)</option>
                     </select>
                     <input
                       type="password"
@@ -719,6 +739,37 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                       className="px-3 py-1.5 text-xs bg-white border border-slate-200 rounded"
                     />
                   </div>
+                  {(inviteRole === 'reviewer' || inviteRole === 'company_admin') && (
+                    <div className="pt-1 space-y-1.5">
+                      <div className="text-[11px] font-semibold text-slate-700">
+                        Authorised Governance Roles (Optional — required to approve Stage 6 gates)
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        {VALID_GOVERNANCE_ROLES.map(govRole => {
+                          const checked = inviteGovernanceRoles.includes(govRole);
+                          return (
+                            <label
+                              key={govRole}
+                              className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={e => {
+                                  setInviteGovernanceRoles(prev =>
+                                    e.target.checked
+                                      ? Array.from(new Set([...prev, govRole]))
+                                      : prev.filter(r => r !== govRole)
+                                  );
+                                }}
+                              />
+                              <span>{GOVERNANCE_ROLE_LABELS[govRole]}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <button
                     type="submit"
                     disabled={busy}
@@ -733,56 +784,105 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
                 <h3 className="text-xs font-bold text-primary">
                   Active & Invited Members ({members.length})
                 </h3>
-                {members.map(m => (
-                  <div
-                    key={m.id}
-                    className="p-3 border border-slate-200 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs"
-                  >
-                    <div>
-                      <div className="font-bold text-primary">
-                        {m.profile?.fullName || m.profile?.email || m.userId}
+                {members.map(m => {
+                  const assignedGov = Array.isArray(m.governanceRoles) ? m.governanceRoles : [];
+                  const canHoldGovernance = m.role === 'reviewer' || m.role === 'company_admin';
+                  return (
+                    <div
+                      key={m.id}
+                      className="p-3 border border-slate-200 rounded-lg space-y-2.5 text-xs"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-primary">
+                            {m.profile?.fullName || m.profile?.email || m.userId}
+                          </div>
+                          <div className="text-slate-500">{m.profile?.email}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isAdmin ? (
+                            <>
+                              <select
+                                aria-label="Member role"
+                                value={m.role}
+                                onChange={e => {
+                                  const nextRole = e.target.value as CompanyRole;
+                                  const keepGov =
+                                    nextRole === 'reviewer' || nextRole === 'company_admin'
+                                      ? assignedGov
+                                      : [];
+                                  void handleUpdateMember(m.id, {
+                                    role: nextRole,
+                                    governanceRoles: keepGov,
+                                  });
+                                }}
+                                className="px-2 py-1 border border-slate-200 rounded text-xs"
+                              >
+                                <option value="company_admin">company_admin</option>
+                                <option value="author">author</option>
+                                <option value="reviewer">reviewer</option>
+                                <option value="viewer">viewer</option>
+                              </select>
+                              <select
+                                aria-label="Member status"
+                                value={m.membershipStatus}
+                                onChange={e =>
+                                  void handleUpdateMember(m.id, {
+                                    membershipStatus: e.target.value as MembershipStatus,
+                                  })
+                                }
+                                className="px-2 py-1 border border-slate-200 rounded text-xs"
+                              >
+                                <option value="active">active</option>
+                                <option value="invited">invited</option>
+                                <option value="suspended">suspended</option>
+                              </select>
+                            </>
+                          ) : (
+                            <span className="px-2 py-1 bg-slate-100 rounded font-semibold">
+                              {m.role} · {m.membershipStatus}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-slate-500">{m.profile?.email}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {isAdmin ? (
-                        <>
-                          <select
-                            aria-label="Member role"
-                            value={m.role}
-                            onChange={e =>
-                              void handleUpdateMember(m.id, { role: e.target.value as CompanyRole })
-                            }
-                            className="px-2 py-1 border border-slate-200 rounded text-xs"
-                          >
-                            <option value="company_admin">company_admin</option>
-                            <option value="author">author</option>
-                            <option value="reviewer">reviewer</option>
-                            <option value="viewer">viewer</option>
-                          </select>
-                          <select
-                            aria-label="Member status"
-                            value={m.membershipStatus}
-                            onChange={e =>
-                              void handleUpdateMember(m.id, {
-                                membershipStatus: e.target.value as MembershipStatus,
-                              })
-                            }
-                            className="px-2 py-1 border border-slate-200 rounded text-xs"
-                          >
-                            <option value="active">active</option>
-                            <option value="invited">invited</option>
-                            <option value="suspended">suspended</option>
-                          </select>
-                        </>
-                      ) : (
-                        <span className="px-2 py-1 bg-slate-100 rounded font-semibold">
-                          {m.role} · {m.membershipStatus}
-                        </span>
+
+                      {canHoldGovernance && (
+                        <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-3 text-[11px]">
+                          <span className="font-semibold text-slate-600">Governance Approval Authority:</span>
+                          {isAdmin ? (
+                            VALID_GOVERNANCE_ROLES.map(govRole => {
+                              const checked = assignedGov.includes(govRole);
+                              return (
+                                <label
+                                  key={govRole}
+                                  className="inline-flex items-center gap-1.5 text-slate-700 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={e => {
+                                      const nextGov = e.target.checked
+                                        ? Array.from(new Set([...assignedGov, govRole]))
+                                        : assignedGov.filter(r => r !== govRole);
+                                      void handleUpdateMember(m.id, { governanceRoles: nextGov });
+                                    }}
+                                  />
+                                  <span>{GOVERNANCE_ROLE_LABELS[govRole]}</span>
+                                </label>
+                              );
+                            })
+                          ) : assignedGov.length > 0 ? (
+                            <span className="text-slate-700 font-medium">
+                              {assignedGov.map(r => GOVERNANCE_ROLE_LABELS[r]).join(' · ')}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">None assigned</span>
+                          )}
+                        </div>
                       )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

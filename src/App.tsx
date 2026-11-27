@@ -23,6 +23,7 @@ export default function App() {
     memberships,
     activeCompany,
     activeRole,
+    activeGovernanceRoles,
     isPasswordRecoveryMode,
     isPasswordSetupMode,
     workspaceNotice,
@@ -42,7 +43,7 @@ export default function App() {
   const [isCompanySettingsOpen, setIsCompanySettingsOpen] = useState(false);
   const [isLocalMigrationOpen, setIsLocalMigrationOpen] = useState(false);
 
-  const perms = getRolePermissions(activeRole);
+  const perms = getRolePermissions(activeRole, activeGovernanceRoles);
 
   if (isInitializing) {
     return (
@@ -85,7 +86,12 @@ export default function App() {
           if (!perms.canCreateOrDeleteCourse) return;
           setIsLocalMigrationOpen(true);
         }}
-        onSignOut={() => void signOut()}
+        onSignOut={() => {
+          void (async () => {
+            await store.flushSaveNow().catch(() => {});
+            await signOut();
+          })();
+        }}
       />
 
       {store.saveError && (
@@ -104,6 +110,53 @@ export default function App() {
           </button>
         </div>
       )}
+
+      {store.recoveryNotice && (
+        <div className="bg-emerald-50 border-b border-emerald-200 px-4 sm:px-6 py-2.5 text-xs text-emerald-900 flex items-center justify-between gap-3">
+          <span>{store.recoveryNotice}</span>
+          <button
+            type="button"
+            onClick={store.clearRecoveryNotice}
+            aria-label="Dismiss recovery notice"
+            className="p-1 text-emerald-700 hover:text-emerald-900 cursor-pointer shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {store.pendingRecoveryDrafts.map(draft => (
+        <div
+          key={draft.recoveryKey}
+          className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-2.5 text-xs text-amber-950 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              Unsaved local draft found for{' '}
+              <strong>{draft.project.brief.title || 'Untitled Course'}</strong> (saved locally{' '}
+              {new Date(draft.savedOfflineAt).toLocaleString()}).{' '}
+              {draft.lastSyncError || 'Cloud version changed while offline.'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => store.restoreRecoveryDraft(draft.projectId)}
+              className="px-2.5 py-1 rounded bg-primary text-primary-contrast font-semibold cursor-pointer"
+            >
+              Restore &amp; Sync Draft
+            </button>
+            <button
+              type="button"
+              onClick={() => store.discardRecoveryDraft(draft.projectId)}
+              className="px-2.5 py-1 rounded border border-amber-300 bg-white text-amber-900 font-semibold cursor-pointer"
+            >
+              Keep Cloud Version
+            </button>
+          </div>
+        </div>
+      ))}
 
       {workspaceNotice && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-6 py-2.5 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-3">
@@ -183,6 +236,9 @@ export default function App() {
           project={store.activeProject}
           template={activeTemplate}
           activeRole={activeRole}
+          activeGovernanceRoles={activeGovernanceRoles}
+          currentUserId={profile?.id}
+          currentUserName={profile?.fullName || profile?.email}
           saveState={store.saveState}
           lastSavedAt={store.lastSavedAt}
           saveError={store.saveError}
@@ -191,6 +247,7 @@ export default function App() {
           onBackToDashboard={() => store.setRoute('dashboard')}
           onFlushSaveNow={store.flushSaveNow}
           onLoadVersions={store.loadCourseVersions}
+          onSyncServerProject={store.syncProjectFromServer}
           onUpdateProject={(updater, snapshot) => {
             if (perms.isReadOnly) return;
             store.updateProject(store.activeProject!.id, updater, snapshot);

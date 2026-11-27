@@ -1,7 +1,11 @@
 import 'dotenv/config';
 import express from 'express';
-import { createApiRouter } from '../src/server/apiRouter.js';
+import {
+  createApiRouter,
+  validateRateLimitConfiguration,
+} from '../src/server/apiRouter.js';
 
+validateRateLimitConfiguration();
 const app = express();
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');

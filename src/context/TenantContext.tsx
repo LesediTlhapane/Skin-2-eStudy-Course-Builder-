@@ -1,6 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import type { CompanyMembership, CompanyRole, CompanyWorkspace, UserProfile } from '../types';
+import type {
+  CompanyMembership,
+  CompanyRole,
+  CompanyWorkspace,
+  GovernanceRole,
+  UserProfile,
+} from '../types';
 import { getSupabaseClient, isSupabaseClientConfigured } from '../lib/supabaseClient';
 import { parseApiJson, setApiAuthContext } from '../utils/apiClient';
 import {
@@ -22,6 +28,7 @@ interface TenantContextValue {
   memberships: CompanyMembership[];
   activeCompany: CompanyWorkspace | null;
   activeRole: CompanyRole | null;
+  activeGovernanceRoles: GovernanceRole[];
   isPasswordRecoveryMode: boolean;
   isPasswordSetupMode: boolean;
   authError: string | null;
@@ -58,6 +65,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [memberships, setMemberships] = useState<CompanyMembership[]>([]);
   const [activeCompany, setActiveCompany] = useState<CompanyWorkspace | null>(null);
   const [activeRole, setActiveRole] = useState<CompanyRole | null>(null);
+  const [activeGovernanceRoles, setActiveGovernanceRoles] = useState<GovernanceRole[]>([]);
   const [isPasswordRecoveryMode, setIsPasswordRecoveryMode] = useState(false);
   const [isPasswordSetupMode, setIsPasswordSetupMode] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -144,6 +152,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setMemberships([]);
         setActiveCompany(null);
         setActiveRole(null);
+        setActiveGovernanceRoles([]);
         return;
       }
 
@@ -195,11 +204,15 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         : [];
       const nextCompany: CompanyWorkspace | null = data.activeCompany || null;
       const nextRole: CompanyRole | null = data.activeRole || null;
+      const nextGovernanceRoles: GovernanceRole[] = Array.isArray(data.activeGovernanceRoles)
+        ? data.activeGovernanceRoles
+        : [];
 
       setProfile(data.profile || null);
       setMemberships(nextMemberships);
       setActiveCompany(nextCompany);
       setActiveRole(nextRole);
+      setActiveGovernanceRoles(nextGovernanceRoles);
 
       if (nextCompany?.id) {
         companyIdRef.current = nextCompany.id;
@@ -297,6 +310,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setMemberships([]);
         setActiveCompany(null);
         setActiveRole(null);
+        setActiveGovernanceRoles([]);
         companyIdRef.current = null;
       }
     });
@@ -398,6 +412,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setMemberships([]);
     setActiveCompany(null);
     setActiveRole(null);
+    setActiveGovernanceRoles([]);
     setIsPasswordRecoveryMode(false);
     setIsPasswordSetupMode(false);
     tokenRef.current = null;
@@ -428,6 +443,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         memberships,
         activeCompany,
         activeRole,
+        activeGovernanceRoles,
         isPasswordRecoveryMode,
         isPasswordSetupMode,
         authError,

@@ -2,9 +2,11 @@ import crypto from 'node:crypto';
 import type {
   CompanyMembership,
   CompanyWorkspace,
+  CourseGovernanceApprovalRecord,
   CourseProject,
   CourseTemplate,
   CourseVersionSnapshot,
+  GovernanceRole,
   QAEvaluationReport,
 } from '../../src/types.js';
 import type {
@@ -12,6 +14,13 @@ import type {
   VerifiedUserSession,
 } from '../../src/server/authMiddleware.js';
 import type { TenantServiceAdapter } from '../../src/server/tenantRoutes.js';
+import {
+  canApproveGovernanceRole,
+  getRolePermissions,
+  GOVERNANCE_ROLE_LABELS,
+  hasGenuineHumanGovernanceSignOff,
+  normalizeGovernanceRoles,
+} from '../../src/utils/rbac.js';
 
 export const COMPANY_A_ID = '11111111-1111-4111-8111-111111111111';
 export const COMPANY_B_ID = '22222222-2222-4222-8222-222222222222';
@@ -42,26 +51,46 @@ export function buildSampleQAReport(overrides?: Partial<QAEvaluationReport>): QA
   };
 }
 
-export function buildGenuineHumanSignOff(): QAEvaluationReport['humanSignOff'] {
+export function buildGenuineHumanSignOff(
+  overrides?: { companyId?: string; courseId?: string }
+): QAEvaluationReport['humanSignOff'] {
+  const companyId = overrides?.companyId || COMPANY_A_ID;
+  const courseId = overrides?.courseId || 'course-1';
+  const signedAt = '2026-11-26T01:00:00.000Z';
   return {
     signedOff: true,
-    reviewerName: 'Nomsa Dlamini',
-    signedOffAt: '2026-11-26T01:00:00.000Z',
+    reviewerName: 'Dr. Thabo Mokoena, Nomsa Dlamini, Johan van der Merwe',
+    signedOffAt: signedAt,
     roles: {
       sme: {
         signedOff: true,
         reviewerName: 'Dr. Thabo Mokoena',
-        signedOffAt: '2026-11-26T01:00:00.000Z',
+        reviewerUserId: 'user-sme-a',
+        governanceRole: 'sme',
+        companyId,
+        courseId,
+        status: 'approved',
+        signedOffAt: signedAt,
       },
       instructionalDesigner: {
         signedOff: true,
         reviewerName: 'Nomsa Dlamini',
-        signedOffAt: '2026-11-26T01:00:00.000Z',
+        reviewerUserId: 'user-id-a',
+        governanceRole: 'instructional_designer',
+        companyId,
+        courseId,
+        status: 'approved',
+        signedOffAt: signedAt,
       },
       complianceAuthorizer: {
         signedOff: true,
         reviewerName: 'Johan van der Merwe',
-        signedOffAt: '2026-11-26T01:00:00.000Z',
+        reviewerUserId: 'user-comp-a',
+        governanceRole: 'compliance_authorizer',
+        companyId,
+        courseId,
+        status: 'approved',
+        signedOffAt: signedAt,
       },
     },
   };
@@ -438,6 +467,46 @@ export function createInMemoryTenantEnv() {
       },
     ],
     [
+      'user-sme-a',
+      {
+        userId: 'user-sme-a',
+        email: 'sme@acme.test',
+        fullName: 'Dr. Thabo Mokoena',
+        passwordHash: 'hash-sme',
+        emailVerified: true,
+      },
+    ],
+    [
+      'user-id-a',
+      {
+        userId: 'user-id-a',
+        email: 'id@acme.test',
+        fullName: 'Nomsa Dlamini',
+        passwordHash: 'hash-id',
+        emailVerified: true,
+      },
+    ],
+    [
+      'user-comp-a',
+      {
+        userId: 'user-comp-a',
+        email: 'compliance@acme.test',
+        fullName: 'Johan van der Merwe',
+        passwordHash: 'hash-comp',
+        emailVerified: true,
+      },
+    ],
+    [
+      'user-dual-gov-a',
+      {
+        userId: 'user-dual-gov-a',
+        email: 'dual@acme.test',
+        fullName: 'Dual Authorised Reviewer',
+        passwordHash: 'hash-dual',
+        emailVerified: true,
+      },
+    ],
+    [
       'user-viewer-a',
       {
         userId: 'user-viewer-a',
@@ -475,45 +544,107 @@ export function createInMemoryTenantEnv() {
       companyId: COMPANY_A_ID,
       userId: 'user-admin-a',
       role: 'company_admin',
+      governanceRoles: [],
       membershipStatus: 'active',
       createdAt: '2026-01-01T00:00:00.000Z',
       company: companies.get(COMPANY_A_ID),
+      profile: { id: 'user-admin-a', email: 'admin@acme.test', fullName: 'Acme Admin' },
     },
     {
       id: 'mem-author-a',
       companyId: COMPANY_A_ID,
       userId: 'user-author-a',
       role: 'author',
+      governanceRoles: [],
       membershipStatus: 'active',
       createdAt: '2026-01-01T00:00:00.000Z',
       company: companies.get(COMPANY_A_ID),
+      profile: { id: 'user-author-a', email: 'author@acme.test', fullName: 'Acme Author' },
     },
     {
       id: 'mem-reviewer-a',
       companyId: COMPANY_A_ID,
       userId: 'user-reviewer-a',
       role: 'reviewer',
+      governanceRoles: [],
       membershipStatus: 'active',
       createdAt: '2026-01-01T00:00:00.000Z',
       company: companies.get(COMPANY_A_ID),
+      profile: { id: 'user-reviewer-a', email: 'reviewer@acme.test', fullName: 'Acme Reviewer' },
+    },
+    {
+      id: 'mem-sme-a',
+      companyId: COMPANY_A_ID,
+      userId: 'user-sme-a',
+      role: 'reviewer',
+      governanceRoles: ['sme'],
+      membershipStatus: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      company: companies.get(COMPANY_A_ID),
+      profile: { id: 'user-sme-a', email: 'sme@acme.test', fullName: 'Dr. Thabo Mokoena' },
+    },
+    {
+      id: 'mem-id-a',
+      companyId: COMPANY_A_ID,
+      userId: 'user-id-a',
+      role: 'reviewer',
+      governanceRoles: ['instructional_designer'],
+      membershipStatus: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      company: companies.get(COMPANY_A_ID),
+      profile: { id: 'user-id-a', email: 'id@acme.test', fullName: 'Nomsa Dlamini' },
+    },
+    {
+      id: 'mem-comp-a',
+      companyId: COMPANY_A_ID,
+      userId: 'user-comp-a',
+      role: 'reviewer',
+      governanceRoles: ['compliance_authorizer'],
+      membershipStatus: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      company: companies.get(COMPANY_A_ID),
+      profile: {
+        id: 'user-comp-a',
+        email: 'compliance@acme.test',
+        fullName: 'Johan van der Merwe',
+      },
+    },
+    {
+      id: 'mem-dual-gov-a',
+      companyId: COMPANY_A_ID,
+      userId: 'user-dual-gov-a',
+      role: 'reviewer',
+      governanceRoles: ['sme', 'instructional_designer'],
+      membershipStatus: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      company: companies.get(COMPANY_A_ID),
+      profile: {
+        id: 'user-dual-gov-a',
+        email: 'dual@acme.test',
+        fullName: 'Dual Authorised Reviewer',
+      },
     },
     {
       id: 'mem-viewer-a',
       companyId: COMPANY_A_ID,
       userId: 'user-viewer-a',
       role: 'viewer',
+      governanceRoles: [],
       membershipStatus: 'active',
       createdAt: '2026-01-01T00:00:00.000Z',
       company: companies.get(COMPANY_A_ID),
+      profile: { id: 'user-viewer-a', email: 'viewer@acme.test', fullName: 'Acme Viewer' },
     },
     {
       id: 'mem-admin-b',
       companyId: COMPANY_B_ID,
       userId: 'user-admin-b',
       role: 'company_admin',
+      governanceRoles: [],
       membershipStatus: 'active',
       createdAt: '2026-01-01T00:00:00.000Z',
       company: companies.get(COMPANY_B_ID),
+      profile: { id: 'user-admin-b', email: 'admin@beta.test', fullName: 'Beta Admin' },
     },
   ];
 
@@ -521,6 +652,7 @@ export function createInMemoryTenantEnv() {
     [COMPANY_A_ID, new Map([['course-1', buildSampleCourseProject()]])],
     [COMPANY_B_ID, new Map()],
   ]);
+  const approvalsByCourse = new Map<string, CourseGovernanceApprovalRecord[]>();
   const versionsByCourse = new Map<string, CourseVersionSnapshot[]>();
   const templatesByCompany = new Map<string, Map<string, CourseTemplate>>([
     [COMPANY_A_ID, new Map()],
@@ -532,6 +664,10 @@ export function createInMemoryTenantEnv() {
     ['token-admin-a', 'user-admin-a'],
     ['token-author-a', 'user-author-a'],
     ['token-reviewer-a', 'user-reviewer-a'],
+    ['token-sme-a', 'user-sme-a'],
+    ['token-id-a', 'user-id-a'],
+    ['token-comp-a', 'user-comp-a'],
+    ['token-dual-gov-a', 'user-dual-gov-a'],
     ['token-viewer-a', 'user-viewer-a'],
     ['token-unverified', 'user-unverified'],
     ['token-admin-b', 'user-admin-b'],
@@ -564,6 +700,67 @@ export function createInMemoryTenantEnv() {
       if (u.email === target) return u;
     }
     return undefined;
+  }
+
+  function buildAuthoritativeHumanSignOff(
+    companyId: string,
+    courseId: string,
+    approvals: CourseGovernanceApprovalRecord[]
+  ): QAEvaluationReport['humanSignOff'] {
+    const mapRole = (govRole: GovernanceRole) => {
+      const rec = approvals.find(a => a.governanceRole === govRole && a.active);
+      if (!rec) {
+        return {
+          signedOff: false,
+          reviewerName: '',
+          governanceRole: govRole,
+          companyId,
+          courseId,
+          status: 'pending' as const,
+        };
+      }
+      return {
+        signedOff: rec.status === 'approved',
+        reviewerName: rec.reviewerName,
+        reviewerUserId: rec.reviewerUserId,
+        governanceRole: govRole,
+        companyId: rec.companyId,
+        courseId: rec.courseId,
+        status: rec.status,
+        signedOffAt: rec.approvedAt,
+        notes: rec.notes || undefined,
+      };
+    };
+
+    const sme = mapRole('sme');
+    const instructionalDesigner = mapRole('instructional_designer');
+    const complianceAuthorizer = mapRole('compliance_authorizer');
+    const allApproved =
+      sme.signedOff &&
+      instructionalDesigner.signedOff &&
+      complianceAuthorizer.signedOff &&
+      new Set([sme.reviewerUserId, instructionalDesigner.reviewerUserId, complianceAuthorizer.reviewerUserId])
+        .size === 3;
+
+    const latestAt = [sme.signedOffAt, instructionalDesigner.signedOffAt, complianceAuthorizer.signedOffAt]
+      .filter(Boolean)
+      .sort()
+      .pop();
+
+    return {
+      signedOff: allApproved,
+      reviewerName: allApproved
+        ? [sme.reviewerName, instructionalDesigner.reviewerName, complianceAuthorizer.reviewerName]
+            .filter(Boolean)
+            .join(', ')
+        : '',
+      signedOffAt: allApproved ? latestAt : undefined,
+      roles: {
+        sme,
+        instructionalDesigner,
+        complianceAuthorizer,
+      },
+    };
   }
 
   const service: TenantServiceAdapter = {
@@ -618,6 +815,7 @@ export function createInMemoryTenantEnv() {
         companyId,
         userId: resolvedUserId,
         role: 'company_admin',
+        governanceRoles: [],
         membershipStatus: 'active',
         createdAt: new Date().toISOString(),
         company,
@@ -723,11 +921,17 @@ export function createInMemoryTenantEnv() {
         tokens.set(`token-${email}`, userId);
       }
 
+      const normalizedGovRoles =
+        params.role === 'reviewer' || params.role === 'company_admin'
+          ? normalizeGovernanceRoles(params.governanceRoles)
+          : [];
+
       const existingMem = memberships.find(
         m => m.companyId === params.companyId && m.userId === user!.userId
       );
       if (existingMem) {
         existingMem.role = params.role;
+        existingMem.governanceRoles = normalizedGovRoles;
         return existingMem;
       }
 
@@ -736,6 +940,7 @@ export function createInMemoryTenantEnv() {
         companyId: params.companyId,
         userId: user.userId,
         role: params.role,
+        governanceRoles: normalizedGovRoles,
         membershipStatus: user.emailVerified ? 'active' : 'invited',
         createdAt: new Date().toISOString(),
         company: companies.get(params.companyId),
@@ -748,7 +953,16 @@ export function createInMemoryTenantEnv() {
     async updateMember(params) {
       const m = memberships.find(x => x.companyId === params.companyId && x.id === params.memberId);
       if (!m) throw new Error('Member not found.');
+      const nextRole = params.role || m.role;
       if (params.role) m.role = params.role;
+      if (params.governanceRoles !== undefined) {
+        m.governanceRoles =
+          nextRole === 'reviewer' || nextRole === 'company_admin'
+            ? normalizeGovernanceRoles(params.governanceRoles)
+            : [];
+      } else if (nextRole !== 'reviewer' && nextRole !== 'company_admin') {
+        m.governanceRoles = [];
+      }
       if (params.membershipStatus) m.membershipStatus = params.membershipStatus;
       return m;
     },
@@ -767,19 +981,302 @@ export function createInMemoryTenantEnv() {
       if (courseIdParam && !store.has(courseIdParam)) {
         return { project, notFound: true };
       }
+      const existing = courseIdParam ? store.get(courseIdParam) : undefined;
       const id = courseIdParam || project.id || `course-${crypto.randomUUID()}`;
+      const approvals = approvalsByCourse.get(`${companyId}:${id}`) || [];
+      const authoritativeSignOff = buildAuthoritativeHumanSignOff(companyId, id, approvals);
+
       const saved: CourseProject = {
         ...project,
         id,
         companyId,
         updatedAt: new Date().toISOString(),
+        ...(existing?.lifecycleStatus === 'completed'
+          ? { lifecycleStatus: 'completed' }
+          : {}),
+        ...(project.latestQA
+          ? {
+              latestQA: {
+                ...project.latestQA,
+                humanSignOff:
+                  existing?.lifecycleStatus === 'completed'
+                    ? existing.latestQA?.humanSignOff || authoritativeSignOff
+                    : approvals.length > 0
+                      ? authoritativeSignOff
+                      : project.latestQA.humanSignOff,
+              },
+            }
+          : {}),
       };
       store.set(id, saved);
       return { project: saved };
     },
 
     async deleteCourse(companyId, courseIdParam) {
+      approvalsByCourse.delete(`${companyId}:${courseIdParam}`);
       return Boolean(coursesByCompany.get(companyId)?.delete(courseIdParam));
+    },
+
+    async getCourseGovernance(companyId, courseIdParam) {
+      const course = coursesByCompany.get(companyId)?.get(courseIdParam);
+      if (!course) {
+        return { notFound: true, approvals: [] };
+      }
+      const approvals = (approvalsByCourse.get(`${companyId}:${course.id}`) || []).filter(
+        a => a.active
+      );
+      return {
+        courseId: course.id,
+        lifecycleStatus: course.lifecycleStatus,
+        approvals,
+        humanSignOff: buildAuthoritativeHumanSignOff(companyId, course.id, approvals),
+      };
+    },
+
+    async submitCourseGovernanceDecision(params) {
+      if (!canApproveGovernanceRole(params.actorRole, params.actorGovernanceRoles, params.governanceRole)) {
+        return {
+          ok: false as const,
+          status: 403 as const,
+          error: `Forbidden: you are not authorised for the ${GOVERNANCE_ROLE_LABELS[params.governanceRole]} governance role.`,
+        };
+      }
+      const store = coursesByCompany.get(params.companyId);
+      const course = store?.get(params.courseIdParam);
+      if (!course) {
+        return {
+          ok: false as const,
+          status: 404 as const,
+          error: 'Course not found in your company workspace.',
+        };
+      }
+      if (course.lifecycleStatus === 'completed') {
+        return {
+          ok: false as const,
+          status: 409 as const,
+          error: 'Conflict: governance approvals on a completed course are immutable.',
+        };
+      }
+      if (!course.latestQA) {
+        return {
+          ok: false as const,
+          status: 400 as const,
+          error: 'Run Stage 6 Quality Assurance before recording governance approvals.',
+        };
+      }
+
+      const key = `${params.companyId}:${course.id}`;
+      const existingList = (approvalsByCourse.get(key) || []).filter(a => a.active);
+      const existingForSlot = existingList.find(a => a.governanceRole === params.governanceRole);
+      if (
+        existingForSlot &&
+        existingForSlot.status === 'approved' &&
+        existingForSlot.reviewerUserId !== params.actorUserId
+      ) {
+        return {
+          ok: false as const,
+          status: 409 as const,
+          error: `${GOVERNANCE_ROLE_LABELS[params.governanceRole]} is already approved by ${existingForSlot.reviewerName}. Only that reviewer may revoke their approval before completion.`,
+        };
+      }
+
+      if (params.decision === 'approved') {
+        const otherBySameUser = existingList.find(
+          a =>
+            a.status === 'approved' &&
+            a.reviewerUserId === params.actorUserId &&
+            a.governanceRole !== params.governanceRole
+        );
+        if (otherBySameUser) {
+          return {
+            ok: false as const,
+            status: 409 as const,
+            error: `Three-person governance rule violated: you already hold the active approval for ${GOVERNANCE_ROLE_LABELS[otherBySameUser.governanceRole]} on this course.`,
+          };
+        }
+      }
+
+      const filtered = existingList.filter(a => a.governanceRole !== params.governanceRole);
+      const approval: CourseGovernanceApprovalRecord = {
+        id: `appr-${crypto.randomUUID()}`,
+        companyId: params.companyId,
+        courseId: course.id,
+        governanceRole: params.governanceRole,
+        reviewerUserId: params.actorUserId,
+        reviewerName: params.actorName.trim(),
+        status: params.decision,
+        notes: params.notes || '',
+        approvedAt: new Date().toISOString(),
+        active: true,
+      };
+      const nextApprovals = [...filtered, approval];
+      approvalsByCourse.set(key, nextApprovals);
+
+      const humanSignOff = buildAuthoritativeHumanSignOff(
+        params.companyId,
+        course.id,
+        nextApprovals
+      );
+      const updatedCourse: CourseProject = {
+        ...course,
+        lifecycleStatus:
+          params.decision === 'rejected' && course.lifecycleStatus === 'awaiting_review'
+            ? 'revision_required'
+            : course.lifecycleStatus,
+        latestQA: {
+          ...course.latestQA,
+          humanSignOff,
+        },
+      };
+      store!.set(course.id, updatedCourse);
+
+      return {
+        ok: true as const,
+        course: updatedCourse,
+        approval,
+        approvals: nextApprovals,
+      };
+    },
+
+    async revokeCourseGovernanceDecision(params) {
+      if (params.actorRole !== 'reviewer' && params.actorRole !== 'company_admin') {
+        return {
+          ok: false as const,
+          status: 403 as const,
+          error: 'Forbidden: only Reviewers or authorised Company Administrators can revoke approvals.',
+        };
+      }
+      const store = coursesByCompany.get(params.companyId);
+      const course = store?.get(params.courseIdParam);
+      if (!course) {
+        return {
+          ok: false as const,
+          status: 404 as const,
+          error: 'Course not found in your company workspace.',
+        };
+      }
+      if (course.lifecycleStatus === 'completed') {
+        return {
+          ok: false as const,
+          status: 409 as const,
+          error: 'Conflict: governance approvals on a completed course are immutable.',
+        };
+      }
+
+      const key = `${params.companyId}:${course.id}`;
+      const existingList = (approvalsByCourse.get(key) || []).filter(a => a.active);
+      const target = existingList.find(a => a.governanceRole === params.governanceRole);
+      if (!target) {
+        return {
+          ok: false as const,
+          status: 404 as const,
+          error: `No active approval found for ${GOVERNANCE_ROLE_LABELS[params.governanceRole]}.`,
+        };
+      }
+      if (target.reviewerUserId !== params.actorUserId) {
+        return {
+          ok: false as const,
+          status: 403 as const,
+          error: 'Forbidden: you cannot modify or revoke another reviewer’s governance approval.',
+        };
+      }
+
+      const nextApprovals = existingList.filter(a => a.governanceRole !== params.governanceRole);
+      approvalsByCourse.set(key, nextApprovals);
+
+      const humanSignOff = buildAuthoritativeHumanSignOff(
+        params.companyId,
+        course.id,
+        nextApprovals
+      );
+      const updatedCourse: CourseProject = {
+        ...course,
+        ...(course.latestQA
+          ? {
+              latestQA: {
+                ...course.latestQA,
+                humanSignOff,
+              },
+            }
+          : {}),
+      };
+      store!.set(course.id, updatedCourse);
+
+      return {
+        ok: true as const,
+        course: updatedCourse,
+        approvals: nextApprovals,
+      };
+    },
+
+    async completeCourseRelease(params) {
+      const perms = getRolePermissions(params.actorRole, params.actorGovernanceRoles);
+      if (!perms.canPublishCourse) {
+        return {
+          ok: false as const,
+          status: 403 as const,
+          error:
+            'Forbidden: only a Reviewer or a separately authorised Company Administrator can complete and publish a course.',
+        };
+      }
+      const store = coursesByCompany.get(params.companyId);
+      const course = store?.get(params.courseIdParam);
+      if (!course) {
+        return {
+          ok: false as const,
+          status: 404 as const,
+          error: 'Course not found in your company workspace.',
+        };
+      }
+      if (!course.latestQA) {
+        return {
+          ok: false as const,
+          status: 400 as const,
+          error: 'A Stage 6 Quality Assurance evaluation is required before completing a course.',
+        };
+      }
+      if (course.latestQA.verdict === 'FAIL') {
+        return {
+          ok: false as const,
+          status: 400 as const,
+          error: 'Courses with a FAIL QA verdict cannot be completed.',
+        };
+      }
+      if ((course.latestQA.blockingErrors?.length || 0) > 0) {
+        return {
+          ok: false as const,
+          status: 400 as const,
+          error: 'All blocking QA issues must be resolved before completion.',
+        };
+      }
+
+      const approvals = (approvalsByCourse.get(`${params.companyId}:${course.id}`) || []).filter(
+        a => a.active
+      );
+      const humanSignOff = buildAuthoritativeHumanSignOff(params.companyId, course.id, approvals);
+      const signOffCheck = hasGenuineHumanGovernanceSignOff(humanSignOff, {
+        companyId: params.companyId,
+        courseId: course.id,
+      });
+      if (!signOffCheck.valid) {
+        return {
+          ok: false as const,
+          status: 400 as const,
+          error: signOffCheck.reason || 'Three distinct human governance approvals are required.',
+        };
+      }
+
+      const completedCourse: CourseProject = {
+        ...course,
+        currentStage: 7,
+        lifecycleStatus: 'completed',
+        latestQA: {
+          ...course.latestQA,
+          humanSignOff,
+        },
+      };
+      store!.set(course.id, completedCourse);
+      return { ok: true as const, course: completedCourse };
     },
 
     async listCourseVersions(companyId, courseIdParam) {

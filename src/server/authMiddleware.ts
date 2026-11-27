@@ -3,6 +3,7 @@ import type {
   CompanyMembership,
   CompanyRole,
   CompanyWorkspace,
+  GovernanceRole,
   UserProfile,
 } from '../types.js';
 import {
@@ -10,6 +11,23 @@ import {
   isSupabaseServerConfigured,
   isValidUuid,
 } from './supabaseAdmin.js';
+import { normalizeGovernanceRoles } from '../utils/rbac.js';
+
+let warnedMissingGovernanceRolesCol = false;
+
+export function isMissingSchemaColumnError(
+  error: { code?: string; message?: string; details?: string } | null | undefined,
+  columnName: string
+): boolean {
+  if (!error) return false;
+  const code = String(error.code || '').trim().toUpperCase();
+  const text = `${error.message || ''} ${error.details || ''}`.toLowerCase();
+  const col = columnName.toLowerCase();
+  return (
+    (code === '42703' || code === 'PGRST204' || text.includes('does not exist') || text.includes('schema cache')) &&
+    text.includes(col)
+  );
+}
 
 export interface VerifiedTenantContext {
   userId: string;
@@ -17,6 +35,7 @@ export interface VerifiedTenantContext {
   fullName: string;
   companyId: string;
   role: CompanyRole;
+  governanceRoles: GovernanceRole[];
   company: CompanyWorkspace;
   memberships: CompanyMembership[];
 }
@@ -120,14 +139,33 @@ class SupabaseTenantVerifier implements TenantAuthVerifier {
         .eq('membership_status', 'invited');
     }
 
-    const { data: membershipRows, error: memError } = await admin
+    let { data: membershipRows, error: memError } = await admin
       .from('company_memberships')
       .select(
-        'id, company_id, user_id, role, membership_status, created_at, companies ( id, company_name, company_slug, logo_url, primary_colour, secondary_colour, subscription_status, created_at, updated_at )'
+        'id, company_id, user_id, role, governance_roles, membership_status, created_at, companies ( id, company_name, company_slug, logo_url, primary_colour, secondary_colour, subscription_status, created_at, updated_at )'
       )
       .eq('user_id', authUser.id)
       .eq('membership_status', 'active')
       .order('created_at', { ascending: true });
+
+    if (memError && isMissingSchemaColumnError(memError, 'governance_roles')) {
+      if (!warnedMissingGovernanceRolesCol) {
+        warnedMissingGovernanceRolesCol = true;
+        console.warn(
+          'Supabase migration 005_governance_hardening.sql not yet applied (missing company_memberships.governance_roles); defaulting governanceRoles to [].'
+        );
+      }
+      const fallbackRes = await admin
+        .from('company_memberships')
+        .select(
+          'id, company_id, user_id, role, membership_status, created_at, companies ( id, company_name, company_slug, logo_url, primary_colour, secondary_colour, subscription_status, created_at, updated_at )'
+        )
+        .eq('user_id', authUser.id)
+        .eq('membership_status', 'active')
+        .order('created_at', { ascending: true });
+      membershipRows = fallbackRes.data as typeof membershipRows;
+      memError = fallbackRes.error;
+    }
 
     if (memError) {
       throw new Error(`Membership verification failed: ${memError.message}`);
@@ -138,6 +176,7 @@ class SupabaseTenantVerifier implements TenantAuthVerifier {
       companyId: String(row.company_id),
       userId: String(row.user_id),
       role: row.role as CompanyRole,
+      governanceRoles: normalizeGovernanceRoles(row.governance_roles),
       membershipStatus: row.membership_status,
       createdAt: String(row.created_at),
       company: row.companies ? mapCompanyRow(row.companies) : undefined,
@@ -209,6 +248,7 @@ export function createUserSessionMiddleware(verifier: TenantAuthVerifier = defau
             'Multi-tenant Supabase authentication is not configured on this server (missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY).',
         });
       }
+      console.error('Auth session verification failed:', String(err?.message || 'unknown_error').slice(0, 200));
       return res.status(401).json({
         success: false,
         error: 'Unable to verify authentication session.',
@@ -311,6 +351,7 @@ export function createTenantAuthMiddleware(verifier: TenantAuthVerifier = defaul
         fullName: session.profile.fullName || session.email,
         companyId: activeMembership.companyId,
         role: activeMembership.role,
+        governanceRoles: normalizeGovernanceRoles(activeMembership.governanceRoles),
         company: fallbackCompany,
         memberships: session.memberships,
       };

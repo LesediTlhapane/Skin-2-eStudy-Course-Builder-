@@ -4,6 +4,14 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { createApiRouter, MemoryRateLimitStore } from '../src/server/apiRouter.js';
 import { compactProjectForCloudPayload, utf8ByteLength } from '../src/utils/apiClient.js';
+import {
+  buildCloudRecoveryKey,
+  clearCloudRecoveryDraft,
+  loadCloudRecoveryDrafts,
+  reconcileCloudRecoveryDrafts,
+  saveCloudRecoveryDraftSync,
+  type CloudRecoveryDraft,
+} from '../src/utils/cloudRecovery.js';
 import { buildDeliverableDocxDocument } from '../src/utils/exportDeliverables.js';
 import { buildScorm12ZipBytes, buildScorm12ZipEntries } from '../src/utils/scormExport.js';
 import {
@@ -133,5 +141,187 @@ describe('Priority 3 & Exports — Cloud Version History, Payload Compaction, Se
     expect(healthRes.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
     expect(healthRes.headers['permissions-policy']).toBe('camera=(), microphone=(), geolocation=()');
     expect(healthRes.headers['cache-control']).toBe('no-store');
+  });
+
+  it('persists verified 3-person governance provenance on completed courses across subsequent cloud fetches', async () => {
+    const env = createInMemoryTenantEnv();
+    const app = express();
+    app.use(express.json({ limit: '4mb' }));
+    app.use(
+      '/api',
+      createApiRouter({
+        rateLimitStore: new MemoryRateLimitStore(),
+        tenantDeps: {
+          authVerifier: env.authVerifier,
+          service: env.service,
+          isConfiguredFn: () => true,
+        },
+      })
+    );
+
+    await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-sme-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme', decision: 'approved' });
+    await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-id-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'instructional_designer', decision: 'approved' });
+    await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-comp-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'compliance_authorizer', decision: 'approved' });
+
+    const completeRes = await request(app)
+      .post('/api/v2/courses/course-1/complete')
+      .set('Authorization', 'Bearer token-reviewer-a')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(completeRes.status).toBe(200);
+
+    const listRes = await request(app)
+      .get('/api/v2/courses')
+      .set('Authorization', 'Bearer token-viewer-a')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(listRes.status).toBe(200);
+    const savedCourse = listRes.body.courses.find((c: any) => c.id === 'course-1');
+    expect(savedCourse.lifecycleStatus).toBe('completed');
+    expect(savedCourse.latestQA.humanSignOff.signedOff).toBe(true);
+    expect(savedCourse.latestQA.humanSignOff.roles.sme.reviewerUserId).toBe('user-sme-a');
+    expect(savedCourse.latestQA.humanSignOff.roles.instructionalDesigner.reviewerUserId).toBe(
+      'user-id-a'
+    );
+    expect(savedCourse.latestQA.humanSignOff.roles.complianceAuthorizer.reviewerUserId).toBe(
+      'user-comp-a'
+    );
+  });
+
+  it('reconciles unsaved cloud recovery drafts safely across session kicks and concurrent edits', () => {
+    const serverCourse = buildSampleCourseProject({ id: 'course-sync-1' });
+    serverCourse.updatedAt = '2026-11-27T08:00:00.000Z';
+    serverCourse.currentStage = 3;
+
+    const soloOfflineEdit = buildSampleCourseProject({ id: 'course-sync-1' });
+    soloOfflineEdit.updatedAt = '2026-11-27T08:05:00.000Z';
+    soloOfflineEdit.currentStage = 5;
+    soloOfflineEdit.brief.title = 'Updated Before Session Kick';
+
+    const unsavedNewCourse = buildSampleCourseProject({ id: 'course-new-unsaved' });
+    unsavedNewCourse.updatedAt = '2026-11-27T08:06:00.000Z';
+    unsavedNewCourse.brief.title = 'Created Right Before Kick';
+
+    const conflictedServerCourse = buildSampleCourseProject({ id: 'course-conflict-1' });
+    conflictedServerCourse.updatedAt = '2026-11-27T08:10:00.000Z';
+
+    const staleBaseEdit = buildSampleCourseProject({ id: 'course-conflict-1' });
+    staleBaseEdit.updatedAt = '2026-11-27T08:07:00.000Z';
+    staleBaseEdit.brief.title = 'My Local Conflicting Edit';
+
+    const drafts: CloudRecoveryDraft[] = [
+      {
+        recoveryKey: buildCloudRecoveryKey(COMPANY_A_ID, 'course-sync-1'),
+        companyId: COMPANY_A_ID,
+        projectId: 'course-sync-1',
+        baseServerUpdatedAt: '2026-11-27T08:00:00.000Z',
+        isNewCourse: false,
+        savedOfflineAt: '2026-11-27T08:05:01.000Z',
+        project: soloOfflineEdit,
+      },
+      {
+        recoveryKey: buildCloudRecoveryKey(COMPANY_A_ID, 'course-new-unsaved'),
+        companyId: COMPANY_A_ID,
+        projectId: 'course-new-unsaved',
+        baseServerUpdatedAt: null,
+        isNewCourse: true,
+        savedOfflineAt: '2026-11-27T08:06:01.000Z',
+        project: unsavedNewCourse,
+      },
+      {
+        recoveryKey: buildCloudRecoveryKey(COMPANY_A_ID, 'course-conflict-1'),
+        companyId: COMPANY_A_ID,
+        projectId: 'course-conflict-1',
+        baseServerUpdatedAt: '2026-11-27T08:00:00.000Z',
+        isNewCourse: false,
+        savedOfflineAt: '2026-11-27T08:07:01.000Z',
+        project: staleBaseEdit,
+      },
+    ];
+
+    const result = reconcileCloudRecoveryDrafts(
+      [serverCourse, conflictedServerCourse],
+      drafts,
+      raw => raw
+    );
+
+    expect(result.autoRecoveredIds).toEqual(['course-sync-1', 'course-new-unsaved']);
+    expect(result.autoRecoveredNewIds).toEqual(['course-new-unsaved']);
+    expect(result.conflictingDrafts).toHaveLength(1);
+    expect(result.conflictingDrafts[0].projectId).toBe('course-conflict-1');
+
+    const restoredExisting = result.projects.find(p => p.id === 'course-sync-1');
+    expect(restoredExisting?.currentStage).toBe(5);
+    expect(restoredExisting?.brief.title).toBe('Updated Before Session Kick');
+
+    const restoredNew = result.projects.find(p => p.id === 'course-new-unsaved');
+    expect(restoredNew?.brief.title).toBe('Created Right Before Kick');
+
+    // Server version of conflicted course remains untouched until user chooses
+    const untouchedConflicted = result.projects.find(p => p.id === 'course-conflict-1');
+    expect(untouchedConflicted?.updatedAt).toBe('2026-11-27T08:10:00.000Z');
+  });
+
+  it('isolates localStorage cloud recovery drafts per companyId and clears them cleanly', async () => {
+    const store = new Map<string, string>();
+    const prevLocalStorage = (globalThis as any).localStorage;
+    (globalThis as any).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v);
+      },
+      removeItem: (k: string) => {
+        store.delete(k);
+      },
+    };
+
+    try {
+      const projA = buildSampleCourseProject({ id: 'course-a' });
+      const projB = buildSampleCourseProject({ id: 'course-b' });
+
+      saveCloudRecoveryDraftSync({
+        recoveryKey: buildCloudRecoveryKey('company-a', 'course-a'),
+        companyId: 'company-a',
+        projectId: 'course-a',
+        baseServerUpdatedAt: null,
+        isNewCourse: false,
+        savedOfflineAt: '2026-11-27T08:00:00.000Z',
+        project: projA,
+      });
+      saveCloudRecoveryDraftSync({
+        recoveryKey: buildCloudRecoveryKey('company-b', 'course-b'),
+        companyId: 'company-b',
+        projectId: 'course-b',
+        baseServerUpdatedAt: null,
+        isNewCourse: false,
+        savedOfflineAt: '2026-11-27T08:00:00.000Z',
+        project: projB,
+      });
+
+      const draftsA = await loadCloudRecoveryDrafts('company-a');
+      expect(draftsA.map(d => d.projectId)).toEqual(['course-a']);
+
+      await clearCloudRecoveryDraft('company-a', 'course-a');
+      const draftsAAfterClear = await loadCloudRecoveryDrafts('company-a');
+      const draftsBAfterClear = await loadCloudRecoveryDrafts('company-b');
+      expect(draftsAAfterClear).toHaveLength(0);
+      expect(draftsBAfterClear.map(d => d.projectId)).toEqual(['course-b']);
+    } finally {
+      if (prevLocalStorage === undefined) {
+        delete (globalThis as any).localStorage;
+      } else {
+        (globalThis as any).localStorage = prevLocalStorage;
+      }
+    }
   });
 });

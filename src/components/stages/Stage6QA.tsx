@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -7,15 +7,20 @@ import {
   FlaskConical,
   Info,
   Loader2,
+  Lock,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   Sparkles,
   Wrench,
+  XCircle,
 } from 'lucide-react';
 import type {
   AIProvider,
   CompanyRole,
+  CourseGovernanceApprovalRecord,
   CourseProject,
+  GovernanceRole,
   QADimensionWeight,
   QAIssueItem,
   RoleSignOffRecord,
@@ -30,20 +35,27 @@ import {
 } from '../../utils/validationChecks';
 import { apiFetch, compactProjectForApi, parseApiJson } from '../../utils/apiClient';
 import {
-  canApproveGovernance,
+  canApproveGovernanceRole,
   getRolePermissions,
+  GOVERNANCE_ROLE_LABELS,
+  hasGenuineHumanGovernanceSignOff,
   isAiPlaceholderReviewerName,
+  uiKeyToGovernanceRole,
 } from '../../utils/rbac';
 
 interface Stage6QAProps {
   project: CourseProject;
   activeRole?: CompanyRole | null;
+  activeGovernanceRoles?: GovernanceRole[];
+  currentUserId?: string;
+  currentUserName?: string;
   selectedProvider: AIProvider;
   selectedModel: string;
   onUpdateProject: (
     updater: (prev: CourseProject) => CourseProject,
     snapshot?: { trigger: 'stage_approval' | 'ai_generation'; summary: string }
   ) => void;
+  onSyncServerProject?: (project: CourseProject) => void;
   onJumpToStage: (
     stage: WorkflowStage,
     context?: { moduleNumber?: number; reason?: string }
@@ -53,23 +65,35 @@ interface Stage6QAProps {
 
 type RoleKey = 'sme' | 'instructionalDesigner' | 'complianceAuthorizer';
 
+interface EligibleReviewerSummary {
+  userId: string;
+  fullName: string;
+  email: string;
+  role: CompanyRole;
+  governanceRoles: GovernanceRole[];
+}
+
 const ROLE_DEFINITIONS: Array<{
   key: RoleKey;
+  govRole: GovernanceRole;
   title: string;
   scope: string;
 }> = [
   {
     key: 'sme',
+    govRole: 'sme',
     title: '1. Subject-Matter Expert (SME)',
     scope: 'Approves technical accuracy, equations, units, assumptions, and workplace realism.',
   },
   {
     key: 'instructionalDesigner',
+    govRole: 'instructional_designer',
     title: '2. Instructional Designer (ID)',
     scope: 'Approves constructive alignment, measurable outcomes, assessments, and accessibility.',
   },
   {
     key: 'complianceAuthorizer',
+    govRole: 'compliance_authorizer',
     title: '3. Authorised Compliance Reviewer',
     scope: 'Approves regulatory/SA profile checks, source grounding, POPIA, and release clearance.',
   },
@@ -78,15 +102,19 @@ const ROLE_DEFINITIONS: Array<{
 export const Stage6QA: React.FC<Stage6QAProps> = ({
   project,
   activeRole,
+  activeGovernanceRoles,
+  currentUserId,
+  currentUserName,
   selectedProvider,
   selectedModel,
   onUpdateProject,
+  onSyncServerProject,
   onJumpToStage,
   onProceedToPublish,
 }) => {
-  const perms = getRolePermissions(activeRole);
+  const perms = getRolePermissions(activeRole, activeGovernanceRoles);
   const isReadOnly = perms.isReadOnly;
-  const canSignGovernance = canApproveGovernance(activeRole);
+  const isCompleted = project.lifecycleStatus === 'completed';
 
   const [weights, setWeights] = useState<QADimensionWeight[]>(() => {
     const saved = project.latestQA?.weights;
@@ -98,7 +126,47 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
   const [repairNotice, setRepairNotice] = useState<string | null>(null);
   const [remediationNotes, setRemediationNotes] = useState<string[] | null>(null);
   const [releaseFeedback, setReleaseFeedback] = useState<string | null>(null);
-  const [quickSignerName, setQuickSignerName] = useState('');
+  const [govBusyRole, setGovBusyRole] = useState<GovernanceRole | null>(null);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [eligibleReviewers, setEligibleReviewers] = useState<EligibleReviewerSummary[]>([]);
+  const [serverHumanSignOff, setServerHumanSignOff] = useState<
+    NonNullable<CourseProject['latestQA']>['humanSignOff'] | null
+  >(null);
+  const [serverApprovals, setServerApprovals] = useState<CourseGovernanceApprovalRecord[]>([]);
+  const [roleNotes, setRoleNotes] = useState<Record<RoleKey, string>>({
+    sme: '',
+    instructionalDesigner: '',
+    complianceAuthorizer: '',
+  });
+
+  const refreshGovernanceState = useCallback(async () => {
+    if (!project.companyId) return;
+    try {
+      const res = await apiFetch(
+        `/api/v2/courses/${encodeURIComponent(project.id)}/governance`
+      );
+      if (!res.ok) return;
+      const data = await parseApiJson<any>(res);
+      if (!data.success) return;
+      if (Array.isArray(data.eligibleReviewers)) {
+        setEligibleReviewers(data.eligibleReviewers);
+      }
+      if (Array.isArray(data.approvals)) {
+        setServerApprovals(data.approvals);
+      }
+      if (data.humanSignOff) {
+        setServerHumanSignOff(data.humanSignOff);
+      }
+    } catch {
+      /* Ignore transient network fetch errors on initial governance sync */
+    }
+  }, [project.id, project.companyId]);
+
+  useEffect(() => {
+    setServerHumanSignOff(null);
+    setServerApprovals([]);
+    void refreshGovernanceState();
+  }, [refreshGovernanceState, project.latestQA?.id, project.lifecycleStatus]);
 
   const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
   const qa = project.latestQA;
@@ -135,126 +203,79 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     return qa.informationalFeedback;
   }, [qa, isQaStale, liveStructural.informationalFeedback]);
 
-  const roles = qa?.humanSignOff.roles || {
+  const effectiveSignOff = serverHumanSignOff || qa?.humanSignOff;
+  const roles = effectiveSignOff?.roles || {
     sme: { signedOff: false, reviewerName: '' },
     instructionalDesigner: { signedOff: false, reviewerName: '' },
     complianceAuthorizer: { signedOff: false, reviewerName: '' },
   };
 
-  const updateRoleSignOff = (key: RoleKey, patch: Partial<RoleSignOffRecord>) => {
-    if (!qa || !canSignGovernance || isReadOnly) return;
-    if (patch.reviewerName !== undefined && isAiPlaceholderReviewerName(patch.reviewerName)) {
-      setReleaseFeedback('Governance sign-off requires an actual named human reviewer.');
-      return;
-    }
+  const handleSubmitGovernanceDecision = async (
+    roleKey: RoleKey,
+    decision: 'approved' | 'rejected'
+  ) => {
+    const govRole = uiKeyToGovernanceRole(roleKey);
+    if (isCompleted || isReadOnly) return;
     setReleaseFeedback(null);
-    onUpdateProject(prev => {
-      if (!prev.latestQA) return prev;
-      const currentRoles = prev.latestQA.humanSignOff.roles || {
-        sme: { signedOff: false, reviewerName: '' },
-        instructionalDesigner: { signedOff: false, reviewerName: '' },
-        complianceAuthorizer: { signedOff: false, reviewerName: '' },
-      };
-      const updatedRoles = {
-        ...currentRoles,
-        [key]: { ...currentRoles[key], ...patch },
-      };
-      const allRolesSigned =
-        updatedRoles.sme.signedOff &&
-        Boolean(updatedRoles.sme.reviewerName.trim()) &&
-        !isAiPlaceholderReviewerName(updatedRoles.sme.reviewerName) &&
-        updatedRoles.instructionalDesigner.signedOff &&
-        Boolean(updatedRoles.instructionalDesigner.reviewerName.trim()) &&
-        !isAiPlaceholderReviewerName(updatedRoles.instructionalDesigner.reviewerName) &&
-        updatedRoles.complianceAuthorizer.signedOff &&
-        Boolean(updatedRoles.complianceAuthorizer.reviewerName.trim()) &&
-        !isAiPlaceholderReviewerName(updatedRoles.complianceAuthorizer.reviewerName);
-
-      const combinedNames = [
-        updatedRoles.sme.reviewerName && `SME: ${updatedRoles.sme.reviewerName}`,
-        updatedRoles.instructionalDesigner.reviewerName &&
-          `ID: ${updatedRoles.instructionalDesigner.reviewerName}`,
-        updatedRoles.complianceAuthorizer.reviewerName &&
-          `Compliance: ${updatedRoles.complianceAuthorizer.reviewerName}`,
-      ]
-        .filter(Boolean)
-        .join(' | ');
-
-      return {
-        ...prev,
-        latestQA: {
-          ...prev.latestQA,
-          humanSignOff: {
-            ...prev.latestQA.humanSignOff,
-            signedOff: allRolesSigned,
-            reviewerName: combinedNames || prev.latestQA.humanSignOff.reviewerName,
-            signedOffAt: allRolesSigned ? new Date().toISOString() : undefined,
-            roles: updatedRoles,
-          },
-        },
-      };
-    });
+    setGovBusyRole(govRole);
+    try {
+      const notes = roleNotes[roleKey]?.trim() || roles[roleKey]?.notes || '';
+      const res = await apiFetch(
+        `/api/v2/courses/${encodeURIComponent(project.id)}/governance/approve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            governanceRole: govRole,
+            decision,
+            notes,
+          }),
+        }
+      );
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success || !data.course) {
+        throw new Error(data.error || 'Governance decision failed.');
+      }
+      if (Array.isArray(data.approvals)) {
+        setServerApprovals(data.approvals);
+      }
+      setServerHumanSignOff(data.course.latestQA?.humanSignOff || null);
+      onSyncServerProject?.(data.course);
+    } catch (err: any) {
+      setReleaseFeedback(err?.message || 'Unable to record governance decision.');
+    } finally {
+      setGovBusyRole(null);
+    }
   };
 
-  const handleQuickSignAllRoles = () => {
-    if (!qa || !canSignGovernance || isReadOnly) return;
-    const candidateName =
-      quickSignerName.trim() ||
-      roles.sme.reviewerName.trim() ||
-      roles.instructionalDesigner.reviewerName.trim() ||
-      roles.complianceAuthorizer.reviewerName.trim();
-    if (!candidateName || isAiPlaceholderReviewerName(candidateName)) {
-      setReleaseFeedback('Enter a valid human reviewer full name before signing off governance roles.');
-      return;
-    }
-    const now = new Date().toISOString();
+  const handleRevokeGovernanceDecision = async (roleKey: RoleKey) => {
+    const govRole = uiKeyToGovernanceRole(roleKey);
+    if (isCompleted || isReadOnly) return;
     setReleaseFeedback(null);
-    onUpdateProject(prev => {
-      if (!prev.latestQA) return prev;
-      const existing = prev.latestQA.humanSignOff.roles || {
-        sme: { signedOff: false, reviewerName: '' },
-        instructionalDesigner: { signedOff: false, reviewerName: '' },
-        complianceAuthorizer: { signedOff: false, reviewerName: '' },
-      };
-      const cleanName = (val: string) =>
-        val.trim() && !isAiPlaceholderReviewerName(val) ? val.trim() : candidateName;
-      const smeName = cleanName(existing.sme.reviewerName);
-      const idName = cleanName(existing.instructionalDesigner.reviewerName);
-      const compName = cleanName(existing.complianceAuthorizer.reviewerName);
-      const updatedRoles = {
-        sme: {
-          signedOff: true,
-          reviewerName: smeName,
-          signedOffAt: now,
-          notes: existing.sme.notes || 'Human SME verification completed',
-        },
-        instructionalDesigner: {
-          signedOff: true,
-          reviewerName: idName,
-          signedOffAt: now,
-          notes: existing.instructionalDesigner.notes || 'Human Instructional Design verification completed',
-        },
-        complianceAuthorizer: {
-          signedOff: true,
-          reviewerName: compName,
-          signedOffAt: now,
-          notes: existing.complianceAuthorizer.notes || 'Human Compliance verification completed',
-        },
-      };
-      return {
-        ...prev,
-        latestQA: {
-          ...prev.latestQA,
-          humanSignOff: {
-            ...prev.latestQA.humanSignOff,
-            signedOff: true,
-            reviewerName: `SME: ${smeName} | ID: ${idName} | Compliance: ${compName}`,
-            signedOffAt: now,
-            roles: updatedRoles,
-          },
-        },
-      };
-    });
+    setGovBusyRole(govRole);
+    try {
+      const res = await apiFetch(
+        `/api/v2/courses/${encodeURIComponent(project.id)}/governance/revoke`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ governanceRole: govRole }),
+        }
+      );
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success || !data.course) {
+        throw new Error(data.error || 'Could not revoke governance approval.');
+      }
+      if (Array.isArray(data.approvals)) {
+        setServerApprovals(data.approvals);
+      }
+      setServerHumanSignOff(data.course.latestQA?.humanSignOff || null);
+      onSyncServerProject?.(data.course);
+    } catch (err: any) {
+      setReleaseFeedback(err?.message || 'Unable to revoke governance approval.');
+    } finally {
+      setGovBusyRole(null);
+    }
   };
 
   const handleRunQA = async () => {
@@ -344,16 +365,22 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     }
   };
 
-  const allThreeRolesApproved =
-    roles.sme.signedOff &&
-    Boolean(roles.sme.reviewerName.trim()) &&
-    !isAiPlaceholderReviewerName(roles.sme.reviewerName) &&
-    roles.instructionalDesigner.signedOff &&
-    Boolean(roles.instructionalDesigner.reviewerName.trim()) &&
-    !isAiPlaceholderReviewerName(roles.instructionalDesigner.reviewerName) &&
-    roles.complianceAuthorizer.signedOff &&
-    Boolean(roles.complianceAuthorizer.reviewerName.trim()) &&
-    !isAiPlaceholderReviewerName(roles.complianceAuthorizer.reviewerName);
+  const isRoleSignedHuman = (record?: RoleSignOffRecord | null): boolean =>
+    Boolean(
+      record &&
+        record.signedOff &&
+        record.status !== 'rejected' &&
+        Boolean(record.reviewerUserId) &&
+        Boolean(record.signedOffAt) &&
+        Boolean(String(record.reviewerName || '').trim()) &&
+        !isAiPlaceholderReviewerName(record.reviewerName)
+    );
+
+  const signOffCheck = hasGenuineHumanGovernanceSignOff(effectiveSignOff, {
+    companyId: project.companyId,
+    courseId: project.id,
+  });
+  const allThreeRolesApproved = signOffCheck.valid;
 
   const handleAutoRepairAlignment = () => {
     if (isReadOnly) return;
@@ -472,14 +499,15 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     );
   };
 
-  const isReleaseBlocked =
-    !qa ||
-    isQaStale ||
-    activeBlockingErrors.length > 0 ||
-    qa.verdict === 'FAIL' ||
-    !allThreeRolesApproved ||
-    !canSignGovernance ||
-    isReadOnly;
+  const isReleaseBlocked = isCompleted
+    ? false
+    : !qa ||
+      isQaStale ||
+      activeBlockingErrors.length > 0 ||
+      qa.verdict === 'FAIL' ||
+      !allThreeRolesApproved ||
+      !perms.canPublishCourse ||
+      isReadOnly;
 
   const getUnmetReleaseReasons = (): string[] => {
     const reasons: string[] = [];
@@ -487,8 +515,10 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
       reasons.push('Viewer accounts have read-only access and cannot release courses.');
       return reasons;
     }
-    if (!canSignGovernance) {
-      reasons.push('Only a Reviewer or Company Administrator can formally sign off and release a course.');
+    if (!perms.canPublishCourse) {
+      reasons.push(
+        'Only a Reviewer (or a separately authorised Company Administrator) can complete and publish a course.'
+      );
     }
     if (!qa) {
       reasons.push('Run Quality Assurance first.');
@@ -503,50 +533,43 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
       reasons.push('QA Verdict is FAIL — address critical feedback and re-run Quality Assurance.');
     }
     if (!allThreeRolesApproved) {
-      reasons.push('All 3 named human governance roles (SME, Instructional Designer, Compliance Authoriser) must sign off.');
+      reasons.push(
+        signOffCheck.reason ||
+          'Three distinct authenticated human governance reviewers (SME, Instructional Designer, Compliance Authoriser) must approve before completion.'
+      );
     }
     return reasons;
   };
 
-  const handleReleaseCourse = () => {
+  const handleReleaseCourse = async () => {
+    if (isCompleted) {
+      onUpdateProject(prev => ({ ...prev, currentStage: 7 }));
+      onProceedToPublish();
+      return;
+    }
     if (isReleaseBlocked || !qa) {
       const reasons = getUnmetReleaseReasons();
       setReleaseFeedback(`Cannot release to Stage 7 yet: ${reasons.join(' ')}`);
       return;
     }
     setReleaseFeedback(null);
-    const now = new Date().toISOString();
-    const combinedNames = `SME: ${roles.sme.reviewerName} | ID: ${roles.instructionalDesigner.reviewerName} | Compliance: ${roles.complianceAuthorizer.reviewerName}`;
-
-    onUpdateProject(
-      prev => {
-        const latest = prev.latestQA;
-        return {
-          ...prev,
-          currentStage: 7,
-          lifecycleStatus: 'completed',
-          ...(latest
-            ? {
-                latestQA: {
-                  ...latest,
-                  humanSignOff: {
-                    ...latest.humanSignOff,
-                    signedOff: true,
-                    reviewerName: combinedNames,
-                    signedOffAt: latest.humanSignOff.signedOffAt || now,
-                    roles,
-                  },
-                },
-              }
-            : {}),
-        };
-      },
-      {
-        trigger: 'stage_approval',
-        summary: `Multi-role QA release approved (${roles.sme.reviewerName} / ${roles.instructionalDesigner.reviewerName} / ${roles.complianceAuthorizer.reviewerName})`,
+    setIsCompleting(true);
+    try {
+      const res = await apiFetch(
+        `/api/v2/courses/${encodeURIComponent(project.id)}/complete`,
+        { method: 'POST' }
+      );
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success || !data.course) {
+        throw new Error(data.error || 'Could not release course to Stage 7.');
       }
-    );
-    onProceedToPublish();
+      onSyncServerProject?.(data.course);
+      onProceedToPublish();
+    } catch (err: any) {
+      setReleaseFeedback(err?.message || 'Course completion failed.');
+    } finally {
+      setIsCompleting(false);
+    }
   };
 
   return (
@@ -1202,125 +1225,217 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
             </div>
           </section>
 
-          {/* Multi-Role Mandatory Human Review Gates */}
+          {/* Multi-Role Mandatory Human Review Gates (Server-Verified Three-Person Rule) */}
           <section className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-5 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-accent-ink" />
                 <div>
                   <h3 className="text-sm font-bold text-primary">
-                    Multi-Role Human Governance &amp; Release Sign-Off
+                    Multi-Role Human Governance &amp; Three-Person Sign-Off
                   </h3>
                   <p className="text-xs text-slate-500">
-                    {canSignGovernance && !isReadOnly
-                      ? 'All three human governance roles must be explicitly signed off by a Reviewer or Company Administrator before formal completion.'
-                      : 'Human governance sign-off and release clearance require a Reviewer or Company Administrator account.'}
+                    Each governance gate must be approved by a distinct authenticated user with explicit role authority. Signing off uses your verified session identity.
                   </p>
                 </div>
               </div>
-              {!allThreeRolesApproved && canSignGovernance && !isReadOnly && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <input
-                    type="text"
-                    value={quickSignerName}
-                    onChange={e => setQuickSignerName(e.target.value)}
-                    placeholder="Reviewer full name..."
-                    className="px-2.5 py-1.5 text-xs bg-surface border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleQuickSignAllRoles}
-                    className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent text-xs font-bold cursor-pointer"
-                  >
-                    Sign Off All 3 Roles
-                  </button>
-                </div>
+              {isCompleted && (
+                <span className="px-2.5 py-1 rounded bg-emerald-100 border border-emerald-300 text-emerald-900 text-[11px] font-bold flex items-center gap-1 shrink-0">
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Governance Locked (Completed)</span>
+                </span>
               )}
             </div>
 
-            {!canSignGovernance && (
+            {!perms.canApproveGovernance && !isCompleted && (
               <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
-                Your current role (<strong>{activeRole || 'viewer'}</strong>) cannot approve formal governance gates or mark courses completed. Ask a workspace <strong>Reviewer</strong> or <strong>Company Administrator</strong> to complete sign-off.
+                Your account (<strong>{activeRole || 'viewer'}</strong>
+                {perms.governanceRoles.length > 0
+                  ? ` · ${perms.governanceRoles.map(r => GOVERNANCE_ROLE_LABELS[r]).join(', ')}`
+                  : ' · No governance authority assigned'}
+                ) cannot sign off governance roles directly. A Company Administrator can assign SME, Instructional Designer, or Compliance Authoriser permissions in Organisation Settings → Team &amp; Roles.
               </div>
             )}
 
             <div className="space-y-3">
               {ROLE_DEFINITIONS.map(roleDef => {
                 const record = roles[roleDef.key];
-                const isRoleSignedHuman =
-                  record.signedOff &&
-                  Boolean(record.reviewerName.trim()) &&
-                  !isAiPlaceholderReviewerName(record.reviewerName);
+                const isApproved = isRoleSignedHuman(record);
+                const isRejected = record.status === 'rejected';
+                const assignedList = eligibleReviewers.filter(r =>
+                  r.governanceRoles.includes(roleDef.govRole)
+                );
+                const userAuthorisedForRole =
+                  !isReadOnly &&
+                  canApproveGovernanceRole(activeRole, activeGovernanceRoles, roleDef.govRole);
+                const approvedOtherRole = ROLE_DEFINITIONS.find(
+                  other =>
+                    other.key !== roleDef.key &&
+                    isRoleSignedHuman(roles[other.key]) &&
+                    Boolean(currentUserId) &&
+                    roles[other.key].reviewerUserId === currentUserId
+                );
+                const approvedByOtherUser =
+                  isApproved &&
+                  Boolean(currentUserId && record.reviewerUserId && record.reviewerUserId !== currentUserId);
+                const isSignedByMe =
+                  isApproved && Boolean(currentUserId && record.reviewerUserId === currentUserId);
+                const isBusy = govBusyRole === roleDef.govRole;
+
                 return (
                   <div
                     key={roleDef.key}
-                    className={`p-3.5 rounded-lg border space-y-2.5 ${
-                      isRoleSignedHuman
+                    className={`p-4 rounded-lg border space-y-2.5 ${
+                      isApproved
                         ? 'bg-emerald-50/50 border-emerald-200'
+                        : isRejected
+                        ? 'bg-red-50/50 border-red-200'
                         : 'bg-surface border-slate-200'
                     }`}
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <div className="text-xs font-bold text-primary">
-                          {roleDef.title}
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-bold text-primary">{roleDef.title}</span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                              isApproved
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                : isRejected
+                                ? 'bg-red-100 text-red-800 border-red-300'
+                                : 'bg-white text-slate-600 border-slate-300'
+                            }`}
+                          >
+                            {isApproved ? 'Approved' : isRejected ? 'Revision Flagged' : 'Pending'}
+                          </span>
                         </div>
                         <div className="text-[11px] text-slate-500">{roleDef.scope}</div>
+                        <div className="text-[11px] text-slate-600">
+                          <strong>Authorised Team Reviewers:</strong>{' '}
+                          {assignedList.length > 0
+                            ? assignedList.map(r => r.fullName).join(', ')
+                            : 'None assigned yet in Team & Roles'}
+                        </div>
                       </div>
-                      <button
-                        type="button"
-                        disabled={
-                          !canSignGovernance ||
-                          isReadOnly ||
-                          !record.reviewerName.trim() ||
-                          isAiPlaceholderReviewerName(record.reviewerName)
-                        }
-                        onClick={() =>
-                          updateRoleSignOff(roleDef.key, {
-                            signedOff: !record.signedOff,
-                            signedOffAt: !record.signedOff
-                              ? new Date().toISOString()
-                              : undefined,
-                          })
-                        }
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50 ${
-                          isRoleSignedHuman
-                            ? 'bg-accent text-accent-contrast'
-                            : 'bg-white border border-primary/40 text-primary hover:border-accent'
-                        }`}
-                      >
-                        {isRoleSignedHuman ? 'Approved ✓ (Click to unlock)' : 'Sign Off Role'}
-                      </button>
+
+                      {!isCompleted && !isReadOnly && (
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          {isSignedByMe ? (
+                            <button
+                              type="button"
+                              disabled={govBusyRole !== null}
+                              onClick={() => void handleRevokeGovernanceDecision(roleDef.key)}
+                              className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:border-red-400 text-slate-700 hover:text-red-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            >
+                              {isBusy ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              )}
+                              <span>Revoke My Approval</span>
+                            </button>
+                          ) : userAuthorisedForRole ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={
+                                  govBusyRole !== null ||
+                                  Boolean(approvedOtherRole) ||
+                                  approvedByOtherUser
+                                }
+                                onClick={() =>
+                                  void handleSubmitGovernanceDecision(roleDef.key, 'approved')
+                                }
+                                className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-45 text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                              >
+                                {isBusy ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                                ) : (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-accent" />
+                                )}
+                                <span>Approve as {currentUserName || 'Authenticated Reviewer'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={govBusyRole !== null || approvedByOtherUser}
+                                onClick={() =>
+                                  void handleSubmitGovernanceDecision(roleDef.key, 'rejected')
+                                }
+                                className="px-2.5 py-1.5 rounded-lg bg-white border border-red-300 hover:bg-red-50 disabled:opacity-45 text-red-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                <span>Flag Revision</span>
+                              </button>
+                            </>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded bg-slate-100 border border-slate-200 text-[11px] font-semibold text-slate-600">
+                              Requires {GOVERNANCE_ROLE_LABELS[roleDef.govRole]} authority
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      <input
-                        type="text"
-                        readOnly={record.signedOff || !canSignGovernance || isReadOnly}
-                        value={record.reviewerName}
-                        onChange={e =>
-                          updateRoleSignOff(roleDef.key, {
-                            reviewerName: e.target.value,
-                            signedOff: false,
-                          })
-                        }
-                        placeholder="Human reviewer full name..."
-                        className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded read-only:bg-slate-100"
-                      />
-                      <input
-                        type="text"
-                        readOnly={!canSignGovernance || isReadOnly}
-                        value={record.notes || ''}
-                        onChange={e =>
-                          updateRoleSignOff(roleDef.key, { notes: e.target.value })
-                        }
-                        placeholder="Verification notes or reference..."
-                        className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded read-only:bg-slate-100"
-                      />
-                    </div>
+
+                    {isApproved || isRejected ? (
+                      <div className="p-2.5 bg-white border border-slate-200 rounded text-xs flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <span className="font-bold text-primary">
+                            {isApproved ? 'Verified Approver:' : 'Reviewed by:'}{' '}
+                            {record.reviewerName}
+                          </span>
+                          {record.reviewerUserId && (
+                            <span className="text-[11px] text-slate-500 ml-2 font-mono">
+                              Account {record.reviewerUserId.slice(0, 8)}
+                            </span>
+                          )}
+                          {record.notes && (
+                            <div className="text-[11px] text-slate-600 mt-0.5">
+                              Notes: {record.notes}
+                            </div>
+                          )}
+                        </div>
+                        {record.signedOffAt && (
+                          <span className="text-[11px] text-slate-500 tabular-nums">
+                            {new Date(record.signedOffAt).toLocaleString('en-ZA')}
+                          </span>
+                        )}
+                      </div>
+                    ) : userAuthorisedForRole && !isCompleted && !isReadOnly ? (
+                      <div className="space-y-1.5">
+                        <input
+                          type="text"
+                          disabled={govBusyRole !== null || Boolean(approvedOtherRole)}
+                          value={roleNotes[roleDef.key]}
+                          onChange={e =>
+                            setRoleNotes(prev => ({ ...prev, [roleDef.key]: e.target.value }))
+                          }
+                          placeholder="Optional verification notes for audit trail..."
+                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded disabled:bg-slate-100"
+                        />
+                        {approvedOtherRole && (
+                          <div className="text-[11px] text-amber-800 font-medium">
+                            Three-person governance rule: you already approved{' '}
+                            <strong>{approvedOtherRole.title}</strong> on this course, so a different reviewer must approve this role.
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {approvedByOtherUser && !isSignedByMe && userAuthorisedForRole && !isCompleted && (
+                      <div className="text-[11px] text-slate-600">
+                        This gate is currently approved by <strong>{record.reviewerName}</strong>. Only that reviewer may revoke their approval.
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
+
+            {serverApprovals.length > 0 && (
+              <div className="text-[11px] text-slate-500">
+                Active database audit records synced: {serverApprovals.filter(a => a.active).length} role approval(s).
+              </div>
+            )}
 
             <div className="space-y-3 pt-2 border-t border-slate-100">
               {/* Release Gate Checklist */}
@@ -1347,44 +1462,36 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                 </span>
                 <span
                   className={`px-2 py-1 rounded border font-semibold ${
-                    roles.sme.signedOff && roles.sme.reviewerName.trim() && !isAiPlaceholderReviewerName(roles.sme.reviewerName)
+                    isRoleSignedHuman(roles.sme)
                       ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                       : 'bg-slate-50 border-slate-200 text-slate-600'
                   }`}
                 >
-                  {roles.sme.signedOff && roles.sme.reviewerName.trim() && !isAiPlaceholderReviewerName(roles.sme.reviewerName)
-                    ? '✓ SME Signed Off'
-                    : '○ SME Human Sign-Off Required'}
+                  {isRoleSignedHuman(roles.sme)
+                    ? `✓ SME (${roles.sme.reviewerName})`
+                    : '○ SME Approval Required'}
                 </span>
                 <span
                   className={`px-2 py-1 rounded border font-semibold ${
-                    roles.instructionalDesigner.signedOff &&
-                    roles.instructionalDesigner.reviewerName.trim() &&
-                    !isAiPlaceholderReviewerName(roles.instructionalDesigner.reviewerName)
+                    isRoleSignedHuman(roles.instructionalDesigner)
                       ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                       : 'bg-slate-50 border-slate-200 text-slate-600'
                   }`}
                 >
-                  {roles.instructionalDesigner.signedOff &&
-                  roles.instructionalDesigner.reviewerName.trim() &&
-                  !isAiPlaceholderReviewerName(roles.instructionalDesigner.reviewerName)
-                    ? '✓ ID Signed Off'
-                    : '○ ID Human Sign-Off Required'}
+                  {isRoleSignedHuman(roles.instructionalDesigner)
+                    ? `✓ ID (${roles.instructionalDesigner.reviewerName})`
+                    : '○ ID Approval Required'}
                 </span>
                 <span
                   className={`px-2 py-1 rounded border font-semibold ${
-                    roles.complianceAuthorizer.signedOff &&
-                    roles.complianceAuthorizer.reviewerName.trim() &&
-                    !isAiPlaceholderReviewerName(roles.complianceAuthorizer.reviewerName)
+                    isRoleSignedHuman(roles.complianceAuthorizer)
                       ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                       : 'bg-slate-50 border-slate-200 text-slate-600'
                   }`}
                 >
-                  {roles.complianceAuthorizer.signedOff &&
-                  roles.complianceAuthorizer.reviewerName.trim() &&
-                  !isAiPlaceholderReviewerName(roles.complianceAuthorizer.reviewerName)
-                    ? '✓ Compliance Signed Off'
-                    : '○ Compliance Human Sign-Off Required'}
+                  {isRoleSignedHuman(roles.complianceAuthorizer)
+                    ? `✓ Compliance (${roles.complianceAuthorizer.reviewerName})`
+                    : '○ Compliance Approval Required'}
                 </span>
               </div>
 
@@ -1396,17 +1503,20 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <span className="text-xs text-slate-500">
-                  {isReadOnly
+                  {isCompleted
+                    ? 'Course is formally completed with locked governance approvals.'
+                    : isReadOnly
                     ? 'Viewer accounts cannot approve or release courses.'
-                    : !canSignGovernance
-                    ? 'Submit for Reviewer or Company Administrator governance sign-off before release.'
+                    : !perms.canPublishCourse
+                    ? 'A Reviewer (or separately authorised Company Administrator) must complete formal release once all 3 distinct governance roles are approved.'
                     : isQaStale
                     ? 'Re-run Quality Assurance above so the audit reflects your latest course edits.'
                     : activeBlockingErrors.length > 0 || qa.verdict === 'FAIL'
                     ? 'Release is blocked until all blocking errors are fixed and QA re-runs.'
                     : allThreeRolesApproved
-                    ? 'All blocking checks passed and all 3 human governance roles signed off. Ready for Stage 7 release.'
-                    : 'All 3 named human governance role sign-offs are required before releasing this course to Stage 7.'}
+                    ? 'All blocking checks passed and 3 distinct authenticated governance reviewers approved. Ready for Stage 7 release.'
+                    : signOffCheck.reason ||
+                      'Three distinct authenticated human governance approvals are required before releasing this course to Stage 7.'}
                 </span>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   {activeBlockingErrors.length > 0 && !isReadOnly && (
@@ -1429,16 +1539,26 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
                   {!isReadOnly && (
                     <button
                       type="button"
-                      disabled={isReleaseBlocked}
-                      onClick={handleReleaseCourse}
+                      disabled={isReleaseBlocked || isCompleting}
+                      onClick={() => void handleReleaseCourse()}
                       className={`px-5 py-2.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors ${
                         isReleaseBlocked
                           ? 'bg-slate-400 text-white cursor-not-allowed opacity-70'
                           : 'bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent cursor-pointer'
                       }`}
                     >
-                      <CheckCircle2 className="w-4 h-4 text-accent" />
-                      <span>Release Course &amp; Continue to Stage 7 Publish</span>
+                      {isCompleting ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-accent" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4 text-accent" />
+                      )}
+                      <span>
+                        {isCompleted
+                          ? 'Continue to Stage 7 Publish'
+                          : isCompleting
+                          ? 'Completing & Publishing...'
+                          : 'Release Course & Continue to Stage 7 Publish'}
+                      </span>
                     </button>
                   )}
                 </div>

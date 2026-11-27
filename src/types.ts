@@ -571,8 +571,27 @@ export interface SourceVerificationSummary {
 export interface RoleSignOffRecord {
   signedOff: boolean;
   reviewerName: string;
+  reviewerUserId?: string;
+  governanceRole?: GovernanceRole;
+  companyId?: string;
+  courseId?: string;
+  status?: 'pending' | 'approved' | 'rejected';
   signedOffAt?: string;
   notes?: string;
+}
+
+export interface CourseGovernanceApprovalRecord {
+  id: string;
+  companyId: string;
+  courseId: string;
+  governanceRole: GovernanceRole;
+  reviewerUserId: string;
+  reviewerName: string;
+  status: 'pending' | 'approved' | 'rejected';
+  approvedAt: string;
+  revokedAt?: string;
+  notes?: string;
+  active: boolean;
 }
 
 export interface QAIssueItem {
@@ -736,6 +755,10 @@ export interface CourseProject {
 
 export type CompanyRole = 'company_admin' | 'author' | 'reviewer' | 'viewer';
 
+export type GovernanceRole = 'sme' | 'instructional_designer' | 'compliance_authorizer';
+
+export type GovernanceUiRoleKey = 'sme' | 'instructionalDesigner' | 'complianceAuthorizer';
+
 export type MembershipStatus = 'active' | 'invited' | 'suspended';
 
 export interface CompanyWorkspace {
@@ -763,6 +786,7 @@ export interface CompanyMembership {
   companyId: string;
   userId: string;
   role: CompanyRole;
+  governanceRoles?: GovernanceRole[];
   membershipStatus: MembershipStatus;
   createdAt: string;
   company?: CompanyWorkspace;

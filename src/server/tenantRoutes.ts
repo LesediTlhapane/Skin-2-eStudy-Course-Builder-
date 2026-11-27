@@ -6,10 +6,14 @@ import type {
   CompanyMembership,
   CompanyRole,
   CompanyWorkspace,
+  CourseGovernanceApprovalRecord,
   CourseProject,
   CourseTemplate,
   CourseVersionSnapshot,
+  GovernanceRole,
   MembershipStatus,
+  QAEvaluationReport,
+  RoleSignOffRecord,
   SourceDocument,
 } from '../types.js';
 import type { AuthenticatedRequest, TenantAuthVerifier } from './authMiddleware.js';
@@ -18,6 +22,7 @@ import {
   createUserSessionMiddleware,
   defaultTenantAuthVerifier,
   extractBearerToken,
+  isMissingSchemaColumnError,
   requireCompanyRole,
 } from './authMiddleware.js';
 import {
@@ -33,7 +38,17 @@ import {
   slugifyCompanyName,
   validateLogoImageBuffer,
 } from './supabaseAdmin.js';
-import { validateCourseGovernanceMutation } from '../utils/rbac.js';
+import {
+  canApproveGovernanceRole,
+  getRolePermissions,
+  GOVERNANCE_ROLE_LABELS,
+  governanceRoleToUiKey,
+  hasGenuineHumanGovernanceSignOff,
+  normalizeGovernanceRole,
+  normalizeGovernanceRoles,
+  VALID_GOVERNANCE_ROLES,
+  validateCourseGovernanceMutation,
+} from '../utils/rbac.js';
 
 const VALID_ROLES: CompanyRole[] = ['company_admin', 'author', 'reviewer', 'viewer'];
 const VALID_LIFECYCLE_STATUSES = new Set([
@@ -189,6 +204,7 @@ export interface TenantServiceAdapter {
     email: string;
     fullName: string;
     role: CompanyRole;
+    governanceRoles?: GovernanceRole[];
     temporaryPassword?: string;
     redirectTo?: string;
   }): Promise<CompanyMembership>;
@@ -198,6 +214,7 @@ export interface TenantServiceAdapter {
     memberId: string;
     actorUserId: string;
     role?: CompanyRole;
+    governanceRoles?: GovernanceRole[];
     membershipStatus?: MembershipStatus;
   }): Promise<CompanyMembership>;
 
@@ -210,6 +227,64 @@ export interface TenantServiceAdapter {
     courseIdParam?: string
   ): Promise<{ project: CourseProject; notFound?: boolean }>;
   deleteCourse(companyId: string, courseIdParam: string): Promise<boolean>;
+
+  getCourseGovernance?(
+    companyId: string,
+    courseIdParam: string
+  ): Promise<{
+    notFound?: boolean;
+    courseId?: string;
+    lifecycleStatus?: string;
+    approvals: CourseGovernanceApprovalRecord[];
+    humanSignOff?: QAEvaluationReport['humanSignOff'];
+  }>;
+
+  submitCourseGovernanceDecision?(params: {
+    companyId: string;
+    courseIdParam: string;
+    actorUserId: string;
+    actorName: string;
+    actorRole: CompanyRole;
+    actorGovernanceRoles: GovernanceRole[];
+    governanceRole: GovernanceRole;
+    decision: 'approved' | 'rejected';
+    notes?: string;
+  }): Promise<
+    | {
+        ok: true;
+        course: CourseProject;
+        approval: CourseGovernanceApprovalRecord;
+        approvals: CourseGovernanceApprovalRecord[];
+      }
+    | { ok: false; status: 400 | 403 | 404 | 409; error: string }
+  >;
+
+  revokeCourseGovernanceDecision?(params: {
+    companyId: string;
+    courseIdParam: string;
+    actorUserId: string;
+    actorRole: CompanyRole;
+    governanceRole: GovernanceRole;
+  }): Promise<
+    | {
+        ok: true;
+        course: CourseProject;
+        approvals: CourseGovernanceApprovalRecord[];
+      }
+    | { ok: false; status: 400 | 403 | 404 | 409; error: string }
+  >;
+
+  completeCourseRelease?(params: {
+    companyId: string;
+    courseIdParam: string;
+    actorUserId: string;
+    actorName: string;
+    actorRole: CompanyRole;
+    actorGovernanceRoles: GovernanceRole[];
+  }): Promise<
+    | { ok: true; course: CourseProject }
+    | { ok: false; status: 400 | 403 | 404 | 409; error: string }
+  >;
 
   listCourseVersions(companyId: string, courseIdParam: string): Promise<CourseVersionSnapshot[]>;
   addCourseVersion(
@@ -643,14 +718,27 @@ class SupabaseTenantService implements TenantServiceAdapter {
       throw new Error(actErr.message || 'Failed to activate pending invitations.');
     }
 
-    const { data: membershipRows, error: memError } = await admin
+    let { data: membershipRows, error: memError } = await admin
       .from('company_memberships')
       .select(
-        'id, company_id, user_id, role, membership_status, created_at, companies ( id, company_name, company_slug, logo_url, primary_colour, secondary_colour, subscription_status, created_at, updated_at )'
+        'id, company_id, user_id, role, governance_roles, membership_status, created_at, companies ( id, company_name, company_slug, logo_url, primary_colour, secondary_colour, subscription_status, created_at, updated_at )'
       )
       .eq('user_id', userId)
       .eq('membership_status', 'active')
       .order('created_at', { ascending: true });
+
+    if (memError && isMissingSchemaColumnError(memError, 'governance_roles')) {
+      const fallbackRes = await admin
+        .from('company_memberships')
+        .select(
+          'id, company_id, user_id, role, membership_status, created_at, companies ( id, company_name, company_slug, logo_url, primary_colour, secondary_colour, subscription_status, created_at, updated_at )'
+        )
+        .eq('user_id', userId)
+        .eq('membership_status', 'active')
+        .order('created_at', { ascending: true });
+      membershipRows = fallbackRes.data as typeof membershipRows;
+      memError = fallbackRes.error;
+    }
 
     if (memError) {
       throw new Error(memError.message || 'Failed to load company memberships.');
@@ -661,6 +749,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
       companyId: String(row.company_id),
       userId: String(row.user_id),
       role: row.role as CompanyRole,
+      governanceRoles: normalizeGovernanceRoles(row.governance_roles),
       membershipStatus: row.membership_status as MembershipStatus,
       createdAt: String(row.created_at),
       company: row.companies ? mapCompany(row.companies) : undefined,
@@ -857,13 +946,25 @@ class SupabaseTenantService implements TenantServiceAdapter {
 
   async listMembers(companyId: string): Promise<CompanyMembership[]> {
     const admin = getSupabaseAdminClient();
-    const { data, error } = await admin
+    let { data, error } = await admin
       .from('company_memberships')
       .select(
-        'id, company_id, user_id, role, membership_status, created_at, user_profiles ( id, full_name, email )'
+        'id, company_id, user_id, role, governance_roles, membership_status, created_at, user_profiles ( id, full_name, email )'
       )
       .eq('company_id', companyId)
       .order('created_at', { ascending: true });
+
+    if (error && isMissingSchemaColumnError(error, 'governance_roles')) {
+      const fallbackRes = await admin
+        .from('company_memberships')
+        .select(
+          'id, company_id, user_id, role, membership_status, created_at, user_profiles ( id, full_name, email )'
+        )
+        .eq('company_id', companyId)
+        .order('created_at', { ascending: true });
+      data = fallbackRes.data as typeof data;
+      error = fallbackRes.error;
+    }
 
     if (error) throw new Error(error.message);
     return (data || []).map((row: any) => ({
@@ -871,6 +972,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
       companyId: String(row.company_id),
       userId: String(row.user_id),
       role: row.role as CompanyRole,
+      governanceRoles: normalizeGovernanceRoles(row.governance_roles),
       membershipStatus: row.membership_status as MembershipStatus,
       createdAt: String(row.created_at),
       profile: row.user_profiles
@@ -889,12 +991,17 @@ class SupabaseTenantService implements TenantServiceAdapter {
     email: string;
     fullName: string;
     role: CompanyRole;
+    governanceRoles?: GovernanceRole[];
     temporaryPassword?: string;
     redirectTo?: string;
   }): Promise<CompanyMembership> {
     const admin = getSupabaseAdminClient();
     const email = params.email.trim().toLowerCase();
     const trimmedName = params.fullName.trim();
+    const normalizedGovRoles =
+      params.role === 'reviewer' || params.role === 'company_admin'
+        ? normalizeGovernanceRoles(params.governanceRoles)
+        : [];
 
     const existingAuthUser = await this.findAuthUserByEmail(email);
 
@@ -902,7 +1009,6 @@ class SupabaseTenantService implements TenantServiceAdapter {
     let status: MembershipStatus;
 
     if (existingAuthUser) {
-      // Ensure user_profiles exists without touching existing confirmed user's credentials
       await admin.from('user_profiles').upsert({
         id: existingAuthUser.id,
         email,
@@ -919,7 +1025,6 @@ class SupabaseTenantService implements TenantServiceAdapter {
       if (existingMembership?.membership_status === 'active') {
         status = 'active';
       } else if (!existingAuthUser.emailConfirmed && !params.temporaryPassword) {
-        // Re-send invite email for still-unconfirmed user safely
         await admin.auth.admin
           .inviteUserByEmail(email, {
             data: { full_name: trimmedName },
@@ -928,7 +1033,6 @@ class SupabaseTenantService implements TenantServiceAdapter {
           .catch(() => {});
         status = 'invited';
       } else {
-        // Existing confirmed user from another workspace or previous membership: invite without duplicate error
         status = 'invited';
       }
     } else if (params.temporaryPassword && params.temporaryPassword.length >= 8) {
@@ -978,21 +1082,47 @@ class SupabaseTenantService implements TenantServiceAdapter {
       throw new Error('Could not resolve invited user account.');
     }
 
-    const { data: memRow, error: memErr } = await admin
+    let { data: memRow, error: memErr } = await admin
       .from('company_memberships')
       .upsert(
         {
           company_id: params.companyId,
           user_id: targetUserId,
           role: params.role,
+          governance_roles: normalizedGovRoles,
           membership_status: status,
         },
         { onConflict: 'company_id,user_id' }
       )
       .select(
-        'id, company_id, user_id, role, membership_status, created_at, user_profiles ( id, full_name, email )'
+        'id, company_id, user_id, role, governance_roles, membership_status, created_at, user_profiles ( id, full_name, email )'
       )
       .single();
+
+    if (memErr && isMissingSchemaColumnError(memErr, 'governance_roles')) {
+      if (normalizedGovRoles.length > 0) {
+        throw new Error(
+          'Apply supabase/migrations/005_governance_hardening.sql before assigning governance roles.'
+        );
+      }
+      const fallbackRes = await admin
+        .from('company_memberships')
+        .upsert(
+          {
+            company_id: params.companyId,
+            user_id: targetUserId,
+            role: params.role,
+            membership_status: status,
+          },
+          { onConflict: 'company_id,user_id' }
+        )
+        .select(
+          'id, company_id, user_id, role, membership_status, created_at, user_profiles ( id, full_name, email )'
+        )
+        .single();
+      memRow = fallbackRes.data as typeof memRow;
+      memErr = fallbackRes.error;
+    }
 
     if (memErr || !memRow) {
       throw new Error(memErr?.message || 'Failed to add member to company workspace.');
@@ -1004,7 +1134,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
       action: 'member_invited',
       resource_type: 'company_membership',
       resource_id: String(memRow.id),
-      details: { email, role: params.role, status },
+      details: { email, role: params.role, governanceRoles: normalizedGovRoles, status },
     });
 
     const profileObj = (memRow as any).user_profiles;
@@ -1013,6 +1143,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
       companyId: String(memRow.company_id),
       userId: String(memRow.user_id),
       role: memRow.role as CompanyRole,
+      governanceRoles: normalizeGovernanceRoles(memRow.governance_roles),
       membershipStatus: memRow.membership_status as MembershipStatus,
       createdAt: String(memRow.created_at),
       profile: profileObj
@@ -1030,6 +1161,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
     memberId: string;
     actorUserId: string;
     role?: CompanyRole;
+    governanceRoles?: GovernanceRole[];
     membershipStatus?: MembershipStatus;
   }): Promise<CompanyMembership> {
     const admin = getSupabaseAdminClient();
@@ -1062,19 +1194,61 @@ class SupabaseTenantService implements TenantServiceAdapter {
       }
     }
 
+    const nextRole = params.role || (target.role as CompanyRole);
     const updates: Record<string, any> = {};
     if (params.role) updates.role = params.role;
     if (params.membershipStatus) updates.membership_status = params.membershipStatus;
+    if (params.governanceRoles !== undefined) {
+      updates.governance_roles =
+        nextRole === 'reviewer' || nextRole === 'company_admin'
+          ? normalizeGovernanceRoles(params.governanceRoles)
+          : [];
+    } else if (params.role && params.role !== 'reviewer' && params.role !== 'company_admin') {
+      updates.governance_roles = [];
+    }
 
-    const { data: updated, error: updErr } = await admin
+    let { data: updated, error: updErr } = await admin
       .from('company_memberships')
       .update(updates)
       .eq('id', params.memberId)
       .eq('company_id', params.companyId)
       .select(
-        'id, company_id, user_id, role, membership_status, created_at, user_profiles ( id, full_name, email )'
+        'id, company_id, user_id, role, governance_roles, membership_status, created_at, user_profiles ( id, full_name, email )'
       )
       .single();
+
+    if (updErr && isMissingSchemaColumnError(updErr, 'governance_roles')) {
+      if (Array.isArray(updates.governance_roles) && updates.governance_roles.length > 0) {
+        throw new Error(
+          'Apply supabase/migrations/005_governance_hardening.sql before assigning governance roles.'
+        );
+      }
+      const { governance_roles: _ignoredGov, ...fallbackUpdates } = updates;
+      if (Object.keys(fallbackUpdates).length === 0) {
+        const refetched = await admin
+          .from('company_memberships')
+          .select(
+            'id, company_id, user_id, role, membership_status, created_at, user_profiles ( id, full_name, email )'
+          )
+          .eq('id', params.memberId)
+          .eq('company_id', params.companyId)
+          .single();
+        updated = refetched.data as typeof updated;
+        updErr = refetched.error;
+      } else {
+        const fallbackRes = await admin
+          .from('company_memberships')
+          .update(fallbackUpdates)
+          .eq('id', params.memberId)
+          .eq('company_id', params.companyId)
+          .select(
+            'id, company_id, user_id, role, membership_status, created_at, user_profiles ( id, full_name, email )'
+          )
+          .single();
+        updated = fallbackRes.data as typeof updated;
+        updErr = fallbackRes.error;
+      }
+    }
 
     if (updErr || !updated) {
       throw new Error(updErr?.message || 'Failed to update team member.');
@@ -1095,6 +1269,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
       companyId: String(updated.company_id),
       userId: String(updated.user_id),
       role: updated.role as CompanyRole,
+      governanceRoles: normalizeGovernanceRoles(updated.governance_roles),
       membershipStatus: updated.membership_status as MembershipStatus,
       createdAt: String(updated.created_at),
       profile: profileObj
@@ -1147,16 +1322,31 @@ class SupabaseTenantService implements TenantServiceAdapter {
     const courseName = (project.brief?.title || 'Untitled Course Project').trim().slice(0, 220);
     const localSourceId = existing?.local_source_id || project.localSourceId || project.id;
 
+    const existingCourseData = (existing?.course_data || {}) as any;
+    const preservedHumanSignOff = existing
+      ? existing.lifecycle_status === 'completed'
+        ? existingCourseData?.latestQA?.humanSignOff
+        : project.latestQA?.humanSignOff || existingCourseData?.latestQA?.humanSignOff
+      : undefined;
+
+    const mergedCourseData: any = {
+      ...project,
+      companyId,
+      localSourceId,
+    };
+    if (mergedCourseData.latestQA && preservedHumanSignOff) {
+      mergedCourseData.latestQA = {
+        ...mergedCourseData.latestQA,
+        humanSignOff: preservedHumanSignOff,
+      };
+    }
+
     const payload = {
       company_id: companyId,
       course_name: courseName,
       lifecycle_status: lifecycleStatus,
       local_source_id: localSourceId,
-      course_data: {
-        ...project,
-        companyId,
-        localSourceId,
-      },
+      course_data: mergedCourseData,
     };
 
     if (existing) {
@@ -1181,6 +1371,532 @@ class SupabaseTenantService implements TenantServiceAdapter {
       .single();
     if (error || !data) throw new Error(error?.message || 'Failed to create course.');
     return { project: mapCourseRowToProject(data) };
+  }
+
+  private mapApprovalRow(row: any, courseDisplayId: string): CourseGovernanceApprovalRecord {
+    const govRole =
+      normalizeGovernanceRole(row.governance_role || row.role_key) || 'sme';
+    return {
+      id: String(row.id),
+      companyId: String(row.company_id),
+      courseId: courseDisplayId,
+      governanceRole: govRole,
+      reviewerUserId: String(row.reviewer_id || ''),
+      reviewerName: String(row.reviewer_name || ''),
+      status: (row.decision === 'rejected'
+        ? 'rejected'
+        : row.decision === 'pending'
+        ? 'pending'
+        : 'approved') as 'pending' | 'approved' | 'rejected',
+      approvedAt: String(row.created_at),
+      revokedAt: row.revoked_at ? String(row.revoked_at) : undefined,
+      notes: row.notes ? String(row.notes) : '',
+      active: row.active !== false,
+    };
+  }
+
+  private buildAuthoritativeHumanSignOff(
+    companyId: string,
+    courseDisplayId: string,
+    approvals: CourseGovernanceApprovalRecord[]
+  ): QAEvaluationReport['humanSignOff'] {
+    const byRole = new Map<GovernanceRole, CourseGovernanceApprovalRecord>();
+    for (const a of approvals) {
+      if (a.active && !byRole.has(a.governanceRole)) {
+        byRole.set(a.governanceRole, a);
+      }
+    }
+
+    const buildSlot = (role: GovernanceRole): RoleSignOffRecord => {
+      const rec = byRole.get(role);
+      if (!rec) {
+        return {
+          signedOff: false,
+          reviewerName: '',
+          governanceRole: role,
+          companyId,
+          courseId: courseDisplayId,
+          status: 'pending',
+        };
+      }
+      const isApproved = rec.status === 'approved';
+      return {
+        signedOff: isApproved,
+        reviewerName: rec.reviewerName,
+        reviewerUserId: rec.reviewerUserId,
+        governanceRole: role,
+        companyId,
+        courseId: courseDisplayId,
+        status: rec.status,
+        signedOffAt: isApproved ? rec.approvedAt : undefined,
+        notes: rec.notes || '',
+      };
+    };
+
+    const roles = {
+      sme: buildSlot('sme'),
+      instructionalDesigner: buildSlot('instructional_designer'),
+      complianceAuthorizer: buildSlot('compliance_authorizer'),
+    };
+
+    const check = hasGenuineHumanGovernanceSignOff(
+      {
+        signedOff: Boolean(
+          roles.sme.signedOff &&
+            roles.instructionalDesigner.signedOff &&
+            roles.complianceAuthorizer.signedOff
+        ),
+        reviewerName: [
+          roles.sme.signedOff && `SME: ${roles.sme.reviewerName}`,
+          roles.instructionalDesigner.signedOff &&
+            `ID: ${roles.instructionalDesigner.reviewerName}`,
+          roles.complianceAuthorizer.signedOff &&
+            `Compliance: ${roles.complianceAuthorizer.reviewerName}`,
+        ]
+          .filter(Boolean)
+          .join(' | '),
+        roles,
+      },
+      { companyId, courseId: courseDisplayId }
+    );
+
+    const signedDates = [roles.sme, roles.instructionalDesigner, roles.complianceAuthorizer]
+      .filter(r => r.signedOff && r.signedOffAt)
+      .map(r => String(r.signedOffAt))
+      .sort();
+
+    return {
+      signedOff: check.valid,
+      reviewerName: [
+        roles.sme.signedOff && `SME: ${roles.sme.reviewerName}`,
+        roles.instructionalDesigner.signedOff &&
+          `ID: ${roles.instructionalDesigner.reviewerName}`,
+        roles.complianceAuthorizer.signedOff &&
+          `Compliance: ${roles.complianceAuthorizer.reviewerName}`,
+      ]
+        .filter(Boolean)
+        .join(' | '),
+      signedOffAt: check.valid ? signedDates[signedDates.length - 1] : undefined,
+      roles,
+    };
+  }
+
+  private async loadActiveApprovals(
+    companyId: string,
+    courseRowId: string,
+    courseDisplayId: string
+  ): Promise<CourseGovernanceApprovalRecord[]> {
+    const admin = getSupabaseAdminClient();
+    let { data, error } = await admin
+      .from('course_approvals')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('course_id', courseRowId)
+      .eq('stage', 6)
+      .eq('active', true)
+      .order('created_at', { ascending: false });
+
+    if (error && isMissingSchemaColumnError(error, 'active')) {
+      const fallbackRes = await admin
+        .from('course_approvals')
+        .select('*')
+        .eq('company_id', companyId)
+        .eq('course_id', courseRowId)
+        .eq('stage', 6)
+        .order('created_at', { ascending: false });
+      data = fallbackRes.data as typeof data;
+      error = fallbackRes.error;
+    }
+
+    if (error) throw new Error(error.message);
+    return (data || []).map((row: any) => this.mapApprovalRow(row, courseDisplayId));
+  }
+
+  async getCourseGovernance(companyId: string, courseIdParam: string) {
+    const row = await this.findCourseRow(companyId, courseIdParam);
+    if (!row) {
+      return { notFound: true, approvals: [] };
+    }
+    const project = mapCourseRowToProject(row);
+    const approvals = await this.loadActiveApprovals(companyId, row.id, project.id);
+    const humanSignOff = this.buildAuthoritativeHumanSignOff(companyId, project.id, approvals);
+    return {
+      courseId: project.id,
+      lifecycleStatus: project.lifecycleStatus,
+      approvals,
+      humanSignOff,
+    };
+  }
+
+  async submitCourseGovernanceDecision(params: {
+    companyId: string;
+    courseIdParam: string;
+    actorUserId: string;
+    actorName: string;
+    actorRole: CompanyRole;
+    actorGovernanceRoles: GovernanceRole[];
+    governanceRole: GovernanceRole;
+    decision: 'approved' | 'rejected';
+    notes?: string;
+  }) {
+    if (!canApproveGovernanceRole(params.actorRole, params.actorGovernanceRoles, params.governanceRole)) {
+      return {
+        ok: false as const,
+        status: 403 as const,
+        error: `Forbidden: you are not authorised for the ${GOVERNANCE_ROLE_LABELS[params.governanceRole]} governance role.`,
+      };
+    }
+
+    const row = await this.findCourseRow(params.companyId, params.courseIdParam);
+    if (!row) {
+      return { ok: false as const, status: 404 as const, error: 'Course not found in your company workspace.' };
+    }
+
+    if (row.lifecycle_status === 'completed') {
+      return {
+        ok: false as const,
+        status: 409 as const,
+        error: 'Conflict: governance approvals on a completed course are immutable.',
+      };
+    }
+
+    const project = mapCourseRowToProject(row);
+    if (!project.latestQA) {
+      return {
+        ok: false as const,
+        status: 400 as const,
+        error: 'Run Stage 6 Quality Assurance before recording governance approvals.',
+      };
+    }
+
+    const activeApprovals = await this.loadActiveApprovals(params.companyId, row.id, project.id);
+    const existingForSlot = activeApprovals.find(a => a.governanceRole === params.governanceRole);
+    if (existingForSlot && existingForSlot.status === 'approved' && existingForSlot.reviewerUserId !== params.actorUserId) {
+      return {
+        ok: false as const,
+        status: 409 as const,
+        error: `${GOVERNANCE_ROLE_LABELS[params.governanceRole]} is already approved by ${existingForSlot.reviewerName}. Only that reviewer may revoke their approval before completion.`,
+      };
+    }
+
+    if (params.decision === 'approved') {
+      const otherApprovedBySameUser = activeApprovals.find(
+        a =>
+          a.status === 'approved' &&
+          a.reviewerUserId === params.actorUserId &&
+          a.governanceRole !== params.governanceRole
+      );
+      if (otherApprovedBySameUser) {
+        return {
+          ok: false as const,
+          status: 409 as const,
+          error: `Three-person governance rule violated: you already hold the active approval for ${GOVERNANCE_ROLE_LABELS[otherApprovedBySameUser.governanceRole]} on this course.`,
+        };
+      }
+    }
+
+    const admin = getSupabaseAdminClient();
+    const uiKey = governanceRoleToUiKey(params.governanceRole);
+    const verifiedName = params.actorName.trim();
+    if (verifiedName.length < 2) {
+      return {
+        ok: false as const,
+        status: 400 as const,
+        error: 'Authenticated reviewer profile must include a verified display name.',
+      };
+    }
+
+    if (existingForSlot) {
+      await admin
+        .from('course_approvals')
+        .update({
+          active: false,
+          revoked_at: new Date().toISOString(),
+          revoked_by: params.actorUserId,
+        })
+        .eq('id', existingForSlot.id)
+        .eq('company_id', params.companyId);
+    }
+
+    const { data: insertedRow, error: insErr } = await admin
+      .from('course_approvals')
+      .insert({
+        company_id: params.companyId,
+        course_id: row.id,
+        stage: 6,
+        role_key: uiKey,
+        governance_role: params.governanceRole,
+        reviewer_id: params.actorUserId,
+        reviewer_name: verifiedName,
+        decision: params.decision,
+        notes: String(params.notes || '').slice(0, 1000),
+        active: true,
+      })
+      .select('*')
+      .single();
+
+    if (insErr || !insertedRow) {
+      throw new Error(insErr?.message || 'Failed to record governance decision.');
+    }
+
+    const updatedApprovals = await this.loadActiveApprovals(params.companyId, row.id, project.id);
+    const humanSignOff = this.buildAuthoritativeHumanSignOff(
+      params.companyId,
+      project.id,
+      updatedApprovals
+    );
+
+    const updatedCourseData: CourseProject = {
+      ...project,
+      latestQA: {
+        ...project.latestQA,
+        humanSignOff,
+      },
+      lifecycleStatus:
+        params.decision === 'rejected' && project.lifecycleStatus === 'awaiting_review'
+          ? 'revision_required'
+          : project.lifecycleStatus,
+    };
+
+    const { data: savedCourseRow, error: updCourseErr } = await admin
+      .from('courses')
+      .update({
+        course_data: updatedCourseData,
+        lifecycle_status: updatedCourseData.lifecycleStatus,
+      })
+      .eq('id', row.id)
+      .eq('company_id', params.companyId)
+      .select('*')
+      .single();
+
+    if (updCourseErr || !savedCourseRow) {
+      throw new Error(updCourseErr?.message || 'Failed to sync governance status to course.');
+    }
+
+    await admin.from('audit_logs').insert({
+      company_id: params.companyId,
+      user_id: params.actorUserId,
+      action: params.decision === 'approved' ? 'governance_approved' : 'governance_rejected',
+      resource_type: 'course',
+      resource_id: row.id,
+      details: {
+        governanceRole: params.governanceRole,
+        reviewerName: verifiedName,
+        decision: params.decision,
+      },
+    });
+
+    return {
+      ok: true as const,
+      course: mapCourseRowToProject(savedCourseRow),
+      approval: this.mapApprovalRow(insertedRow, project.id),
+      approvals: updatedApprovals,
+    };
+  }
+
+  async revokeCourseGovernanceDecision(params: {
+    companyId: string;
+    courseIdParam: string;
+    actorUserId: string;
+    actorRole: CompanyRole;
+    governanceRole: GovernanceRole;
+  }) {
+    if (params.actorRole !== 'reviewer' && params.actorRole !== 'company_admin') {
+      return {
+        ok: false as const,
+        status: 403 as const,
+        error: 'Forbidden: only Reviewers or authorised Company Administrators can revoke approvals.',
+      };
+    }
+
+    const row = await this.findCourseRow(params.companyId, params.courseIdParam);
+    if (!row) {
+      return { ok: false as const, status: 404 as const, error: 'Course not found in your company workspace.' };
+    }
+    if (row.lifecycle_status === 'completed') {
+      return {
+        ok: false as const,
+        status: 409 as const,
+        error: 'Conflict: governance approvals on a completed course are immutable.',
+      };
+    }
+
+    const project = mapCourseRowToProject(row);
+    const activeApprovals = await this.loadActiveApprovals(params.companyId, row.id, project.id);
+    const target = activeApprovals.find(a => a.governanceRole === params.governanceRole);
+    if (!target) {
+      return {
+        ok: false as const,
+        status: 404 as const,
+        error: `No active approval found for ${GOVERNANCE_ROLE_LABELS[params.governanceRole]}.`,
+      };
+    }
+    if (target.reviewerUserId !== params.actorUserId) {
+      return {
+        ok: false as const,
+        status: 403 as const,
+        error: 'Forbidden: you cannot modify or revoke another reviewer’s governance approval.',
+      };
+    }
+
+    const admin = getSupabaseAdminClient();
+    await admin
+      .from('course_approvals')
+      .update({
+        active: false,
+        revoked_at: new Date().toISOString(),
+        revoked_by: params.actorUserId,
+      })
+      .eq('id', target.id)
+      .eq('company_id', params.companyId);
+
+    const updatedApprovals = await this.loadActiveApprovals(params.companyId, row.id, project.id);
+    const humanSignOff = this.buildAuthoritativeHumanSignOff(
+      params.companyId,
+      project.id,
+      updatedApprovals
+    );
+
+    const updatedCourseData: CourseProject = {
+      ...project,
+      ...(project.latestQA
+        ? {
+            latestQA: {
+              ...project.latestQA,
+              humanSignOff,
+            },
+          }
+        : {}),
+    };
+
+    const { data: savedCourseRow, error: updErr } = await admin
+      .from('courses')
+      .update({ course_data: updatedCourseData })
+      .eq('id', row.id)
+      .eq('company_id', params.companyId)
+      .select('*')
+      .single();
+
+    if (updErr || !savedCourseRow) {
+      throw new Error(updErr?.message || 'Failed to sync revoked approval.');
+    }
+
+    await admin.from('audit_logs').insert({
+      company_id: params.companyId,
+      user_id: params.actorUserId,
+      action: 'governance_revoked',
+      resource_type: 'course',
+      resource_id: row.id,
+      details: { governanceRole: params.governanceRole },
+    });
+
+    return {
+      ok: true as const,
+      course: mapCourseRowToProject(savedCourseRow),
+      approvals: updatedApprovals,
+    };
+  }
+
+  async completeCourseRelease(params: {
+    companyId: string;
+    courseIdParam: string;
+    actorUserId: string;
+    actorName: string;
+    actorRole: CompanyRole;
+    actorGovernanceRoles: GovernanceRole[];
+  }) {
+    const perms = getRolePermissions(params.actorRole, params.actorGovernanceRoles);
+    if (!perms.canPublishCourse) {
+      return {
+        ok: false as const,
+        status: 403 as const,
+        error:
+          'Forbidden: only a Reviewer or a separately authorised Company Administrator can complete and publish a course.',
+      };
+    }
+
+    const row = await this.findCourseRow(params.companyId, params.courseIdParam);
+    if (!row) {
+      return { ok: false as const, status: 404 as const, error: 'Course not found in your company workspace.' };
+    }
+
+    const project = mapCourseRowToProject(row);
+    if (!project.latestQA) {
+      return {
+        ok: false as const,
+        status: 400 as const,
+        error: 'A Stage 6 Quality Assurance evaluation is required before completing a course.',
+      };
+    }
+    if (project.latestQA.verdict === 'FAIL') {
+      return {
+        ok: false as const,
+        status: 400 as const,
+        error: 'Courses with a FAIL QA verdict cannot be completed.',
+      };
+    }
+    if ((project.latestQA.blockingErrors?.length || 0) > 0) {
+      return {
+        ok: false as const,
+        status: 400 as const,
+        error: 'All blocking QA issues must be resolved before completion.',
+      };
+    }
+
+    const activeApprovals = await this.loadActiveApprovals(params.companyId, row.id, project.id);
+    const humanSignOff = this.buildAuthoritativeHumanSignOff(
+      params.companyId,
+      project.id,
+      activeApprovals
+    );
+    const signOffCheck = hasGenuineHumanGovernanceSignOff(humanSignOff, {
+      companyId: params.companyId,
+      courseId: project.id,
+    });
+    if (!signOffCheck.valid) {
+      return {
+        ok: false as const,
+        status: 400 as const,
+        error: signOffCheck.reason || 'Three distinct human governance approvals are required.',
+      };
+    }
+
+    const admin = getSupabaseAdminClient();
+    const updatedCourseData: CourseProject = {
+      ...project,
+      currentStage: 7,
+      lifecycleStatus: 'completed',
+      latestQA: {
+        ...project.latestQA,
+        humanSignOff,
+      },
+    };
+
+    const { data: savedRow, error: updErr } = await admin
+      .from('courses')
+      .update({
+        lifecycle_status: 'completed',
+        course_data: updatedCourseData,
+      })
+      .eq('id', row.id)
+      .eq('company_id', params.companyId)
+      .select('*')
+      .single();
+
+    if (updErr || !savedRow) {
+      throw new Error(updErr?.message || 'Failed to mark course completed.');
+    }
+
+    await admin.from('audit_logs').insert({
+      company_id: params.companyId,
+      user_id: params.actorUserId,
+      action: 'course_completed',
+      resource_type: 'course',
+      resource_id: row.id,
+      details: { releasedBy: params.actorName, role: params.actorRole },
+    });
+
+    return { ok: true as const, course: mapCourseRowToProject(savedRow) };
   }
 
   async deleteCourse(companyId: string, courseIdParam: string): Promise<boolean> {
@@ -1792,6 +2508,7 @@ export function attachTenantRoutes(
         memberships: session.memberships,
         activeCompany: activeMembership?.company || null,
         activeRole: activeMembership?.role || null,
+        activeGovernanceRoles: activeMembership?.governanceRoles || [],
       });
     }
   );
@@ -1965,7 +2682,8 @@ export function attachTenantRoutes(
     requireCompanyRole(['company_admin']),
     async (req: AuthenticatedRequest, res: express.Response) => {
       try {
-        const { email, fullName, role, temporaryPassword, redirectTo } = req.body || {};
+        const { email, fullName, role, governanceRoles, temporaryPassword, redirectTo } =
+          req.body || {};
         if (hasForbiddenPrivilegeInjection(req.body || {})) {
           return res.status(400).json({ success: false, error: 'Invalid role parameter.' });
         }
@@ -1979,12 +2697,28 @@ export function attachTenantRoutes(
             error: `Role must be one of: ${VALID_ROLES.join(', ')}.`,
           });
         }
+        if (governanceRoles !== undefined && !Array.isArray(governanceRoles)) {
+          return res.status(400).json({
+            success: false,
+            error: 'governanceRoles must be an array of valid governance roles.',
+          });
+        }
+        if (Array.isArray(governanceRoles)) {
+          const invalidGov = governanceRoles.find(r => !normalizeGovernanceRole(r));
+          if (invalidGov !== undefined) {
+            return res.status(400).json({
+              success: false,
+              error: `Invalid governance role. Allowed values: ${VALID_GOVERNANCE_ROLES.join(', ')}.`,
+            });
+          }
+        }
         const member = await service.inviteMember({
           companyId: req.tenantAuth!.companyId,
           invitedByUserId: req.tenantAuth!.userId,
           email: normalizedEmail,
           fullName: String(fullName || normalizedEmail.split('@')[0]),
           role,
+          governanceRoles: normalizeGovernanceRoles(governanceRoles),
           temporaryPassword: temporaryPassword ? String(temporaryPassword) : undefined,
           redirectTo: sanitizeHttpUrl(redirectTo) || undefined,
         });
@@ -2004,9 +2738,24 @@ export function attachTenantRoutes(
     requireCompanyRole(['company_admin']),
     async (req: AuthenticatedRequest, res: express.Response) => {
       try {
-        const { role, membershipStatus } = req.body || {};
+        const { role, governanceRoles, membershipStatus } = req.body || {};
         if (role !== undefined && !VALID_ROLES.includes(role)) {
           return res.status(400).json({ success: false, error: 'Invalid company role.' });
+        }
+        if (governanceRoles !== undefined && !Array.isArray(governanceRoles)) {
+          return res.status(400).json({
+            success: false,
+            error: 'governanceRoles must be an array.',
+          });
+        }
+        if (Array.isArray(governanceRoles)) {
+          const invalidGov = governanceRoles.find(r => !normalizeGovernanceRole(r));
+          if (invalidGov !== undefined) {
+            return res.status(400).json({
+              success: false,
+              error: `Invalid governance role. Allowed values: ${VALID_GOVERNANCE_ROLES.join(', ')}.`,
+            });
+          }
         }
         if (
           membershipStatus !== undefined &&
@@ -2019,6 +2768,8 @@ export function attachTenantRoutes(
           memberId: req.params.memberId,
           actorUserId: req.tenantAuth!.userId,
           role,
+          governanceRoles:
+            governanceRoles !== undefined ? normalizeGovernanceRoles(governanceRoles) : undefined,
           membershipStatus,
         });
         return res.json({ success: true, member });
@@ -2060,6 +2811,7 @@ export function attachTenantRoutes(
         }
         const govCheck = validateCourseGovernanceMutation({
           actorRole: req.tenantAuth!.role,
+          actorGovernanceRoles: req.tenantAuth!.governanceRoles,
           incomingProject: project,
           existingProject: null,
         });
@@ -2096,6 +2848,7 @@ export function attachTenantRoutes(
           : null;
         const govCheck = validateCourseGovernanceMutation({
           actorRole: req.tenantAuth!.role,
+          actorGovernanceRoles: req.tenantAuth!.governanceRoles,
           incomingProject: project,
           existingProject,
         });
@@ -2119,6 +2872,184 @@ export function attachTenantRoutes(
         return res.status(400).json({
           success: false,
           error: String(err?.message || 'Failed to update course.'),
+        });
+      }
+    }
+  );
+
+  // Authenticated Identity-Based Governance Approval Endpoints
+  router.get(
+    '/v2/courses/:courseId/governance',
+    requireTenantAuth,
+    async (req: AuthenticatedRequest, res: express.Response) => {
+      try {
+        if (!service.getCourseGovernance) {
+          return res.status(501).json({ success: false, error: 'Governance service unavailable.' });
+        }
+        const [govState, members] = await Promise.all([
+          service.getCourseGovernance(req.tenantAuth!.companyId, req.params.courseId),
+          service.listMembers(req.tenantAuth!.companyId),
+        ]);
+        if (govState.notFound) {
+          return res.status(404).json({
+            success: false,
+            error: 'Course not found within your active company workspace.',
+          });
+        }
+        const eligibleReviewers = members
+          .filter(
+            m =>
+              m.membershipStatus === 'active' &&
+              (m.role === 'reviewer' || m.role === 'company_admin') &&
+              (m.governanceRoles?.length || 0) > 0
+          )
+          .map(m => ({
+            userId: m.userId,
+            fullName: m.profile?.fullName || m.profile?.email || m.userId,
+            email: m.profile?.email || '',
+            role: m.role,
+            governanceRoles: m.governanceRoles || [],
+          }));
+
+        return res.json({
+          success: true,
+          courseId: govState.courseId,
+          lifecycleStatus: govState.lifecycleStatus,
+          approvals: govState.approvals,
+          humanSignOff: govState.humanSignOff,
+          eligibleReviewers,
+        });
+      } catch (err: any) {
+        return res.status(500).json({
+          success: false,
+          error: String(err?.message || 'Failed to fetch governance approval state.'),
+        });
+      }
+    }
+  );
+
+  router.post(
+    '/v2/courses/:courseId/governance/approve',
+    requireTenantAuth,
+    requireCompanyRole(['company_admin', 'reviewer']),
+    async (req: AuthenticatedRequest, res: express.Response) => {
+      try {
+        if (!service.submitCourseGovernanceDecision) {
+          return res.status(501).json({ success: false, error: 'Governance service unavailable.' });
+        }
+        const body = req.body || {};
+        // Reject explicit forged identity fields if caller attempts to impersonate another user
+        if (
+          (body.reviewerUserId && String(body.reviewerUserId) !== req.tenantAuth!.userId) ||
+          (body.reviewerId && String(body.reviewerId) !== req.tenantAuth!.userId)
+        ) {
+          return res.status(403).json({
+            success: false,
+            error: 'Forbidden: reviewer identity is derived from your verified session and cannot be forged.',
+          });
+        }
+        const normalizedGovRole = normalizeGovernanceRole(body.governanceRole || body.roleKey);
+        if (!normalizedGovRole) {
+          return res.status(400).json({
+            success: false,
+            error: `Invalid governanceRole. Must be one of: ${VALID_GOVERNANCE_ROLES.join(', ')}.`,
+          });
+        }
+        const decision = body.decision === 'rejected' ? 'rejected' : 'approved';
+        const result = await service.submitCourseGovernanceDecision({
+          companyId: req.tenantAuth!.companyId,
+          courseIdParam: req.params.courseId,
+          actorUserId: req.tenantAuth!.userId,
+          actorName: req.tenantAuth!.fullName || req.tenantAuth!.email,
+          actorRole: req.tenantAuth!.role,
+          actorGovernanceRoles: req.tenantAuth!.governanceRoles,
+          governanceRole: normalizedGovRole,
+          decision,
+          notes: typeof body.notes === 'string' ? body.notes : undefined,
+        });
+        if (result.ok === false) {
+          return res.status(result.status).json({ success: false, error: result.error });
+        }
+        return res.status(200).json({
+          success: true,
+          course: result.course,
+          approval: result.approval,
+          approvals: result.approvals,
+        });
+      } catch (err: any) {
+        return res.status(400).json({
+          success: false,
+          error: String(err?.message || 'Governance decision failed.'),
+        });
+      }
+    }
+  );
+
+  router.post(
+    '/v2/courses/:courseId/governance/revoke',
+    requireTenantAuth,
+    requireCompanyRole(['company_admin', 'reviewer']),
+    async (req: AuthenticatedRequest, res: express.Response) => {
+      try {
+        if (!service.revokeCourseGovernanceDecision) {
+          return res.status(501).json({ success: false, error: 'Governance service unavailable.' });
+        }
+        const normalizedGovRole = normalizeGovernanceRole(req.body?.governanceRole || req.body?.roleKey);
+        if (!normalizedGovRole) {
+          return res.status(400).json({
+            success: false,
+            error: `Invalid governanceRole. Must be one of: ${VALID_GOVERNANCE_ROLES.join(', ')}.`,
+          });
+        }
+        const result = await service.revokeCourseGovernanceDecision({
+          companyId: req.tenantAuth!.companyId,
+          courseIdParam: req.params.courseId,
+          actorUserId: req.tenantAuth!.userId,
+          actorRole: req.tenantAuth!.role,
+          governanceRole: normalizedGovRole,
+        });
+        if (result.ok === false) {
+          return res.status(result.status).json({ success: false, error: result.error });
+        }
+        return res.json({
+          success: true,
+          course: result.course,
+          approvals: result.approvals,
+        });
+      } catch (err: any) {
+        return res.status(400).json({
+          success: false,
+          error: String(err?.message || 'Failed to revoke governance approval.'),
+        });
+      }
+    }
+  );
+
+  router.post(
+    '/v2/courses/:courseId/complete',
+    requireTenantAuth,
+    requireCompanyRole(['company_admin', 'reviewer']),
+    async (req: AuthenticatedRequest, res: express.Response) => {
+      try {
+        if (!service.completeCourseRelease) {
+          return res.status(501).json({ success: false, error: 'Release service unavailable.' });
+        }
+        const result = await service.completeCourseRelease({
+          companyId: req.tenantAuth!.companyId,
+          courseIdParam: req.params.courseId,
+          actorUserId: req.tenantAuth!.userId,
+          actorName: req.tenantAuth!.fullName || req.tenantAuth!.email,
+          actorRole: req.tenantAuth!.role,
+          actorGovernanceRoles: req.tenantAuth!.governanceRoles,
+        });
+        if (result.ok === false) {
+          return res.status(result.status).json({ success: false, error: result.error });
+        }
+        return res.json({ success: true, course: result.course });
+      } catch (err: any) {
+        return res.status(400).json({
+          success: false,
+          error: String(err?.message || 'Failed to complete course.'),
         });
       }
     }
@@ -2343,11 +3274,11 @@ export function attachTenantRoutes(
     }
   );
 
-  // Private Supabase Storage Upload & Short-Lived Signed URL Retrieval
+  // Private Supabase Storage Upload & Short-Lived Signed URL Retrieval (Author + Company Admin only; Reviewer is view-only)
   router.post(
     '/v2/sources/upload',
     requireTenantAuth,
-    requireCompanyRole(['company_admin', 'author', 'reviewer']),
+    requireCompanyRole(['company_admin', 'author']),
     async (req: AuthenticatedRequest, res: express.Response) => {
       try {
         const { fileName, mimeType, base64Data, rawText, courseId, extractedText, metadata } =

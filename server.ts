@@ -2,9 +2,13 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { createApiRouter } from './src/server/apiRouter.js';
+import {
+  createApiRouter,
+  validateRateLimitConfiguration,
+} from './src/server/apiRouter.js';
 
 async function startServer() {
+  validateRateLimitConfiguration();
   const app = express();
   const PORT = 3000;
 

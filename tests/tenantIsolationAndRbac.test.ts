@@ -146,76 +146,230 @@ describe('Priority 2 — Tenant Isolation, Multi-Role RBAC & Human Governance Ap
     expect(authorInvite.status).toBe(403);
   });
 
-  it('rejects AI-generated provisional sign-offs on completion and permits reviewer completion with genuine 3-role human sign-off', async () => {
+  it('blocks client-forged approvals, impersonation, same-user multi-role approval, and unassigned reviewers while allowing 3-person completion', async () => {
     const { app } = createTestApp();
 
-    // Reviewer attempting completion with AI provisional reviewer name -> 400
-    const aiSignOffProject = buildSampleCourseProject({
-      lifecycleStatus: 'completed',
-      latestQA: buildSampleQAReport({
-        humanSignOff: {
-          signedOff: true,
-          reviewerName: 'AI QA Auto-Sign-Off (Provisional — Pending Human Review)',
-          signedOffAt: new Date().toISOString(),
-          roles: {
-            sme: {
-              signedOff: true,
-              reviewerName: 'AI QA Auto-Sign-Off (Provisional — Pending Human Review)',
-            },
-            instructionalDesigner: { signedOff: true, reviewerName: 'Jane ID' },
-            complianceAuthorizer: { signedOff: true, reviewerName: 'John Compliance' },
-          },
-        },
-      }),
-    });
+    // 1. Unassigned reviewer (no explicit governanceRoles) CANNOT approve any governance role
+    const unassignedReviewerRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-reviewer-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme', decision: 'approved' });
+    expect(unassignedReviewerRes.status).toBe(403);
 
-    const aiCompleteRes = await request(app)
+    // 2. Unassigned company_admin CANNOT approve or complete a course without explicit governance role assignment
+    const unassignedAdminApproveRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-admin-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme', decision: 'approved' });
+    expect(unassignedAdminApproveRes.status).toBe(403);
+
+    const unassignedAdminCompleteRes = await request(app)
+      .post('/api/v2/courses/course-1/complete')
+      .set('Authorization', 'Bearer token-admin-a')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(unassignedAdminCompleteRes.status).toBe(403);
+
+    // 3. Author CANNOT approve governance gates
+    const authorApproveRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-author-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme', decision: 'approved' });
+    expect(authorApproveRes.status).toBe(403);
+
+    // 4. Reviewer CANNOT forge another user's reviewerUserId
+    const impersonateRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-sme-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme', reviewerUserId: 'user-id-a', decision: 'approved' });
+    expect(impersonateRes.status).toBe(403);
+
+    // 5. Client CANNOT forge approvals in PUT /api/v2/courses/:courseId
+    const forgedPutRes = await request(app)
       .put('/api/v2/courses/course-1')
       .set('Authorization', 'Bearer token-reviewer-a')
       .set('X-Company-Id', COMPANY_A_ID)
-      .send({ project: aiSignOffProject });
-    expect(aiCompleteRes.status).toBe(400);
+      .send({
+        project: buildSampleCourseProject({
+          lifecycleStatus: 'completed',
+          latestQA: buildSampleQAReport({ humanSignOff: buildGenuineHumanSignOff() }),
+        }),
+      });
+    expect(forgedPutRes.status).toBe(403);
 
-    // Reviewer attempting completion with missing role sign-off -> 400
-    const partialRolesProject = buildSampleCourseProject({
-      lifecycleStatus: 'completed',
-      latestQA: buildSampleQAReport({
-        humanSignOff: {
-          signedOff: true,
-          reviewerName: 'Dr. Thabo Mokoena',
-          roles: {
-            sme: { signedOff: true, reviewerName: 'Dr. Thabo Mokoena' },
-            instructionalDesigner: { signedOff: true, reviewerName: 'Nomsa Dlamini' },
-            complianceAuthorizer: { signedOff: false, reviewerName: '' },
-          },
-        },
-      }),
-    });
-    const partialRes = await request(app)
-      .put('/api/v2/courses/course-1')
+    // 6. Three-person rule: dual-authorised user approves SME, then is blocked from approving Instructional Designer on same course
+    const dualSmeRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-dual-gov-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme', decision: 'approved' });
+    expect(dualSmeRes.status).toBe(200);
+    expect(dualSmeRes.body.approval.reviewerUserId).toBe('user-dual-gov-a');
+
+    const dualSecondRoleRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-dual-gov-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'instructional_designer', decision: 'approved' });
+    expect(dualSecondRoleRes.status).toBe(409);
+
+    // 7. Another user CANNOT revoke dual-gov-a's SME approval -> 403
+    const otherRevokeRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/revoke')
+      .set('Authorization', 'Bearer token-sme-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme' });
+    expect(otherRevokeRes.status).toBe(403);
+
+    // Original owner revokes their own SME approval -> 200
+    const ownerRevokeRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/revoke')
+      .set('Authorization', 'Bearer token-dual-gov-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme' });
+    expect(ownerRevokeRes.status).toBe(200);
+
+    // 8. Cannot complete course with only 2 of 3 approvals
+    const smeApproveRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-sme-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme', decision: 'approved' });
+    expect(smeApproveRes.status).toBe(200);
+
+    const idApproveRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-id-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'instructional_designer', decision: 'approved' });
+    expect(idApproveRes.status).toBe(200);
+
+    const incompleteReleaseRes = await request(app)
+      .post('/api/v2/courses/course-1/complete')
+      .set('Authorization', 'Bearer token-reviewer-a')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(incompleteReleaseRes.status).toBe(400);
+
+    // 9. Third distinct human approves Compliance Authoriser -> Reviewer completes course -> 200
+    const compApproveRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-comp-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'compliance_authorizer', decision: 'approved' });
+    expect(compApproveRes.status).toBe(200);
+
+    const completeRes = await request(app)
+      .post('/api/v2/courses/course-1/complete')
+      .set('Authorization', 'Bearer token-reviewer-a')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(completeRes.status).toBe(200);
+    expect(completeRes.body.course.lifecycleStatus).toBe('completed');
+    expect(completeRes.body.course.latestQA.humanSignOff.signedOff).toBe(true);
+    expect(completeRes.body.course.latestQA.humanSignOff.roles.sme.reviewerUserId).toBe('user-sme-a');
+    expect(completeRes.body.course.latestQA.humanSignOff.roles.instructionalDesigner.reviewerUserId).toBe('user-id-a');
+    expect(completeRes.body.course.latestQA.humanSignOff.roles.complianceAuthorizer.reviewerUserId).toBe('user-comp-a');
+
+    // 10. Completed course governance approvals are strictly immutable -> 409
+    const revokeCompletedRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/revoke')
+      .set('Authorization', 'Bearer token-sme-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme' });
+    expect(revokeCompletedRes.status).toBe(409);
+
+    const reapproveCompletedRes = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-comp-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'compliance_authorizer', decision: 'rejected' });
+    expect(reapproveCompletedRes.status).toBe(409);
+  });
+
+  it('enforces aligned frontend/backend RBAC across sources, templates, courses, versions, and admin governance assignment', async () => {
+    const { app } = createTestApp();
+
+    // Reviewer CANNOT upload sources, delete courses, or manage templates (View-only for sources)
+    const reviewerUpload = await request(app)
+      .post('/api/v2/sources/upload')
       .set('Authorization', 'Bearer token-reviewer-a')
       .set('X-Company-Id', COMPANY_A_ID)
-      .send({ project: partialRolesProject });
-    expect(partialRes.status).toBe(400);
+      .send({
+        fileName: 'policy.txt',
+        mimeType: 'text/plain',
+        base64Data: Buffer.from('POPIA policy text').toString('base64'),
+      });
+    expect(reviewerUpload.status).toBe(403);
 
-    // Reviewer with complete genuine human multi-role sign-off -> 200
-    const validCompleteProject = buildSampleCourseProject({
-      lifecycleStatus: 'completed',
-      latestQA: buildSampleQAReport({ humanSignOff: buildGenuineHumanSignOff() }),
-    });
-    const validRes = await request(app)
-      .put('/api/v2/courses/course-1')
+    const reviewerAnalyse = await request(app)
+      .post('/api/v2/sources/analyse')
       .set('Authorization', 'Bearer token-reviewer-a')
       .set('X-Company-Id', COMPANY_A_ID)
-      .send({ project: validCompleteProject });
-    expect(validRes.status).toBe(200);
-    expect(validRes.body.course.lifecycleStatus).toBe('completed');
+      .send({ title: 'Source', rawText: 'Text' });
+    expect(reviewerAnalyse.status).toBe(403);
 
-    // Reviewer CANNOT delete courses or invite team members
-    const reviewerDelete = await request(app)
+    const reviewerDeleteCourse = await request(app)
       .delete('/api/v2/courses/course-1')
       .set('Authorization', 'Bearer token-reviewer-a')
       .set('X-Company-Id', COMPANY_A_ID);
-    expect(reviewerDelete.status).toBe(403);
+    expect(reviewerDeleteCourse.status).toBe(403);
+
+    const reviewerTemplateSave = await request(app)
+      .post('/api/v2/templates')
+      .set('Authorization', 'Bearer token-reviewer-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ template: { id: 'tpl-1', name: 'Custom Tpl' } });
+    expect(reviewerTemplateSave.status).toBe(403);
+
+    // Author CAN upload sources and create templates
+    const authorUpload = await request(app)
+      .post('/api/v2/sources/upload')
+      .set('Authorization', 'Bearer token-author-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({
+        fileName: 'policy.txt',
+        mimeType: 'text/plain',
+        base64Data: Buffer.from('POPIA policy text').toString('base64'),
+      });
+    expect(authorUpload.status).toBe(201);
+    const uploadedSourceId = authorUpload.body.sourceId;
+
+    // Reviewer CAN download signed source URL for read/review, but CANNOT delete it
+    const reviewerSignedUrl = await request(app)
+      .get(`/api/v2/sources/${uploadedSourceId}/signed-url`)
+      .set('Authorization', 'Bearer token-reviewer-a')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(reviewerSignedUrl.status).toBe(200);
+
+    const reviewerDeleteSource = await request(app)
+      .delete(`/api/v2/sources/${uploadedSourceId}`)
+      .set('Authorization', 'Bearer token-reviewer-a')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(reviewerDeleteSource.status).toBe(403);
+
+    const authorTemplateSave = await request(app)
+      .post('/api/v2/templates')
+      .set('Authorization', 'Bearer token-author-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ template: { id: 'tpl-author-1', name: 'Author Company Template' } });
+    expect(authorTemplateSave.status).toBe(201);
+
+    // Company Admin can explicitly assign a governance role to themselves -> then approve SME
+    const assignAdminGovRes = await request(app)
+      .patch('/api/v2/tenant/members/mem-admin-a')
+      .set('Authorization', 'Bearer token-admin-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRoles: ['sme'] });
+    expect(assignAdminGovRes.status).toBe(200);
+    expect(assignAdminGovRes.body.member.governanceRoles).toEqual(['sme']);
+
+    const adminGovApprove = await request(app)
+      .post('/api/v2/courses/course-1/governance/approve')
+      .set('Authorization', 'Bearer token-admin-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({ governanceRole: 'sme', decision: 'approved' });
+    expect(adminGovApprove.status).toBe(200);
   });
 });

@@ -510,8 +510,6 @@ Return JSON with ALL ${params.weights.length} dimension IDs from WEIGHTS:
     'Assistive-Technology Accessibility Audit: Human verification of colour contrast, keyboard navigation, and screen-reader tagging in exported documents/LMS.'
   );
 
-  const prevRoles = params.project.latestQA?.humanSignOff?.roles;
-
   return {
     id: `qa-${Date.now()}`,
     evaluatedAt: new Date().toISOString(),
@@ -538,18 +536,21 @@ Return JSON with ALL ${params.weights.length} dimension IDs from WEIGHTS:
       roles: {
         sme: {
           signedOff: false,
-          reviewerName: prevRoles?.sme?.reviewerName || '',
-          notes: prevRoles?.sme?.notes || '',
+          reviewerName: '',
+          governanceRole: 'sme',
+          status: 'pending',
         },
         instructionalDesigner: {
           signedOff: false,
-          reviewerName: prevRoles?.instructionalDesigner?.reviewerName || '',
-          notes: prevRoles?.instructionalDesigner?.notes || '',
+          reviewerName: '',
+          governanceRole: 'instructional_designer',
+          status: 'pending',
         },
         complianceAuthorizer: {
           signedOff: false,
-          reviewerName: prevRoles?.complianceAuthorizer?.reviewerName || '',
-          notes: prevRoles?.complianceAuthorizer?.notes || '',
+          reviewerName: '',
+          governanceRole: 'compliance_authorizer',
+          status: 'pending',
         },
       },
     },

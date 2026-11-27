@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import express from 'express';
 import {
   checkKeysConfigured,
@@ -104,6 +105,39 @@ export interface RateLimitStore {
   consume(key: string, maxRequests: number, windowMs: number): Promise<RateLimitConsumeResult>;
 }
 
+export function isProductionRuntime(): boolean {
+  return process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+}
+
+export class RateLimitStoreUnavailableError extends Error {
+  constructor(
+    message = 'Distributed rate limit store unavailable.',
+    public readonly storeName: string = 'shared_store'
+  ) {
+    super(message);
+    this.name = 'RateLimitStoreUnavailableError';
+  }
+}
+
+function logRateLimitFailure(details: {
+  store: string;
+  reason: string;
+  statusCode?: number;
+  errorCode?: string;
+}): void {
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      component: 'rate_limiter',
+      timestamp: new Date().toISOString(),
+      store: details.store,
+      reason: details.reason,
+      ...(typeof details.statusCode === 'number' ? { statusCode: details.statusCode } : {}),
+      ...(details.errorCode ? { errorCode: details.errorCode } : {}),
+    })
+  );
+}
+
 export class MemoryRateLimitStore implements RateLimitStore {
   private buckets = new Map<string, number[]>();
 
@@ -137,85 +171,108 @@ export class MemoryRateLimitStore implements RateLimitStore {
   }
 }
 
-export class UpstashRedisRateLimitStore implements RateLimitStore {
-  constructor(
-    private readonly restUrl: string,
-    private readonly restToken: string,
-    private readonly fallback = new MemoryRateLimitStore()
-  ) {}
+export interface SharedRateLimitStoreOptions {
+  failClosed?: boolean;
+  fallback?: RateLimitStore;
+  getAdminClient?: () => {
+    rpc: (
+      fn: string,
+      params?: Record<string, unknown>
+    ) => PromiseLike<{ data: any; error: { code?: string; message?: string } | null }>;
+  };
+}
 
-  async consume(
-    key: string,
-    maxRequests: number,
-    windowMs: number
-  ): Promise<RateLimitConsumeResult> {
-    try {
-      const redisKey = `estudy:rl:${key}`;
-      const resp = await fetch(`${this.restUrl.replace(/\/+$/, '')}/pipeline`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.restToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify([
-          ['INCR', redisKey],
-          ['PTTL', redisKey],
-        ]),
-      });
-      if (!resp.ok) {
-        return this.fallback.consume(key, maxRequests, windowMs);
-      }
-      const results = (await resp.json()) as Array<{ result?: number; error?: string }>;
-      const count = Number(results?.[0]?.result || 1);
-      let ttlMs = Number(results?.[1]?.result ?? -1);
-      if (count === 1 || ttlMs < 0) {
-        await fetch(`${this.restUrl.replace(/\/+$/, '')}/pexpire/${encodeURIComponent(redisKey)}/${windowMs}`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${this.restToken}` },
-        }).catch(() => {});
-        ttlMs = windowMs;
-      }
-      const retryAfterSeconds = Math.max(1, Math.ceil((ttlMs > 0 ? ttlMs : windowMs) / 1000));
-      return {
-        allowed: count <= maxRequests,
-        count,
-        retryAfterSeconds,
-      };
-    } catch {
-      return this.fallback.consume(key, maxRequests, windowMs);
-    }
+function normalizeStoreOptions(
+  arg?: RateLimitStore | SharedRateLimitStoreOptions
+): {
+  failClosed: boolean;
+  fallback?: RateLimitStore;
+  getAdminClient?: SharedRateLimitStoreOptions['getAdminClient'];
+} {
+  if (!arg) {
+    return { failClosed: isProductionRuntime() };
   }
+  if (typeof (arg as RateLimitStore).consume === 'function') {
+    return {
+      failClosed: isProductionRuntime(),
+      fallback: arg as RateLimitStore,
+    };
+  }
+  const opts = arg as SharedRateLimitStoreOptions;
+  return {
+    failClosed: opts.failClosed ?? isProductionRuntime(),
+    fallback: opts.fallback,
+    getAdminClient: opts.getAdminClient,
+  };
 }
 
 export class SupabaseRateLimitStore implements RateLimitStore {
   private warnedFallback = false;
+  private rpcUnavailableUntil = 0;
+  private readonly failClosed: boolean;
+  private readonly fallback: RateLimitStore;
+  private readonly getAdminClient: NonNullable<SharedRateLimitStoreOptions['getAdminClient']>;
 
-  constructor(private readonly fallback = new MemoryRateLimitStore()) {}
+  constructor(storeOptions?: RateLimitStore | SharedRateLimitStoreOptions) {
+    const normalized = normalizeStoreOptions(storeOptions);
+    this.failClosed = normalized.failClosed;
+    this.fallback = normalized.fallback || new MemoryRateLimitStore();
+    this.getAdminClient = normalized.getAdminClient || (() => getSupabaseAdminClient());
+  }
+
+  private async handleStoreError(
+    reason: string,
+    key: string,
+    maxRequests: number,
+    windowMs: number,
+    errorCode?: string
+  ): Promise<RateLimitConsumeResult> {
+    if (this.failClosed) {
+      logRateLimitFailure({ store: 'supabase_rpc', reason, errorCode });
+      throw new RateLimitStoreUnavailableError(
+        'Distributed rate limit store unavailable.',
+        'supabase_rpc'
+      );
+    }
+    if (errorCode === 'PGRST202') {
+      // Migration 004_rate_limits.sql not yet applied or schema cache pending: avoid hitting RPC on every dev request
+      this.rpcUnavailableUntil = Date.now() + 5 * 60_000;
+    }
+    if (!this.warnedFallback) {
+      this.warnedFallback = true;
+      const hint =
+        errorCode === 'PGRST202'
+          ? 'Apply supabase/migrations/004_rate_limits.sql to enable distributed Supabase rate limiting.'
+          : `errorCode=${errorCode || reason}`;
+      console.warn(
+        `Supabase consume_rate_limit RPC unavailable in non-production (${hint}); falling back to local memory store.`
+      );
+    }
+    return this.fallback.consume(key, maxRequests, windowMs);
+  }
 
   async consume(
     key: string,
     maxRequests: number,
     windowMs: number
   ): Promise<RateLimitConsumeResult> {
+    if (!this.failClosed && Date.now() < this.rpcUnavailableUntil) {
+      return this.fallback.consume(key, maxRequests, windowMs);
+    }
     try {
-      const admin = getSupabaseAdminClient();
+      const admin = this.getAdminClient();
       const { data, error } = await admin.rpc('consume_rate_limit', {
         p_key: key,
-        p_max_requests: maxRequests,
-        p_window_ms: windowMs,
+        p_max_requests: Math.max(1, Math.round(maxRequests)),
+        p_window_ms: Math.max(1000, Math.round(windowMs)),
       });
       if (error) {
-        if (!this.warnedFallback) {
-          this.warnedFallback = true;
-          console.warn(
-            'Supabase consume_rate_limit RPC unavailable; falling back to local memory store until 004_rate_limits.sql is applied.'
-          );
-        }
-        return this.fallback.consume(key, maxRequests, windowMs);
+        return this.handleStoreError('rpc_error', key, maxRequests, windowMs, error.code || 'rpc_error');
       }
+      this.rpcUnavailableUntil = 0;
       const row = Array.isArray(data) ? data[0] : data;
       if (!row) {
-        return this.fallback.consume(key, maxRequests, windowMs);
+        return this.handleStoreError('empty_rpc_result', key, maxRequests, windowMs);
       }
       return {
         allowed: Boolean(row.allowed),
@@ -223,21 +280,89 @@ export class SupabaseRateLimitStore implements RateLimitStore {
         retryAfterSeconds: Math.max(1, Number(row.retry_after_seconds || 1)),
       };
     } catch {
-      return this.fallback.consume(key, maxRequests, windowMs);
+      return this.handleStoreError('runtime_error', key, maxRequests, windowMs);
     }
   }
 }
 
-export function resolveDefaultRateLimitStore(): RateLimitStore {
-  const upstashUrl = String(process.env.UPSTASH_REDIS_REST_URL || '').trim();
-  const upstashToken = String(process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
-  if (upstashUrl && upstashToken) {
-    return new UpstashRedisRateLimitStore(upstashUrl, upstashToken);
+export function validateRateLimitConfiguration(options?: {
+  injectedStore?: RateLimitStore;
+}): { mode: 'supabase' | 'memory' | 'custom'; production: boolean } {
+  const production = isProductionRuntime();
+  const explicitMode = String(process.env.RATE_LIMIT_STORE || '').trim().toLowerCase();
+
+  if (production && explicitMode === 'memory') {
+    logRateLimitFailure({
+      store: 'startup',
+      reason: 'memory_store_explicitly_rejected_in_production',
+    });
+    throw new Error('MemoryRateLimitStore is not permitted in production.');
   }
+
+  if (options?.injectedStore) {
+    if (production && options.injectedStore instanceof MemoryRateLimitStore) {
+      logRateLimitFailure({
+        store: 'startup',
+        reason: 'memory_store_rejected_in_production',
+      });
+      throw new Error('MemoryRateLimitStore is not permitted in production.');
+    }
+    return { mode: 'custom', production };
+  }
+
   if (isSupabaseServerConfigured()) {
-    return new SupabaseRateLimitStore();
+    return { mode: 'supabase', production };
+  }
+
+  if (production) {
+    logRateLimitFailure({ store: 'startup', reason: 'supabase_rate_limit_store_not_configured' });
+    throw new Error(
+      'Production rate limiting requires Supabase PostgreSQL: configure SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY, and apply supabase/migrations/004_rate_limits.sql.'
+    );
+  }
+
+  return { mode: 'memory', production };
+}
+
+export function resolveDefaultRateLimitStore(): RateLimitStore {
+  const config = validateRateLimitConfiguration();
+  const failClosed = config.production;
+
+  if (config.mode === 'supabase') {
+    return new SupabaseRateLimitStore({ failClosed });
   }
   return new MemoryRateLimitStore();
+}
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function buildRateLimitKey(req: express.Request): string {
+  const fwd = req.headers['x-forwarded-for'];
+  const rawIp =
+    (Array.isArray(fwd) ? fwd[0] : String(fwd || '').split(',')[0].trim()) ||
+    req.ip ||
+    'local';
+  const reqPath = String(req.path || req.originalUrl || '');
+
+  if (reqPath.startsWith('/auth/') || reqPath.startsWith('/v2/auth/')) {
+    return `v2:auth:ip:${rawIp}`;
+  }
+
+  const authHeader = String(req.headers.authorization || '').trim();
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (token) {
+      const actorHash = crypto.createHash('sha256').update(token).digest('hex').slice(0, 16);
+      const companyHeader = String(req.headers['x-company-id'] || '').trim();
+      if (companyHeader && UUID_REGEX.test(companyHeader)) {
+        return `v2:tenant:${companyHeader.toLowerCase()}:actor:${actorHash}`;
+      }
+      return `v2:actor:${actorHash}`;
+    }
+  }
+
+  return `v2:ip:${rawIp}`;
 }
 
 export function createRateLimiter(options?: {
@@ -245,29 +370,48 @@ export function createRateLimiter(options?: {
   windowMs?: number;
   store?: RateLimitStore;
 }) {
+  validateRateLimitConfiguration({ injectedStore: options?.store });
+  const envMax = Number(process.env.RATE_LIMIT_MAX_PER_MIN);
   const maxRequests =
-    options?.maxRequests || Math.max(5, Number(process.env.RATE_LIMIT_MAX_PER_MIN) || 60);
+    options?.maxRequests ||
+    Math.max(5, Number.isFinite(envMax) && envMax > 0 ? Math.round(envMax) : 60);
   const windowMs = options?.windowMs || 60_000;
   const store = options?.store || resolveDefaultRateLimitStore();
+  if (isProductionRuntime() && store instanceof MemoryRateLimitStore) {
+    throw new Error('MemoryRateLimitStore is not permitted in production.');
+  }
 
   return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const fwd = req.headers['x-forwarded-for'];
-    const rawIp =
-      (Array.isArray(fwd) ? fwd[0] : String(fwd || '').split(',')[0].trim()) ||
-      req.ip ||
-      'local';
-    const result = await store.consume(`v2:${rawIp}`, maxRequests, windowMs);
-
-    if (!result.allowed) {
-      res.setHeader('Retry-After', String(result.retryAfterSeconds));
-      return res.status(429).json({
-        success: false,
-        error: `Too many requests (${maxRequests}/min limit). Please wait ${result.retryAfterSeconds}s and retry.`,
-        retryAfterSeconds: result.retryAfterSeconds,
+    const key = buildRateLimitKey(req);
+    try {
+      const result = await store.consume(key, maxRequests, windowMs);
+      if (!result.allowed) {
+        res.setHeader('Retry-After', String(result.retryAfterSeconds));
+        return res.status(429).json({
+          success: false,
+          error: `Too many requests (${maxRequests}/min limit). Please wait ${result.retryAfterSeconds}s and retry.`,
+          retryAfterSeconds: result.retryAfterSeconds,
+        });
+      }
+      return next();
+    } catch (err) {
+      const storeName =
+        err instanceof RateLimitStoreUnavailableError ? err.storeName : 'rate_limit_store';
+      logRateLimitFailure({
+        store: storeName,
+        reason: 'rate_limit_enforcement_unavailable',
+        statusCode: 503,
       });
+      if (isProductionRuntime() || err instanceof RateLimitStoreUnavailableError) {
+        return res.status(503).json({
+          success: false,
+          code: 'RATE_LIMIT_UNAVAILABLE',
+          error:
+            'Service temporarily unavailable while verifying request rate limits. Please retry shortly.',
+        });
+      }
+      return next();
     }
-
-    return next();
   };
 }
 
@@ -338,12 +482,13 @@ export function createApiRouter(options?: {
 
   const requireTenantAuth = createTenantAuthMiddleware(options?.tenantDeps?.authVerifier);
   const requireEditorRole = requireCompanyRole(['company_admin', 'author', 'reviewer']);
+  const requireAuthorOrAdminRole = requireCompanyRole(['company_admin', 'author']);
 
   // Tenant-authenticated AI authoring, QA, Copilot, Source analysis, and Template round-trip endpoints
   router.post(
     '/v2/sources/analyse',
     requireTenantAuth,
-    requireEditorRole,
+    requireAuthorOrAdminRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, existingSources, provider, model } = req.body || {};
@@ -427,7 +572,7 @@ export function createApiRouter(options?: {
   router.post(
     '/v2/templates/extract',
     requireTenantAuth,
-    requireEditorRole,
+    requireAuthorOrAdminRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, provider, model } = req.body || {};
@@ -464,7 +609,7 @@ export function createApiRouter(options?: {
   router.post(
     '/v2/templates/parse-filled',
     requireTenantAuth,
-    requireEditorRole,
+    requireAuthorOrAdminRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, template, provider, model } = req.body || {};
@@ -847,7 +992,7 @@ export function createApiRouter(options?: {
   router.post(
     '/v2/templates/copilot-draft',
     requireTenantAuth,
-    requireEditorRole,
+    requireAuthorOrAdminRole,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { prompt, currentTemplate, messages, provider, model } = req.body || {};

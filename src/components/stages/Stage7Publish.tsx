@@ -7,10 +7,17 @@ import {
   Download,
   FileCode,
   FileText,
+  Loader2,
   Printer,
   ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
-import type { CompanyRole, CourseProject, WorkflowStage } from '../../types';
+import type {
+  CompanyRole,
+  CourseProject,
+  GovernanceRole,
+  WorkflowStage,
+} from '../../types';
 import {
   type DeliverableType,
   exportDeliverableDocx,
@@ -18,12 +25,19 @@ import {
   exportLmsPackageJson,
   exportScorm12PackageZip,
 } from '../../utils/exportDeliverables';
+import { apiFetch, parseApiJson } from '../../utils/apiClient';
 import { runStructuralAndConsistencyAudit } from '../../utils/courseValidation';
-import { hasGenuineHumanGovernanceSignOff } from '../../utils/rbac';
+import {
+  getRolePermissions,
+  GOVERNANCE_ROLE_LABELS,
+  hasGenuineHumanGovernanceSignOff,
+} from '../../utils/rbac';
 
 interface Stage7PublishProps {
   project: CourseProject;
   activeRole?: CompanyRole | null;
+  activeGovernanceRoles?: GovernanceRole[];
+  onSyncServerProject?: (project: CourseProject) => void;
   onJumpToStage?: (stage: WorkflowStage, context?: { moduleNumber?: number; reason?: string }) => void;
 }
 
@@ -82,19 +96,51 @@ const DELIVERABLES: Array<{
 export const Stage7Publish: React.FC<Stage7PublishProps> = ({
   project,
   activeRole,
+  activeGovernanceRoles,
+  onSyncServerProject,
   onJumpToStage,
 }) => {
   const [busyType, setBusyType] = useState<string | null>(null);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [completionError, setCompletionError] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
-  const isViewer = activeRole === 'viewer';
+
+  const perms = getRolePermissions(activeRole, activeGovernanceRoles);
+  const isViewer = perms.isReadOnly;
+  const isCompleted = project.lifecycleStatus === 'completed';
 
   const structuralAudit = useMemo(() => runStructuralAndConsistencyAudit(project), [project]);
   const qa = project.latestQA;
   const isQaStale = Boolean(
     qa?.evaluatedDataSignature && qa.evaluatedDataSignature !== structuralAudit.dataSignature
   );
-  const signOffCheck = hasGenuineHumanGovernanceSignOff(qa?.humanSignOff);
+  const signOffCheck = hasGenuineHumanGovernanceSignOff(qa?.humanSignOff, {
+    companyId: project.companyId,
+    courseId: project.id,
+  });
   const allRolesSigned = signOffCheck.valid;
+
+  const handleCompleteCourse = async () => {
+    setCompletionError(null);
+    setExportNotice(null);
+    setIsCompleting(true);
+    try {
+      const res = await apiFetch(
+        `/api/v2/courses/${encodeURIComponent(project.id)}/complete`,
+        { method: 'POST' }
+      );
+      const data = await parseApiJson<any>(res);
+      if (!res.ok || !data.success || !data.course) {
+        throw new Error(data.error || 'Could not complete and publish this course.');
+      }
+      onSyncServerProject?.(data.course);
+      setExportNotice('Course formally approved and published with verified three-person governance sign-off.');
+    } catch (err: any) {
+      setCompletionError(err?.message || 'Course completion failed.');
+    } finally {
+      setIsCompleting(false);
+    }
+  };
 
   const handleDocx = async (type: DeliverableType) => {
     setBusyType(type);
@@ -116,6 +162,8 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
     exportLmsPackageJson(project);
     setExportNotice('Downloaded LMS-compatible structured data (.json).');
   };
+
+  const signOffRoles = qa?.humanSignOff?.roles;
 
   return (
     <div className="space-y-6">
@@ -139,25 +187,30 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
               <ArrowLeft className="w-3.5 h-3.5 text-accent-ink" />
               <span>Return to Stage 6 QA</span>
             </button>
-            <button
-              type="button"
-              onClick={() => onJumpToStage(1)}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-primary text-slate-700 text-xs font-semibold cursor-pointer"
-            >
-              Edit Stage 1 Brief
-            </button>
+            {!isViewer && (
+              <button
+                type="button"
+                onClick={() => onJumpToStage(1)}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-primary text-slate-700 text-xs font-semibold cursor-pointer"
+              >
+                Edit Stage 1 Brief
+              </button>
+            )}
           </div>
         )}
       </div>
 
       {/* Pre-Publish Governance & Placeholder Audit Summary */}
-      <section className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-5 space-y-3">
+      <section className="bg-white border border-slate-200 border-t-[3px] border-t-accent rounded-xl p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-bold text-primary">
-            Pre-Publish Readiness & Integrity Summary
-          </h3>
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-accent-ink" />
+            <h3 className="text-sm font-bold text-primary">
+              Pre-Publish Readiness &amp; Governance Record
+            </h3>
+          </div>
           <span className="text-[11px] text-slate-500">
-            Last saved: {new Date(project.updatedAt).toLocaleString('en-ZA')}
+            Status: <strong className="text-primary">{isCompleted ? 'Published / Completed' : project.lifecycleStatus}</strong> · Last saved: {new Date(project.updatedAt).toLocaleString('en-ZA')}
           </span>
         </div>
 
@@ -174,13 +227,13 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
             )}
           </div>
           <div className="p-3 rounded-lg bg-surface border border-slate-200">
-            <div className="text-[11px] text-slate-500">Multi-Role Sign-Off</div>
+            <div className="text-[11px] text-slate-500">Three-Person Sign-Off</div>
             <div
               className={`font-bold mt-0.5 ${
                 allRolesSigned ? 'text-emerald-700' : 'text-amber-700'
               }`}
             >
-              {allRolesSigned ? 'All 3 Human Roles Signed' : 'Pending Human Governance Sign-Off'}
+              {allRolesSigned ? 'All 3 Distinct Reviewers Signed' : 'Pending Distinct Governance Approvals'}
             </div>
           </div>
           <div className="p-3 rounded-lg bg-surface border border-slate-200">
@@ -204,6 +257,102 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
             </div>
           </div>
         </div>
+
+        {signOffRoles && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+            {(
+              [
+                ['sme', GOVERNANCE_ROLE_LABELS.sme, signOffRoles.sme],
+                [
+                  'instructional_designer',
+                  GOVERNANCE_ROLE_LABELS.instructional_designer,
+                  signOffRoles.instructionalDesigner,
+                ],
+                [
+                  'compliance_authorizer',
+                  GOVERNANCE_ROLE_LABELS.compliance_authorizer,
+                  signOffRoles.complianceAuthorizer,
+                ],
+              ] as const
+            ).map(([govKey, label, rec]) => {
+              const verified = Boolean(rec?.signedOff && rec?.reviewerUserId && rec?.signedOffAt);
+              return (
+                <div
+                  key={govKey}
+                  className={`p-2.5 rounded-lg border ${
+                    verified
+                      ? 'bg-emerald-50/70 border-emerald-200'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
+                  <div className="font-bold text-primary">{label}</div>
+                  {verified ? (
+                    <div className="text-[11px] text-emerald-800 mt-0.5 space-y-0.5">
+                      <div>Approved by {rec.reviewerName}</div>
+                      <div className="text-slate-500">
+                        {new Date(rec.signedOffAt!).toLocaleString('en-ZA')}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      {rec?.status === 'rejected'
+                        ? `Revision requested by ${rec.reviewerName || 'Reviewer'}`
+                        : 'Pending verified sign-off'}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {!isCompleted && !isViewer && (
+          <div className="p-3.5 rounded-lg bg-surface border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="text-slate-700">
+              {!perms.canPublishCourse ? (
+                <span>
+                  Course completion and formal publication are restricted to <strong>Reviewer</strong> accounts (or explicitly authorised <strong>Company Administrators</strong>) after all 3 distinct human governance roles sign off.
+                </span>
+              ) : allRolesSigned && !isQaStale && structuralAudit.blockingErrors.length === 0 && qa?.verdict !== 'FAIL' ? (
+                <span>
+                  All 3 distinct human governance approvals are verified. Publish and lock governance status now.
+                </span>
+              ) : (
+                <span>
+                  {signOffCheck.reason || 'Complete all QA checks and 3-person governance approvals in Stage 6 before formal publication.'}
+                </span>
+              )}
+            </div>
+            {perms.canPublishCourse && (
+              <button
+                type="button"
+                disabled={
+                  isCompleting ||
+                  !allRolesSigned ||
+                  isQaStale ||
+                  structuralAudit.blockingErrors.length > 0 ||
+                  qa?.verdict === 'FAIL'
+                }
+                onClick={() => void handleCompleteCourse()}
+                className="px-4 py-2 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-50 text-primary-contrast border-b-2 border-accent font-bold shrink-0 flex items-center gap-1.5 cursor-pointer"
+              >
+                {isCompleting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-accent" />
+                )}
+                <span>{isCompleting ? 'Publishing...' : 'Complete & Publish Course'}</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {completionError && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{completionError}</span>
+          </div>
+        )}
 
         {(isQaStale || structuralAudit.blockingErrors.length > 0 || structuralAudit.unresolvedPlaceholders.length > 0) && (
           <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">

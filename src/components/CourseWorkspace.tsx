@@ -17,6 +17,7 @@ import type {
   CourseProject,
   CourseTemplate,
   CourseVersionSnapshot,
+  GovernanceRole,
   SelectedTextContext,
   WorkflowStage,
 } from '../types';
@@ -42,6 +43,9 @@ interface CourseWorkspaceProps {
   project: CourseProject;
   template: CourseTemplate | undefined;
   activeRole?: CompanyRole | null;
+  activeGovernanceRoles?: GovernanceRole[];
+  currentUserId?: string;
+  currentUserName?: string;
   saveState: 'saved' | 'saving';
   lastSavedAt?: string | null;
   saveError?: string | null;
@@ -50,6 +54,7 @@ interface CourseWorkspaceProps {
   onBackToDashboard: () => void;
   onFlushSaveNow?: () => Promise<void>;
   onLoadVersions?: (projectId: string) => Promise<CourseVersionSnapshot[] | void>;
+  onSyncServerProject?: (project: CourseProject) => void;
   onUpdateProject: (
     updater: (prev: CourseProject) => CourseProject,
     snapshot?: {
@@ -74,6 +79,9 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   project,
   template,
   activeRole,
+  activeGovernanceRoles,
+  currentUserId,
+  currentUserName,
   saveState,
   lastSavedAt,
   saveError,
@@ -82,10 +90,11 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   onBackToDashboard,
   onFlushSaveNow,
   onLoadVersions,
+  onSyncServerProject,
   onUpdateProject,
   onRestoreVersion,
 }) => {
-  const perms = getRolePermissions(activeRole);
+  const perms = getRolePermissions(activeRole, activeGovernanceRoles);
   const isReadOnly = perms.isReadOnly;
   const [viewerStage, setViewerStage] = useState<WorkflowStage>(project.currentStage);
   const effectiveStage = isReadOnly ? viewerStage : project.currentStage;
@@ -365,6 +374,8 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
                 {project.brief.code || 'Code TBC'} ·{' '}
                 {saveState === 'saving'
                   ? 'Saving...'
+                  : saveError
+                  ? 'Local backup (unsynced)'
                   : formattedSavedTime
                   ? `Saved ${formattedSavedTime}`
                   : 'Saved'}
@@ -592,9 +603,13 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
             <Stage6QA
               project={project}
               activeRole={activeRole}
+              activeGovernanceRoles={activeGovernanceRoles}
+              currentUserId={currentUserId}
+              currentUserName={currentUserName}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
               onUpdateProject={onUpdateProject}
+              onSyncServerProject={onSyncServerProject}
               onJumpToStage={handleJumpFromQA}
               onProceedToPublish={() => setSectionFocusContext(null)}
             />
@@ -603,6 +618,8 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
             <Stage7Publish
               project={project}
               activeRole={activeRole}
+              activeGovernanceRoles={activeGovernanceRoles}
+              onSyncServerProject={onSyncServerProject}
               onJumpToStage={handleJumpFromQA}
             />
           )}
@@ -658,6 +675,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
         isOpen={isSourcesOpen}
         project={project}
         readOnly={isReadOnly}
+        canManageSources={perms.canUploadSource}
         canDeleteSource={perms.canDeleteSource}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}

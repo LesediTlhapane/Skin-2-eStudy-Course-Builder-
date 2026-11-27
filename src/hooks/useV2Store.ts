@@ -10,39 +10,49 @@ import type {
 import { SYSTEM_TEMPLATES } from '../data/templates';
 import { BENCHMARK_PRESETS, createEmptyCourseProject } from '../data/benchmarks';
 import { apiFetch, compactProjectForCloudPayload, parseApiJson } from '../utils/apiClient';
+import {
+  clearCloudRecoveryDraft,
+  loadCloudRecoveryDrafts,
+  openCourseBuilderDB,
+  reconcileCloudRecoveryDrafts,
+  saveCloudRecoveryDraft,
+  saveCloudRecoveryDraftsSync,
+  STORE_PROJECTS,
+  STORE_TEMPLATES,
+  type CloudRecoveryDraft,
+} from '../utils/cloudRecovery';
 
-const DB_NAME = 'estudy_course_builder_v2';
-const DB_VERSION = 1;
-const STORE_PROJECTS = 'projects';
-const STORE_TEMPLATES = 'templates';
 const FALLBACK_PROJECTS_KEY = 'estudy_v2_projects_fallback';
 const FALLBACK_TEMPLATES_KEY = 'estudy_v2_templates_fallback';
 const AI_PROVIDER_KEY = 'estudy_v2_ai_provider';
 const AI_MODEL_KEY = 'estudy_v2_ai_model';
+const ACTIVE_PROJECT_SESSION_PREFIX = 'estudy_v2_active_project:';
 
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      reject(new Error('IndexedDB unavailable'));
-      return;
+function readSessionActiveProjectId(companyId: string | null): string | null {
+  if (!companyId || typeof sessionStorage === 'undefined') return null;
+  try {
+    return sessionStorage.getItem(`${ACTIVE_PROJECT_SESSION_PREFIX}${companyId}`) || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionActiveProjectId(companyId: string | null, projectId: string | null): void {
+  if (!companyId || typeof sessionStorage === 'undefined') return;
+  const key = `${ACTIVE_PROJECT_SESSION_PREFIX}${companyId}`;
+  try {
+    if (projectId) {
+      sessionStorage.setItem(key, projectId);
+    } else {
+      sessionStorage.removeItem(key);
     }
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_PROJECTS)) {
-        db.createObjectStore(STORE_PROJECTS, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains(STORE_TEMPLATES)) {
-        db.createObjectStore(STORE_TEMPLATES, { keyPath: 'id' });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+  } catch {
+    /* ignore sessionStorage unavailable */
+  }
 }
 
 async function idbGetAll<T>(storeName: string): Promise<T[]> {
-  const db = await openDB();
+  const db = await openCourseBuilderDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, 'readonly');
     const store = tx.objectStore(storeName);
@@ -53,7 +63,7 @@ async function idbGetAll<T>(storeName: string): Promise<T[]> {
 }
 
 async function idbPutAll<T extends { id: string }>(storeName: string, items: T[]): Promise<void> {
-  const db = await openDB();
+  const db = await openCourseBuilderDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, 'readwrite');
     const store = tx.objectStore(storeName);
@@ -205,12 +215,15 @@ export function useV2Store(options?: UseV2StoreOptions) {
   const [projects, setProjects] = useState<CourseProject[]>([]);
   const [customTemplates, setCustomTemplates] = useState<CourseTemplate[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [route, setRoute] = useState<AppRoute>('dashboard');
+  const [route, setRouteState] = useState<AppRoute>('dashboard');
   const [isLoaded, setIsLoaded] = useState(false);
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved');
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [pendingLocalMigrationCount, setPendingLocalMigrationCount] = useState<number>(0);
+  const [pendingRecoveryDrafts, setPendingRecoveryDrafts] = useState<CloudRecoveryDraft[]>([]);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
 
   const [selectedProvider, setSelectedProviderState] = useState<AIProvider>('groq');
 
@@ -229,8 +242,72 @@ export function useV2Store(options?: UseV2StoreOptions) {
     groq: false,
   });
 
+  const projectsRef = useRef<CourseProject[]>(projects);
+  projectsRef.current = projects;
+  const customTemplatesRef = useRef<CourseTemplate[]>(customTemplates);
+  customTemplatesRef.current = customTemplates;
+  const activeProjectIdRef = useRef<string | null>(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
+  const routeRef = useRef<AppRoute>(route);
+  routeRef.current = route;
+
   const dirtyProjectIdsRef = useRef<Set<string>>(new Set());
+  const unsavedNewCourseIdsRef = useRef<Set<string>>(new Set());
+  const editRevisionRef = useRef<Map<string, number>>(new Map());
+  const lastSyncedUpdatedAtRef = useRef<Map<string, string>>(new Map());
+  const lastCloudCompanyIdRef = useRef<string | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const authBlockedRef = useRef<boolean>(false);
+
   const clearSaveError = useCallback(() => setSaveError(null), []);
+  const clearRecoveryNotice = useCallback(() => setRecoveryNotice(null), []);
+
+  const setRoute = useCallback(
+    (nextRoute: AppRoute) => {
+      setRouteState(nextRoute);
+      if (isCloudMode && companyId) {
+        if (nextRoute === 'workspace' && activeProjectIdRef.current) {
+          writeSessionActiveProjectId(companyId, activeProjectIdRef.current);
+        } else if (nextRoute === 'dashboard') {
+          writeSessionActiveProjectId(companyId, null);
+        }
+      }
+    },
+    [isCloudMode, companyId]
+  );
+
+  const buildDraftForProject = useCallback(
+    (targetCompanyId: string, project: CourseProject, syncError?: string | null): CloudRecoveryDraft => ({
+      recoveryKey: `${targetCompanyId}:${project.id}`,
+      companyId: targetCompanyId,
+      projectId: project.id,
+      baseServerUpdatedAt: lastSyncedUpdatedAtRef.current.get(project.id) ?? null,
+      isNewCourse: unsavedNewCourseIdsRef.current.has(project.id),
+      savedOfflineAt: new Date().toISOString(),
+      lastSyncError: syncError ?? null,
+      project,
+    }),
+    []
+  );
+
+  const backupDirtyProjects = useCallback(
+    (targetCompanyId: string | null, syncError?: string | null) => {
+      if (!targetCompanyId || dirtyProjectIdsRef.current.size === 0) return;
+      const drafts: CloudRecoveryDraft[] = [];
+      for (const id of dirtyProjectIdsRef.current) {
+        const proj = projectsRef.current.find(p => p.id === id);
+        if (proj) {
+          drafts.push(buildDraftForProject(targetCompanyId, proj, syncError));
+        }
+      }
+      if (drafts.length === 0) return;
+      saveCloudRecoveryDraftsSync(drafts);
+      for (const draft of drafts) {
+        void saveCloudRecoveryDraft(draft);
+      }
+    },
+    [buildDraftForProject]
+  );
 
   // Load AI models & configured keys from backend
   useEffect(() => {
@@ -259,13 +336,22 @@ export function useV2Store(options?: UseV2StoreOptions) {
     if (!isCloudMode || !companyId || !accessToken) return;
     setIsLoaded(false);
     setSaveError(null);
+    authBlockedRef.current = false;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     dirtyProjectIdsRef.current.clear();
+    unsavedNewCourseIdsRef.current.clear();
+    editRevisionRef.current.clear();
+    lastSyncedUpdatedAtRef.current.clear();
 
     try {
-      const [coursesRes, templatesRes, localBackup] = await Promise.all([
+      const [coursesRes, templatesRes, localBackup, localRecoveryDrafts] = await Promise.all([
         apiFetch('/api/v2/courses'),
         apiFetch('/api/v2/templates'),
         readLocalBackupSnapshot(),
+        loadCloudRecoveryDrafts(companyId),
       ]);
 
       const coursesData = await parseApiJson<any>(coursesRes);
@@ -282,20 +368,62 @@ export function useV2Store(options?: UseV2StoreOptions) {
         ? templatesData.templates.filter((t: CourseTemplate) => !t.isSystemReference)
         : [];
 
+      for (const proj of loadedCloudProjects) {
+        if (proj.updatedAt) {
+          lastSyncedUpdatedAtRef.current.set(proj.id, proj.updatedAt);
+        }
+      }
+
+      const reconciled = reconcileCloudRecoveryDrafts(
+        loadedCloudProjects,
+        localRecoveryDrafts,
+        normalizeProjectSchema
+      );
+
+      for (const discarded of reconciled.discardedKeys) {
+        void clearCloudRecoveryDraft(discarded.companyId, discarded.projectId);
+      }
+      for (const newId of reconciled.autoRecoveredNewIds) {
+        unsavedNewCourseIdsRef.current.add(newId);
+      }
+      for (const id of reconciled.autoRecoveredIds) {
+        dirtyProjectIdsRef.current.add(id);
+        editRevisionRef.current.set(id, (editRevisionRef.current.get(id) || 0) + 1);
+      }
+
+      setHasUnsavedChanges(reconciled.autoRecoveredIds.length > 0);
+      setPendingRecoveryDrafts(reconciled.conflictingDrafts);
+      if (reconciled.autoRecoveredIds.length > 0) {
+        setRecoveryNotice(
+          `Restored unsaved local changes for ${reconciled.autoRecoveredIds.length} course(s) from your previous session and queued cloud sync.`
+        );
+      }
+
       // Count local IndexedDB projects not yet mirrored in cloud workspace
       const cloudKnownIds = new Set(
-        loadedCloudProjects.flatMap(p => [p.id, p.localSourceId].filter(Boolean) as string[])
+        reconciled.projects.flatMap(p => [p.id, p.localSourceId].filter(Boolean) as string[])
       );
       const unmigratedLocal = (localBackup.projects || []).filter(
         p => !cloudKnownIds.has(p.id) && !(p.localSourceId && cloudKnownIds.has(p.localSourceId))
       );
       setPendingLocalMigrationCount(unmigratedLocal.length);
 
-      setProjects(loadedCloudProjects.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+      setProjects(reconciled.projects);
       setCustomTemplates(loadedCloudTemplates);
-      setActiveProjectId(prev =>
-        prev && loadedCloudProjects.some(p => p.id === prev) ? prev : null
-      );
+
+      const sessionActiveId = readSessionActiveProjectId(companyId);
+      const candidateActiveId = activeProjectIdRef.current || sessionActiveId;
+      const restoredActiveExists =
+        Boolean(candidateActiveId) &&
+        reconciled.projects.some(p => p.id === candidateActiveId);
+      setActiveProjectId(restoredActiveExists ? candidateActiveId : null);
+      if (restoredActiveExists && candidateActiveId) {
+        setRouteState('workspace');
+        writeSessionActiveProjectId(companyId, candidateActiveId);
+      } else if (sessionActiveId) {
+        writeSessionActiveProjectId(companyId, null);
+      }
+
       setLastSavedAt(new Date().toISOString());
     } catch (err: any) {
       setSaveError(err?.message || 'Unable to load cloud workspace.');
@@ -306,9 +434,25 @@ export function useV2Store(options?: UseV2StoreOptions) {
 
   // Initial load: Cloud mode (Supabase PostgreSQL via Express) OR legacy Local IndexedDB mode
   useEffect(() => {
-    if (isCloudMode) {
+    if (isCloudMode && companyId) {
+      lastCloudCompanyIdRef.current = companyId;
       void reloadCloudWorkspace();
       return;
+    }
+
+    // If transitioning out of Cloud mode (e.g., kicked out / session expired), preserve any dirty cloud drafts immediately
+    if (lastCloudCompanyIdRef.current && dirtyProjectIdsRef.current.size > 0) {
+      backupDirtyProjects(
+        lastCloudCompanyIdRef.current,
+        'Session ended before cloud sync completed.'
+      );
+      dirtyProjectIdsRef.current.clear();
+      unsavedNewCourseIdsRef.current.clear();
+      setHasUnsavedChanges(false);
+    }
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
     }
 
     (async () => {
@@ -350,93 +494,228 @@ export function useV2Store(options?: UseV2StoreOptions) {
         setIsLoaded(true);
       }
     })();
-  }, [isCloudMode, reloadCloudWorkspace]);
+  }, [isCloudMode, companyId, reloadCloudWorkspace, backupDirtyProjects]);
 
   const persistNow = useCallback(
-    async (projList: CourseProject[], tplList: CourseTemplate[]) => {
+    async (projList?: CourseProject[], tplList?: CourseTemplate[]) => {
+      const currentProjects = projList || projectsRef.current;
+      const currentTemplates = tplList || customTemplatesRef.current;
+
       setSaveState('saving');
       setSaveError(null);
       try {
-        if (isCloudMode) {
+        if (isCloudMode && companyId) {
           const dirtyIds = Array.from(dirtyProjectIdsRef.current);
           if (dirtyIds.length > 0) {
-            dirtyProjectIdsRef.current.clear();
             for (const id of dirtyIds) {
-              const target = projList.find(p => p.id === id);
-              if (!target) continue;
+              const target =
+                projectsRef.current.find(p => p.id === id) ||
+                currentProjects.find(p => p.id === id);
+              if (!target) {
+                dirtyProjectIdsRef.current.delete(id);
+                continue;
+              }
+              const sentRevision = editRevisionRef.current.get(id) || 0;
+              const draft = buildDraftForProject(companyId, target);
+              void saveCloudRecoveryDraft(draft);
+
               const compacted = compactProjectForCloudPayload(target, 2_800_000).project;
-              const res = await apiFetch(`/api/v2/courses/${encodeURIComponent(id)}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ project: compacted }),
-              });
-              const data = await parseApiJson<any>(res);
+              const isNewUnsaved = unsavedNewCourseIdsRef.current.has(id);
+
+              let res = await apiFetch(
+                isNewUnsaved
+                  ? '/api/v2/courses'
+                  : `/api/v2/courses/${encodeURIComponent(id)}`,
+                {
+                  method: isNewUnsaved ? 'POST' : 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ project: compacted }),
+                }
+              );
+              let data = await parseApiJson<any>(res);
+
+              // If PUT returned 404 for a course that was never successfully POSTed, retry as POST
+              if (!isNewUnsaved && res.status === 404 && !lastSyncedUpdatedAtRef.current.has(id)) {
+                res = await apiFetch('/api/v2/courses', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ project: compacted }),
+                });
+                data = await parseApiJson<any>(res);
+              }
+
               if (!res.ok || !data.success) {
-                throw new Error(data.error || 'Cloud save failed.');
+                const isAuthIssue = res.status === 401 || res.status === 403;
+                authBlockedRef.current = isAuthIssue;
+                const friendlyError = isAuthIssue
+                  ? 'Your session expired or workspace access changed. Your latest edits are backed up locally in this browser — sign in again to sync them to the cloud.'
+                  : data.error || `Cloud save failed (HTTP ${res.status}). Local backup preserved.`;
+                void saveCloudRecoveryDraft(buildDraftForProject(companyId, target, friendlyError));
+                const err = new Error(friendlyError) as Error & { status?: number };
+                err.status = res.status;
+                throw err;
+              }
+
+              authBlockedRef.current = false;
+              unsavedNewCourseIdsRef.current.delete(id);
+              const syncedTimestamp = String(data.course?.updatedAt || target.updatedAt || '');
+              if (syncedTimestamp) {
+                lastSyncedUpdatedAtRef.current.set(id, syncedTimestamp);
+              }
+
+              // Only mark clean if no newer local edits happened while the request was in flight
+              if ((editRevisionRef.current.get(id) || 0) === sentRevision) {
+                dirtyProjectIdsRef.current.delete(id);
+                await clearCloudRecoveryDraft(companyId, id);
               }
             }
           }
+          setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
           setLastSavedAt(new Date().toISOString());
           return;
         }
 
         await Promise.all([
-          idbPutAll(STORE_PROJECTS, projList),
-          idbPutAll(STORE_TEMPLATES, tplList),
+          idbPutAll(STORE_PROJECTS, currentProjects),
+          idbPutAll(STORE_TEMPLATES, currentTemplates),
         ]);
         setLastSavedAt(new Date().toISOString());
       } catch (err: any) {
         if (!isCloudMode) {
           try {
-            localStorage.setItem(FALLBACK_PROJECTS_KEY, JSON.stringify(projList));
-            localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(tplList));
+            localStorage.setItem(FALLBACK_PROJECTS_KEY, JSON.stringify(currentProjects));
+            localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(currentTemplates));
             setLastSavedAt(new Date().toISOString());
             return;
           } catch {
             /* ignore localStorage unavailable */
           }
+        } else if (companyId) {
+          backupDirtyProjects(companyId, err?.message || 'Cloud save failed.');
+          setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
+
+          const status = typeof err?.status === 'number' ? err.status : 0;
+          const isAuthIssue = status === 401 || status === 403;
+          if (!isAuthIssue && dirtyProjectIdsRef.current.size > 0 && !retryTimerRef.current) {
+            retryTimerRef.current = setTimeout(() => {
+              retryTimerRef.current = null;
+              if (dirtyProjectIdsRef.current.size > 0 && !authBlockedRef.current) {
+                void persistNow();
+              }
+            }, 5000);
+          }
         }
         setSaveError(
           err?.message ||
-            'Failed to save changes. Export a backup JSON file from the Dashboard as a precaution.'
+            'Failed to save changes to cloud. A local recovery copy is preserved in this browser.'
         );
       } finally {
         setSaveState('saved');
       }
     },
-    [isCloudMode]
+    [isCloudMode, companyId, buildDraftForProject, backupDirtyProjects]
   );
 
-  // Persist projects cleanly with debounce
+  // Retry automatically when browser regains network connectivity
+  useEffect(() => {
+    if (!isCloudMode) return;
+    const handleOnline = () => {
+      if (dirtyProjectIdsRef.current.size > 0 && !authBlockedRef.current) {
+        void persistNow();
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [isCloudMode, persistNow]);
+
+  // Persist projects cleanly with debounce & write immediate cloud recovery backup on dirty edits
   useEffect(() => {
     if (!isLoaded) return;
     if (isCloudMode && dirtyProjectIdsRef.current.size === 0) return;
+
+    if (isCloudMode && companyId) {
+      backupDirtyProjects(companyId);
+      setHasUnsavedChanges(true);
+    }
 
     setSaveState('saving');
     const timer = setTimeout(() => {
       void persistNow(projects, customTemplates);
     }, isCloudMode ? 450 : 250);
     return () => clearTimeout(timer);
-  }, [projects, customTemplates, isLoaded, isCloudMode, persistNow]);
+  }, [projects, customTemplates, isLoaded, isCloudMode, companyId, persistNow, backupDirtyProjects]);
 
-  // Warn before closing tab while save is in flight
+  // Warn before closing tab and synchronously snapshot dirty cloud drafts to localStorage
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (saveState === 'saving') {
+      const targetCompanyId = companyId || lastCloudCompanyIdRef.current;
+      if (targetCompanyId && dirtyProjectIdsRef.current.size > 0) {
+        backupDirtyProjects(
+          targetCompanyId,
+          'Browser tab closed before cloud sync completed.'
+        );
+      }
+      if (saveState === 'saving' || (isCloudMode && dirtyProjectIdsRef.current.size > 0)) {
         e.preventDefault();
         e.returnValue = '';
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [saveState]);
+  }, [saveState, isCloudMode, companyId, backupDirtyProjects]);
 
   const flushSaveNow = useCallback(async () => {
-    if (isCloudMode && activeProjectId) {
-      dirtyProjectIdsRef.current.add(activeProjectId);
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
     }
-    await persistNow(projects, customTemplates);
-  }, [persistNow, projects, customTemplates, isCloudMode, activeProjectId]);
+    if (isCloudMode && activeProjectIdRef.current) {
+      dirtyProjectIdsRef.current.add(activeProjectIdRef.current);
+    }
+    await persistNow(projectsRef.current, customTemplatesRef.current);
+  }, [persistNow, isCloudMode]);
+
+  const restoreRecoveryDraft = useCallback(
+    (projectId: string) => {
+      const draft = pendingRecoveryDrafts.find(d => d.projectId === projectId);
+      if (!draft) return;
+
+      const restored: CourseProject = normalizeProjectSchema({
+        ...draft.project,
+        updatedAt: new Date().toISOString(),
+      });
+      if (!projectsRef.current.some(p => p.id === projectId)) {
+        unsavedNewCourseIdsRef.current.add(projectId);
+      }
+      dirtyProjectIdsRef.current.add(projectId);
+      editRevisionRef.current.set(projectId, (editRevisionRef.current.get(projectId) || 0) + 1);
+      setHasUnsavedChanges(true);
+
+      setProjects(prev => {
+        const exists = prev.some(p => p.id === projectId);
+        const next = exists
+          ? prev.map(p => (p.id === projectId ? restored : p))
+          : [restored, ...prev];
+        return next.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      });
+      setPendingRecoveryDrafts(prev => prev.filter(d => d.projectId !== projectId));
+      setRecoveryNotice(
+        `Restored local draft for "${restored.brief.title || 'Untitled Course'}" and queued cloud sync.`
+      );
+    },
+    [pendingRecoveryDrafts]
+  );
+
+  const discardRecoveryDraft = useCallback(
+    (projectId: string) => {
+      const targetCompanyId = companyId || lastCloudCompanyIdRef.current;
+      if (targetCompanyId) {
+        void clearCloudRecoveryDraft(targetCompanyId, projectId);
+      }
+      setPendingRecoveryDrafts(prev => prev.filter(d => d.projectId !== projectId));
+    },
+    [companyId]
+  );
 
   const allTemplates = [
     ...SYSTEM_TEMPLATES,
@@ -472,13 +751,22 @@ export function useV2Store(options?: UseV2StoreOptions) {
   const createProject = useCallback(
     (project: CourseProject) => {
       const enriched: CourseProject = isCloudMode && companyId ? { ...project, companyId } : project;
+      if (isCloudMode && companyId) {
+        unsavedNewCourseIdsRef.current.add(enriched.id);
+        dirtyProjectIdsRef.current.add(enriched.id);
+        editRevisionRef.current.set(enriched.id, 1);
+        setHasUnsavedChanges(true);
+        void saveCloudRecoveryDraft(buildDraftForProject(companyId, enriched));
+        writeSessionActiveProjectId(companyId, enriched.id);
+      }
       setProjects(prev => [enriched, ...prev]);
       setActiveProjectId(enriched.id);
-      setRoute('workspace');
+      setRouteState('workspace');
 
-      if (isCloudMode) {
+      if (isCloudMode && companyId) {
         void (async () => {
           setSaveState('saving');
+          const sentRevision = editRevisionRef.current.get(enriched.id) || 1;
           try {
             const compacted = compactProjectForCloudPayload(enriched, 2_800_000).project;
             const res = await apiFetch('/api/v2/courses', {
@@ -490,30 +778,51 @@ export function useV2Store(options?: UseV2StoreOptions) {
             if (!res.ok || !data.success) {
               throw new Error(data.error || 'Failed to save new course to cloud.');
             }
+            unsavedNewCourseIdsRef.current.delete(enriched.id);
+            const syncedAt = String(data.course?.updatedAt || enriched.updatedAt || '');
+            if (syncedAt) {
+              lastSyncedUpdatedAtRef.current.set(enriched.id, syncedAt);
+            }
+            if ((editRevisionRef.current.get(enriched.id) || 0) === sentRevision) {
+              dirtyProjectIdsRef.current.delete(enriched.id);
+              setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
+              await clearCloudRecoveryDraft(companyId, enriched.id);
+            }
             setLastSavedAt(new Date().toISOString());
           } catch (err: any) {
-            setSaveError(err?.message || 'Failed to save new course.');
+            const msg =
+              err?.message ||
+              'Failed to save new course to cloud. Local recovery copy preserved.';
+            void saveCloudRecoveryDraft(buildDraftForProject(companyId, enriched, msg));
+            setSaveError(msg);
           } finally {
             setSaveState('saved');
           }
         })();
       }
     },
-    [isCloudMode, companyId]
+    [isCloudMode, companyId, buildDraftForProject]
   );
 
   const openProject = useCallback(
     (projectId: string, stage?: WorkflowStage) => {
       setActiveProjectId(projectId);
+      if (isCloudMode && companyId) {
+        writeSessionActiveProjectId(companyId, projectId);
+      }
       if (stage) {
-        if (isCloudMode) dirtyProjectIdsRef.current.add(projectId);
+        if (isCloudMode) {
+          dirtyProjectIdsRef.current.add(projectId);
+          editRevisionRef.current.set(projectId, (editRevisionRef.current.get(projectId) || 0) + 1);
+          setHasUnsavedChanges(true);
+        }
         setProjects(prev =>
           prev.map(p => (p.id === projectId ? { ...p, currentStage: stage } : p))
         );
       }
-      setRoute('workspace');
+      setRouteState('workspace');
     },
-    [isCloudMode]
+    [isCloudMode, companyId]
   );
 
   const updateProject = useCallback(
@@ -525,7 +834,11 @@ export function useV2Store(options?: UseV2StoreOptions) {
         summary: string;
       }
     ) => {
-      if (isCloudMode) dirtyProjectIdsRef.current.add(projectId);
+      if (isCloudMode) {
+        dirtyProjectIdsRef.current.add(projectId);
+        editRevisionRef.current.set(projectId, (editRevisionRef.current.get(projectId) || 0) + 1);
+        setHasUnsavedChanges(true);
+      }
       let createdSnapshot: CourseVersionSnapshot | null = null;
 
       setProjects(prev =>
@@ -583,6 +896,30 @@ export function useV2Store(options?: UseV2StoreOptions) {
       }
     },
     [isCloudMode]
+  );
+
+  const syncProjectFromServer = useCallback(
+    (serverProject: CourseProject) => {
+      const normalized = normalizeProjectSchema(serverProject);
+      dirtyProjectIdsRef.current.delete(normalized.id);
+      unsavedNewCourseIdsRef.current.delete(normalized.id);
+      if (normalized.updatedAt) {
+        lastSyncedUpdatedAtRef.current.set(normalized.id, normalized.updatedAt);
+      }
+      if (companyId) {
+        void clearCloudRecoveryDraft(companyId, normalized.id);
+      }
+      setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
+      setProjects(prev => {
+        const exists = prev.some(p => p.id === normalized.id);
+        if (!exists) return [normalized, ...prev];
+        return prev.map(p => (p.id === normalized.id ? normalized : p));
+      });
+      setLastSavedAt(new Date().toISOString());
+      setSaveState('saved');
+      setSaveError(null);
+    },
+    [companyId]
   );
 
   const loadCourseVersions = useCallback(
@@ -649,7 +986,11 @@ export function useV2Store(options?: UseV2StoreOptions) {
         versions: [backupBeforeRestore, ...current.versions].slice(0, 30),
       });
 
-      if (isCloudMode) dirtyProjectIdsRef.current.add(projectId);
+      if (isCloudMode) {
+        dirtyProjectIdsRef.current.add(projectId);
+        editRevisionRef.current.set(projectId, (editRevisionRef.current.get(projectId) || 0) + 1);
+        setHasUnsavedChanges(true);
+      }
       setProjects(prev => prev.map(p => (p.id === projectId ? restored : p)));
 
       if (isCloudMode) {
@@ -698,11 +1039,19 @@ export function useV2Store(options?: UseV2StoreOptions) {
         versions: [],
       };
       copy.brief.title = `${target.brief.title || 'Untitled Course'} (Copy)`;
+      if (isCloudMode && companyId) {
+        unsavedNewCourseIdsRef.current.add(copy.id);
+        dirtyProjectIdsRef.current.add(copy.id);
+        editRevisionRef.current.set(copy.id, 1);
+        setHasUnsavedChanges(true);
+        void saveCloudRecoveryDraft(buildDraftForProject(companyId, copy));
+      }
       setProjects(prev => [copy, ...prev]);
 
-      if (isCloudMode) {
+      if (isCloudMode && companyId) {
         void (async () => {
           setSaveState('saving');
+          const sentRevision = editRevisionRef.current.get(copy.id) || 1;
           try {
             const compacted = compactProjectForCloudPayload(copy, 2_800_000).project;
             const res = await apiFetch('/api/v2/courses', {
@@ -714,27 +1063,46 @@ export function useV2Store(options?: UseV2StoreOptions) {
             if (!res.ok || !data.success) {
               throw new Error(data.error || 'Failed to duplicate course in cloud.');
             }
+            unsavedNewCourseIdsRef.current.delete(copy.id);
+            const syncedAt = String(data.course?.updatedAt || copy.updatedAt || '');
+            if (syncedAt) {
+              lastSyncedUpdatedAtRef.current.set(copy.id, syncedAt);
+            }
+            if ((editRevisionRef.current.get(copy.id) || 0) === sentRevision) {
+              dirtyProjectIdsRef.current.delete(copy.id);
+              setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
+              await clearCloudRecoveryDraft(companyId, copy.id);
+            }
             setLastSavedAt(new Date().toISOString());
           } catch (err: any) {
-            setProjects(prev => prev.filter(p => p.id !== copy.id));
-            setSaveError(err?.message || 'Failed to duplicate course in cloud.');
+            const msg =
+              err?.message ||
+              'Failed to duplicate course in cloud. Local recovery copy preserved.';
+            void saveCloudRecoveryDraft(buildDraftForProject(companyId, copy, msg));
+            setSaveError(msg);
           } finally {
             setSaveState('saved');
           }
         })();
       }
     },
-    [projects, isCloudMode]
+    [projects, isCloudMode, companyId, buildDraftForProject]
   );
 
   const deleteProject = useCallback(
     (projectId: string) => {
       const removed = projects.find(p => p.id === projectId);
       dirtyProjectIdsRef.current.delete(projectId);
+      unsavedNewCourseIdsRef.current.delete(projectId);
+      setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
+      if (companyId) {
+        void clearCloudRecoveryDraft(companyId, projectId);
+      }
       setProjects(prev => prev.filter(p => p.id !== projectId));
       if (activeProjectId === projectId) {
         setActiveProjectId(null);
-        setRoute('dashboard');
+        if (companyId) writeSessionActiveProjectId(companyId, null);
+        setRouteState('dashboard');
       }
       if (isCloudMode) {
         void (async () => {
@@ -755,7 +1123,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
         })();
       }
     },
-    [projects, activeProjectId, isCloudMode]
+    [projects, activeProjectId, isCloudMode, companyId]
   );
 
   const saveTemplate = useCallback(
@@ -951,7 +1319,13 @@ export function useV2Store(options?: UseV2StoreOptions) {
     lastSavedAt,
     saveError,
     clearSaveError,
+    hasUnsavedChanges,
     pendingLocalMigrationCount,
+    pendingRecoveryDrafts,
+    recoveryNotice,
+    clearRecoveryNotice,
+    restoreRecoveryDraft,
+    discardRecoveryDraft,
     reloadCloudWorkspace,
     flushSaveNow,
     selectedProvider,
@@ -963,6 +1337,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
     createProject,
     openProject,
     updateProject,
+    syncProjectFromServer,
     loadCourseVersions,
     restoreProjectVersion,
     duplicateProject,
