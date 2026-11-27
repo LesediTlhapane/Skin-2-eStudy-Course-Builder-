@@ -3,12 +3,14 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildRateLimitKey,
+  createAiConcurrencyLimiter,
   createApiRouter,
   MemoryRateLimitStore,
   resolveDefaultRateLimitStore,
   SupabaseRateLimitStore,
   validateRateLimitConfiguration,
 } from '../src/server/apiRouter.js';
+import { AuthServiceUnavailableError } from '../src/server/authMiddleware.js';
 import { COMPANY_A_ID, COMPANY_B_ID, createInMemoryTenantEnv } from './helpers/testFixtures.js';
 
 function createTestApp(rateLimitMaxPerMin = 60) {
@@ -281,13 +283,29 @@ describe('Priority 2 — Production Rate Limiting Configuration & Fail-Closed En
     expect(blockedRes.status).toBe(429);
   });
 
-  it('scopes auth routes by IP and tenant API routes by tenant + actor hash without cross-tenant interference', async () => {
-    const authReq = {
+  it('scopes auth routes by IP and tenant API routes by verified session without header/token spoofing or cross-tenant interference', async () => {
+    const untrustedAuthReq = {
       path: '/v2/auth/register-company',
       headers: { 'x-forwarded-for': '203.0.113.10' },
       ip: '127.0.0.1',
     } as any;
-    expect(buildRateLimitKey(authReq)).toBe('v2:auth:ip:203.0.113.10');
+    expect(buildRateLimitKey(untrustedAuthReq)).toBe('v2:auth:ip:127.0.0.1');
+
+    const trustedProxyAuthReq = {
+      path: '/v2/auth/register-company',
+      headers: { 'x-forwarded-for': '203.0.113.10' },
+      ip: '127.0.0.1',
+      app: { get: (k: string) => (k === 'trust proxy' ? true : false) },
+    } as any;
+    expect(buildRateLimitKey(trustedProxyAuthReq)).toBe('v2:auth:ip:203.0.113.10');
+
+    // Arbitrary unverified Bearer tokens must NOT carve out separate pre-auth IP buckets
+    const spoofedBearerReq = {
+      path: '/v2/courses',
+      headers: { authorization: 'Bearer forged-random-token-999' },
+      ip: '127.0.0.1',
+    } as any;
+    expect(buildRateLimitKey(spoofedBearerReq)).toBe('v2:ip:127.0.0.1');
 
     const env = createInMemoryTenantEnv();
     const app = express();
@@ -387,5 +405,142 @@ describe('Priority 2 — Production Rate Limiting Configuration & Fail-Closed En
     expect(
       isMissingSchemaColumnError({ code: '23505', message: 'duplicate key value' }, 'governance_roles')
     ).toBe(false);
+  });
+
+  it('distinguishes invalid tokens (401) from upstream auth/database outages (503 AUTH_SERVICE_UNAVAILABLE)', async () => {
+    const env = createInMemoryTenantEnv();
+    const faultyAuthVerifier = {
+      verifyAccessToken: async (token: string) => {
+        if (token === 'transient-outage') {
+          throw new AuthServiceUnavailableError('Supabase auth service timed out.');
+        }
+        if (token === 'token-admin-a') {
+          throw new AuthServiceUnavailableError('Database connection pool unavailable.');
+        }
+        return env.authVerifier.verifyAccessToken(token);
+      },
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api',
+      createApiRouter({
+        rateLimitStore: new MemoryRateLimitStore(),
+        tenantDeps: {
+          authVerifier: faultyAuthVerifier,
+          service: env.service,
+          isConfiguredFn: () => true,
+        },
+      })
+    );
+
+    const badTokenRes = await request(app)
+      .get('/api/v2/courses')
+      .set('Authorization', 'Bearer invalid-token')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(badTokenRes.status).toBe(401);
+
+    const authOutageRes = await request(app)
+      .get('/api/v2/courses')
+      .set('Authorization', 'Bearer transient-outage')
+      .set('X-Company-Id', COMPANY_A_ID);
+    expect(authOutageRes.status).toBe(503);
+    expect(authOutageRes.body.code).toBe('AUTH_SERVICE_UNAVAILABLE');
+
+    const dbOutageOnMe = await request(app)
+      .get('/api/v2/tenant/me')
+      .set('Authorization', 'Bearer token-admin-a');
+    expect(dbOutageOnMe.status).toBe(503);
+    expect(dbOutageOnMe.body.code).toBe('AUTH_SERVICE_UNAVAILABLE');
+  });
+
+  it('enforces bounded per-user and per-company active AI concurrency limits with 429 AI_CONCURRENCY_LIMIT', async () => {
+    const limiter = createAiConcurrencyLimiter({ maxPerUser: 1, maxPerCompany: 2 });
+    const app = express();
+    app.use(express.json());
+
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    let markEnteredFirst!: () => void;
+    let markEnteredSecond!: () => void;
+    const gateFirst = new Promise<void>(resolve => {
+      releaseFirst = resolve;
+    });
+    const gateSecond = new Promise<void>(resolve => {
+      releaseSecond = resolve;
+    });
+    const enteredFirst = new Promise<void>(resolve => {
+      markEnteredFirst = resolve;
+    });
+    const enteredSecond = new Promise<void>(resolve => {
+      markEnteredSecond = resolve;
+    });
+
+    app.post(
+      '/ai-test',
+      (req: any, _res, next) => {
+        req.tenantAuth = {
+          userId: req.headers['x-test-user'] || 'user-1',
+          companyId: COMPANY_A_ID,
+          role: 'author',
+          governanceRoles: [],
+          email: 'user@acme.test',
+          fullName: 'Test User',
+        };
+        next();
+      },
+      limiter as any,
+      async (req, res) => {
+        const slot = req.headers['x-slot'];
+        if (slot === '1') {
+          markEnteredFirst();
+          await gateFirst;
+        }
+        if (slot === '2') {
+          markEnteredSecond();
+          await gateSecond;
+        }
+        res.json({ success: true });
+      }
+    );
+
+    // Fire request 1 for user-1 (held open; await inside async wrapper starts Supertest immediately)
+    const p1 = (async () =>
+      request(app).post('/ai-test').set('x-test-user', 'user-1').set('x-slot', '1').send({}))();
+    await enteredFirst;
+
+    // Concurrent request from same user-1 exceeds maxPerUser=1 -> 429 AI_CONCURRENCY_LIMIT
+    const pUserBlocked = await request(app)
+      .post('/ai-test')
+      .set('x-test-user', 'user-1')
+      .send({});
+    expect(pUserBlocked.status).toBe(429);
+    expect(pUserBlocked.body.code).toBe('AI_CONCURRENCY_LIMIT');
+    expect(pUserBlocked.body.scope).toBe('user');
+
+    // Concurrent request from user-2 in same company fills company slot 2 of 2
+    const p2 = (async () =>
+      request(app).post('/ai-test').set('x-test-user', 'user-2').set('x-slot', '2').send({}))();
+    await enteredSecond;
+
+    // Concurrent request from user-3 in same company exceeds maxPerCompany=2 -> 429 AI_CONCURRENCY_LIMIT
+    const pCompanyBlocked = await request(app)
+      .post('/ai-test')
+      .set('x-test-user', 'user-3')
+      .send({});
+    expect(pCompanyBlocked.status).toBe(429);
+    expect(pCompanyBlocked.body.code).toBe('AI_CONCURRENCY_LIMIT');
+    expect(pCompanyBlocked.body.scope).toBe('company');
+
+    releaseFirst();
+    releaseSecond();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+
+    // Once slots drain, user-1 can invoke again cleanly
+    const afterDrain = await request(app).post('/ai-test').set('x-test-user', 'user-1').send({});
+    expect(afterDrain.status).toBe(200);
   });
 });

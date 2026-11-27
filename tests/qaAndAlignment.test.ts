@@ -13,6 +13,10 @@ import {
   runDomainQualityChecks,
 } from '../src/utils/validationChecks.js';
 import {
+  detectUnsupportedComplianceClaims,
+  getTrackedComplianceRequirements,
+} from '../src/utils/complianceGovernance.js';
+import {
   buildGenuineHumanSignOff,
   buildSampleCourseProject,
   buildSampleQAReport,
@@ -141,5 +145,37 @@ describe('QA, Regulatory Alignment & Governance Validation Regressions', () => {
       existingProject: existingWithApprovals,
     });
     expect(adminCompletion).toEqual({ ok: true });
+  });
+
+  it('prevents unverified accreditation claims, defaults non-financial courses to Financial Literacy Not Applicable, and flags unconfirmed Stage 4 thresholds', () => {
+    const project = buildSampleCourseProject();
+    // 1. Non-financial course defaults Financial Literacy Benchmark to not_applicable
+    const trackedDefault = getTrackedComplianceRequirements(project);
+    const finReq = trackedDefault.find(r => r.key === 'financialLiteracyBenchmark');
+    expect(finReq?.status).toBe('not_applicable');
+
+    // 2. Unverified accreditation assertion with no verified source triggers blocking issue
+    project.sources = [];
+    project.brief.fieldStatuses = {
+      ...project.brief.fieldStatuses,
+      setaSaqaQcto: 'requires_sme_validation',
+    };
+    project.content.modules[0].lessons[0].explanation =
+      'This course is formally accredited by SAQA under SAQA unit standard 115432 and carries 12 NQF credits.';
+    // Also inject an unrequested Financial Literacy benchmark reference
+    project.content.modules[0].lessons[0].practicalApplication =
+      'Compare results against the Financial Literacy benchmark.';
+    // Unconfirm Stage 4 thresholds
+    project.assessments.thresholdsConfirmed = false;
+
+    const complianceIssues = detectUnsupportedComplianceClaims(project);
+    expect(complianceIssues.some(i => i.id === 'blk-unverified-accreditation-claim' && i.severity === 'blocking')).toBe(true);
+    expect(complianceIssues.some(i => i.id === 'warn-inapplicable-financial-benchmark')).toBe(true);
+    expect(complianceIssues.some(i => i.id === 'warn-unconfirmed-assessment-thresholds')).toBe(true);
+
+    // Confirming thresholds clears warn-unconfirmed-assessment-thresholds
+    project.assessments.thresholdsConfirmed = true;
+    const afterConfirm = detectUnsupportedComplianceClaims(project);
+    expect(afterConfirm.some(i => i.id === 'warn-unconfirmed-assessment-thresholds')).toBe(false);
   });
 });

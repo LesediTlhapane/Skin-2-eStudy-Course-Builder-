@@ -18,11 +18,13 @@ import type {
 } from '../types.js';
 import type { AuthenticatedRequest, TenantAuthVerifier } from './authMiddleware.js';
 import {
+  AuthServiceUnavailableError,
   createTenantAuthMiddleware,
   createUserSessionMiddleware,
   defaultTenantAuthVerifier,
   extractBearerToken,
   isMissingSchemaColumnError,
+  isTransientAuthError,
   requireCompanyRole,
 } from './authMiddleware.js';
 import {
@@ -133,6 +135,58 @@ function mapTemplateRowToTemplate(row: any): CourseTemplate {
   };
 }
 
+export interface ParsedLogoUpload {
+  fileName: string;
+  mimeType: string;
+  ext: 'png' | 'jpg' | 'webp';
+  buffer: Buffer;
+}
+
+export function parseAndValidateLogoUpload(body: any):
+  | { ok: true; logo: ParsedLogoUpload }
+  | { ok: false; statusCode: number; error: string } {
+  const { fileName, base64Data } = body || {};
+  if (!base64Data || typeof base64Data !== 'string') {
+    return { ok: false, statusCode: 400, error: 'Missing logo image payload.' };
+  }
+
+  const compact = base64Data.replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
+  if (!compact || !/^[A-Za-z0-9+/=]+$/.test(compact)) {
+    return { ok: false, statusCode: 400, error: 'Invalid base64 image payload.' };
+  }
+
+  if (compact.length > 2_900_000) {
+    return {
+      ok: false,
+      statusCode: 413,
+      error: 'Company logo exceeds the 2 MB maximum upload size.',
+    };
+  }
+
+  const buffer = Buffer.from(compact, 'base64');
+  const validation = validateLogoImageBuffer(buffer);
+  if (validation.valid === false) {
+    return {
+      ok: false,
+      statusCode: buffer.byteLength > MAX_COMPANY_LOGO_BYTES ? 413 : 400,
+      error: validation.error,
+    };
+  }
+
+  return {
+    ok: true,
+    logo: {
+      fileName:
+        typeof fileName === 'string' && fileName.trim()
+          ? fileName.trim()
+          : `logo.${validation.ext}`,
+      mimeType: validation.mimeType,
+      ext: validation.ext,
+      buffer,
+    },
+  };
+}
+
 export interface TenantServiceAdapter {
   registerCompany(params: {
     existingUserId?: string;
@@ -146,6 +200,7 @@ export interface TenantServiceAdapter {
     primaryColour: string;
     secondaryColour: string;
     logoUrl: string | null;
+    logoUpload?: ParsedLogoUpload | null;
   }): Promise<{
     company: CompanyWorkspace;
     userId: string;
@@ -224,8 +279,9 @@ export interface TenantServiceAdapter {
     companyId: string,
     userId: string,
     project: CourseProject,
-    courseIdParam?: string
-  ): Promise<{ project: CourseProject; notFound?: boolean }>;
+    courseIdParam?: string,
+    options?: { expectedUpdatedAt?: string }
+  ): Promise<{ project: CourseProject; notFound?: boolean; conflict?: boolean }>;
   deleteCourse(companyId: string, courseIdParam: string): Promise<boolean>;
 
   getCourseGovernance?(
@@ -432,6 +488,7 @@ class SupabaseTenantService implements TenantServiceAdapter {
     primaryColour: string;
     secondaryColour: string;
     logoUrl: string | null;
+    logoUpload?: ParsedLogoUpload | null;
   }) {
     const admin = getSupabaseAdminClient();
     let userId = params.existingUserId;
@@ -563,20 +620,42 @@ class SupabaseTenantService implements TenantServiceAdapter {
         throw new Error(memErr.message || 'Failed to assign company administrator membership.');
       }
 
+      let finalCompanyRow = companyRow;
+      if (params.logoUpload) {
+        const uploaded = await this.uploadCompanyLogo({
+          companyId: companyRow.id,
+          userId,
+          fileName: params.logoUpload.fileName,
+          mimeType: params.logoUpload.mimeType,
+          ext: params.logoUpload.ext,
+          buffer: params.logoUpload.buffer,
+        }).catch(async logoErr => {
+          await admin.from('company_memberships').delete().eq('company_id', companyRow.id);
+          await admin.from('companies').delete().eq('id', companyRow.id);
+          throw logoErr;
+        });
+        finalCompanyRow = {
+          ...companyRow,
+          logo_url: uploaded.logoUrl,
+          updated_at: uploaded.company.updatedAt,
+        };
+      }
+
       await admin.from('audit_logs').insert({
-        company_id: companyRow.id,
+        company_id: finalCompanyRow.id,
         user_id: userId,
         action: 'company_registered',
         resource_type: 'company',
-        resource_id: companyRow.id,
+        resource_id: finalCompanyRow.id,
         details: {
-          companyName: companyRow.company_name,
+          companyName: finalCompanyRow.company_name,
           requiresEmailVerification,
+          hasUploadedLogo: Boolean(finalCompanyRow.logo_url),
         },
       });
 
       return {
-        company: mapCompany(companyRow),
+        company: mapCompany(finalCompanyRow),
         userId,
         email: userEmail,
         requiresEmailVerification,
@@ -1303,8 +1382,9 @@ class SupabaseTenantService implements TenantServiceAdapter {
     companyId: string,
     userId: string,
     project: CourseProject,
-    courseIdParam?: string
-  ): Promise<{ project: CourseProject; notFound?: boolean }> {
+    courseIdParam?: string,
+    options?: { expectedUpdatedAt?: string }
+  ): Promise<{ project: CourseProject; notFound?: boolean; conflict?: boolean }> {
     const admin = getSupabaseAdminClient();
     const lookupKey = courseIdParam || project.localSourceId || project.id;
     const existing = lookupKey ? await this.findCourseRow(companyId, lookupKey) : null;
@@ -1313,6 +1393,18 @@ class SupabaseTenantService implements TenantServiceAdapter {
       const existsInOtherCompany = await this.ensureCourseExistsElsewhere(courseIdParam);
       if (existsInOtherCompany) {
         return { project, notFound: true };
+      }
+    }
+
+    if (existing && options?.expectedUpdatedAt) {
+      const expectedMs = Date.parse(options.expectedUpdatedAt);
+      const existingMs = Date.parse(String(existing.updated_at || ''));
+      const mismatch =
+        Number.isFinite(expectedMs) && Number.isFinite(existingMs)
+          ? Math.abs(expectedMs - existingMs) > 0
+          : String(existing.updated_at || '') !== options.expectedUpdatedAt;
+      if (mismatch) {
+        return { project: mapCourseRowToProject(existing), conflict: true };
       }
     }
 
@@ -1350,14 +1442,21 @@ class SupabaseTenantService implements TenantServiceAdapter {
     };
 
     if (existing) {
-      const { data, error } = await admin
+      let updateQuery = admin
         .from('courses')
         .update(payload)
         .eq('id', existing.id)
-        .eq('company_id', companyId)
-        .select('*')
-        .single();
-      if (error || !data) throw new Error(error?.message || 'Failed to update course.');
+        .eq('company_id', companyId);
+      if (existing.updated_at) {
+        updateQuery = updateQuery.eq('updated_at', existing.updated_at);
+      }
+      const { data, error } = await updateQuery.select('*').maybeSingle();
+      if (error) throw new Error(error.message || 'Failed to update course.');
+      if (!data) {
+        const latest = await this.findCourseRow(companyId, lookupKey!);
+        if (!latest) return { project, notFound: true };
+        return { project: mapCourseRowToProject(latest), conflict: true };
+      }
       return { project: mapCourseRowToProject(data) };
     }
 
@@ -2296,6 +2395,20 @@ export interface TenantRouterDependencies {
   authVerifier?: TenantAuthVerifier;
   service?: TenantServiceAdapter;
   isConfiguredFn?: () => boolean;
+  postAuthRateLimit?: express.RequestHandler;
+}
+
+function composeAuthHandlers(
+  primary: express.RequestHandler,
+  postAuth?: express.RequestHandler
+): express.RequestHandler {
+  if (!postAuth) return primary;
+  return (req, res, next) => {
+    primary(req, res, (err?: any) => {
+      if (err) return next(err);
+      return postAuth(req, res, next);
+    });
+  };
 }
 
 export function attachTenantRoutes(
@@ -2306,8 +2419,14 @@ export function attachTenantRoutes(
   const service = deps?.service || defaultTenantService;
   const checkConfigured = deps?.isConfiguredFn || isSupabaseServerConfigured;
 
-  const requireUserSession = createUserSessionMiddleware(verifier);
-  const requireTenantAuth = createTenantAuthMiddleware(verifier);
+  const requireUserSession = composeAuthHandlers(
+    createUserSessionMiddleware(verifier),
+    deps?.postAuthRateLimit
+  );
+  const requireTenantAuth = composeAuthHandlers(
+    createTenantAuthMiddleware(verifier),
+    deps?.postAuthRateLimit
+  );
 
   // Public registration: creates a new organization workspace and sets first user strictly as 'company_admin'
   router.post('/v2/auth/register-company', async (req: express.Request, res: express.Response) => {
@@ -2341,6 +2460,17 @@ export function attachTenantRoutes(
         ? body.secondaryColour
         : '#45CC42';
       const logoUrl = sanitizeHttpUrl(body.logoUrl);
+      let validatedLogoUpload: ParsedLogoUpload | null = null;
+      if (body.logoUpload && typeof body.logoUpload === 'object') {
+        const parsedLogo = parseAndValidateLogoUpload(body.logoUpload);
+        if (parsedLogo.ok === false) {
+          return res.status(parsedLogo.statusCode).json({
+            success: false,
+            error: parsedLogo.error,
+          });
+        }
+        validatedLogoUpload = parsedLogo.logo;
+      }
 
       let existingUserId: string | undefined;
       let existingEmail: string | undefined;
@@ -2392,10 +2522,21 @@ export function attachTenantRoutes(
         primaryColour,
         secondaryColour,
         logoUrl,
+        logoUpload: validatedLogoUpload,
       });
 
       return res.status(201).json({ success: true, ...result });
     } catch (err: any) {
+      if (isTransientAuthError(err)) {
+        return res.status(503).json({
+          success: false,
+          code: 'AUTH_SERVICE_UNAVAILABLE',
+          error:
+            err instanceof AuthServiceUnavailableError
+              ? err.message
+              : 'Authentication service temporarily unavailable. Please retry shortly.',
+        });
+      }
       const msg = String(err?.message || 'Company registration failed.');
       const status = msg.toLowerCase().includes('already exists') ? 409 : 400;
       return res.status(status).json({
@@ -2582,45 +2723,21 @@ export function attachTenantRoutes(
     requireCompanyRole(['company_admin']),
     async (req: AuthenticatedRequest, res: express.Response) => {
       try {
-        const { fileName, base64Data } = req.body || {};
-        if (!base64Data || typeof base64Data !== 'string') {
-          return res.status(400).json({
+        const parsedLogo = parseAndValidateLogoUpload(req.body || {});
+        if (parsedLogo.ok === false) {
+          return res.status(parsedLogo.statusCode).json({
             success: false,
-            error: 'Missing logo image payload.',
-          });
-        }
-
-        const compact = base64Data.replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
-        if (!compact || !/^[A-Za-z0-9+/=]+$/.test(compact)) {
-          return res.status(400).json({
-            success: false,
-            error: 'Invalid base64 image payload.',
-          });
-        }
-
-        if (compact.length > 2_900_000) {
-          return res.status(413).json({
-            success: false,
-            error: 'Company logo exceeds the 2 MB maximum upload size.',
-          });
-        }
-
-        const buffer = Buffer.from(compact, 'base64');
-        const validation = validateLogoImageBuffer(buffer);
-        if (validation.valid === false) {
-          return res.status(buffer.byteLength > MAX_COMPANY_LOGO_BYTES ? 413 : 400).json({
-            success: false,
-            error: validation.error,
+            error: parsedLogo.error,
           });
         }
 
         const result = await service.uploadCompanyLogo({
           companyId: req.tenantAuth!.companyId,
           userId: req.tenantAuth!.userId,
-          fileName: typeof fileName === 'string' && fileName.trim() ? fileName.trim() : `logo.${validation.ext}`,
-          mimeType: validation.mimeType,
-          ext: validation.ext,
-          buffer,
+          fileName: parsedLogo.logo.fileName,
+          mimeType: parsedLogo.logo.mimeType,
+          ext: parsedLogo.logo.ext,
+          buffer: parsedLogo.logo.buffer,
         });
 
         return res.status(201).json({
@@ -2840,12 +2957,33 @@ export function attachTenantRoutes(
     async (req: AuthenticatedRequest, res: express.Response) => {
       try {
         const project = req.body?.project as CourseProject | undefined;
+        const expectedUpdatedAt =
+          typeof req.body?.expectedUpdatedAt === 'string' && req.body.expectedUpdatedAt.trim()
+            ? req.body.expectedUpdatedAt.trim()
+            : undefined;
         if (!project || typeof project !== 'object') {
           return res.status(400).json({ success: false, error: 'Missing course project payload.' });
         }
         const existingProject = service.getCourse
           ? await service.getCourse(req.tenantAuth!.companyId, req.params.courseId)
           : null;
+        if (existingProject && expectedUpdatedAt) {
+          const expectedMs = Date.parse(expectedUpdatedAt);
+          const existingMs = Date.parse(String(existingProject.updatedAt || ''));
+          const mismatch =
+            Number.isFinite(expectedMs) && Number.isFinite(existingMs)
+              ? Math.abs(expectedMs - existingMs) > 0
+              : String(existingProject.updatedAt || '') !== expectedUpdatedAt;
+          if (mismatch) {
+            return res.status(409).json({
+              success: false,
+              code: 'VERSION_CONFLICT',
+              error:
+                'This course was updated in another session or tab. Review the latest cloud version before overwriting.',
+              serverCourse: existingProject,
+            });
+          }
+        }
         const govCheck = validateCourseGovernanceMutation({
           actorRole: req.tenantAuth!.role,
           actorGovernanceRoles: req.tenantAuth!.governanceRoles,
@@ -2859,12 +2997,22 @@ export function attachTenantRoutes(
           req.tenantAuth!.companyId,
           req.tenantAuth!.userId,
           project,
-          req.params.courseId
+          req.params.courseId,
+          expectedUpdatedAt ? { expectedUpdatedAt } : undefined
         );
         if (result.notFound) {
           return res.status(404).json({
             success: false,
             error: 'Course not found within your active company workspace.',
+          });
+        }
+        if (result.conflict) {
+          return res.status(409).json({
+            success: false,
+            code: 'VERSION_CONFLICT',
+            error:
+              'This course was updated in another session or tab. Review the latest cloud version before overwriting.',
+            serverCourse: result.project,
           });
         }
         return res.json({ success: true, course: result.project });

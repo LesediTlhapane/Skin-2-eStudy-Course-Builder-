@@ -102,17 +102,46 @@ export function computeClientAlignmentFlags(
       }
     }
 
-    if (
-      (item.type === 'mcq' || item.type === 'multi_response') &&
-      (!item.options || item.options.length < 2 || !item.correctIndices || item.correctIndices.length === 0)
-    ) {
-      flags.push({
-        id: `flag-key-${item.id}`,
-        severity: 'critical',
-        category: 'ambiguous_item',
-        message: `Assessment "${item.title}" is missing answer options or a correct answer key.`,
-        targetId: item.id,
-      });
+    if (item.type === 'mcq' || item.type === 'multi_response') {
+      const opts = Array.isArray(item.options) ? item.options : [];
+      const keys = Array.isArray(item.correctIndices) ? item.correctIndices : [];
+      const hasOutOfRangeKey = keys.some(
+        idx => !Number.isInteger(idx) || idx < 0 || idx >= opts.length
+      );
+      if (opts.length < 2 || keys.length === 0 || hasOutOfRangeKey) {
+        flags.push({
+          id: `flag-key-${item.id}`,
+          severity: 'critical',
+          category: 'ambiguous_item',
+          message: `Assessment "${item.title}" has missing options (<2), no answer key, or an out-of-range correct index.`,
+          targetId: item.id,
+        });
+      } else {
+        const normalizedOpts = opts.map(o => String(o || '').trim().toLowerCase()).filter(Boolean);
+        const hasDuplicateOpts =
+          normalizedOpts.length !== opts.length ||
+          new Set(normalizedOpts).size < normalizedOpts.length;
+        const hasGiveawayOpt = opts.some(o =>
+          /\b(all of the above|none of the above|all the above|none the above)\b/i.test(String(o || ''))
+        );
+        if (hasDuplicateOpts) {
+          flags.push({
+            id: `flag-dup-opts-${item.id}`,
+            severity: 'warning',
+            category: 'weak_distractors',
+            message: `Assessment "${item.title}" contains blank or duplicate answer options.`,
+            targetId: item.id,
+          });
+        } else if (opts.length < 4 || hasGiveawayOpt) {
+          flags.push({
+            id: `flag-weak-distractors-${item.id}`,
+            severity: 'warning',
+            category: 'weak_distractors',
+            message: `Assessment "${item.title}" should use at least 4 plausible options without "all/none of the above" giveaways.`,
+            targetId: item.id,
+          });
+        }
+      }
     }
 
     if (!item.modelAnswer?.trim() && !item.markingGuide?.trim()) {

@@ -50,6 +50,77 @@ function parseRetryAfterWaitMs(res: Response | null): number {
   return 1200;
 }
 
+export type AiFailureCategory =
+  | 'rate_limit_store_unavailable'
+  | 'auth_service_unavailable'
+  | 'concurrency_limit'
+  | 'app_rate_limit'
+  | 'provider_capacity'
+  | 'timeout'
+  | 'auth_or_permission'
+  | 'validation_or_conflict'
+  | 'unknown';
+
+export function classifyAiFailure(
+  res: Response | null,
+  data: any
+): AiFailureCategory {
+  const code = String(data?.code || '').trim().toUpperCase();
+  if (code === 'RATE_LIMIT_UNAVAILABLE') return 'rate_limit_store_unavailable';
+  if (code === 'AUTH_SERVICE_UNAVAILABLE') return 'auth_service_unavailable';
+  if (code === 'AI_CONCURRENCY_LIMIT') return 'concurrency_limit';
+  if (!res) return 'provider_capacity';
+  if (res.status === 401 || res.status === 403) return 'auth_or_permission';
+  if (res.status === 400 || res.status === 404 || res.status === 409 || res.status === 413) {
+    return 'validation_or_conflict';
+  }
+  if (res.status === 504) return 'timeout';
+  if (res.status === 429) {
+    return data?.retryAfterSeconds ? 'app_rate_limit' : 'provider_capacity';
+  }
+  if (res.status === 502 || res.status === 503) return 'provider_capacity';
+  return 'unknown';
+}
+
+export function formatAiErrorMessage(
+  res: Response | null,
+  data: any,
+  usedBackupModel: boolean,
+  fallback = 'AI generation failed. Your existing course content was preserved.'
+): string {
+  const category = classifyAiFailure(res, data);
+  const rawError = String(data?.error || '').trim();
+  if (category === 'rate_limit_store_unavailable') {
+    return (
+      rawError ||
+      'Request rate-limit verification is temporarily unavailable. Your course content was not modified — please retry shortly.'
+    );
+  }
+  if (category === 'auth_service_unavailable') {
+    return (
+      rawError ||
+      'Authentication verification is temporarily unavailable. Your course content is safe — please retry shortly.'
+    );
+  }
+  if (category === 'concurrency_limit') {
+    return (
+      rawError ||
+      'An AI generation request is already in progress. Please wait for it to finish before retrying.'
+    );
+  }
+  if (category === 'timeout') {
+    return usedBackupModel
+      ? 'Primary and backup AI models timed out. Your existing course content was preserved — please retry.'
+      : 'The AI request timed out. Your existing course content was preserved — please retry.';
+  }
+  if (usedBackupModel && (!res || !res.ok)) {
+    return rawError
+      ? `${rawError} (Backup AI model also failed; existing course content preserved.)`
+      : 'Primary and backup AI models were temporarily unavailable. Existing course content preserved.';
+  }
+  return rawError || fallback;
+}
+
 export async function apiFetchWithAiBackup<T = any>(
   input: RequestInfo | URL,
   payload: Record<string, any>,
@@ -58,7 +129,12 @@ export async function apiFetchWithAiBackup<T = any>(
     fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
     retryDelayMs?: number;
   }
-): Promise<{ res: Response; data: T; usedBackupModel: boolean }> {
+): Promise<{
+  res: Response;
+  data: T;
+  usedBackupModel: boolean;
+  failureCategory?: AiFailureCategory;
+}> {
   const fetcher = options?.fetchImpl || apiFetch;
 
   let firstRes: Response | null = null;
@@ -79,18 +155,23 @@ export async function apiFetchWithAiBackup<T = any>(
     firstNetworkErr = err;
   }
 
-  const retryableStatus =
-    firstRes !== null &&
-    (firstRes.status === 429 ||
-      firstRes.status === 502 ||
-      firstRes.status === 503 ||
-      firstRes.status === 504);
+  const failureCategory = firstNetworkErr
+    ? 'provider_capacity'
+    : classifyAiFailure(firstRes, firstData);
 
-  if (!firstNetworkErr && !retryableStatus) {
+  // Never mask infrastructure failures (rate-limiter outage, auth outage, concurrency gate,
+  // client/validation/conflict errors) as AI model failures requiring backup model failover.
+  const shouldFailoverToBackupModel =
+    Boolean(firstNetworkErr) ||
+    failureCategory === 'provider_capacity' ||
+    failureCategory === 'timeout';
+
+  if (!firstNetworkErr && !shouldFailoverToBackupModel) {
     return {
       res: firstRes!,
       data: firstData as T,
       usedBackupModel: false,
+      failureCategory,
     };
   }
 
@@ -117,6 +198,7 @@ export async function apiFetchWithAiBackup<T = any>(
     res: backupRes,
     data: backupData,
     usedBackupModel: true,
+    failureCategory: backupRes.ok ? undefined : classifyAiFailure(backupRes, backupData),
   };
 }
 

@@ -19,6 +19,11 @@ import {
   runAccessibilityChecks,
   runTechnicalValidationChecks,
 } from '../../utils/validationChecks.js';
+import {
+  formatFieldStatusLabel,
+  getUnresolvedComplianceRequirements,
+} from '../../utils/complianceGovernance.js';
+import { generateUniqueId } from '../../utils/id.js';
 
 export function computeAssessmentAlignmentFlags(project: CourseProject): AlignmentFlag[] {
   return computeFullAlignmentReport(project).flags;
@@ -71,12 +76,16 @@ function applyDeterministicDimensionCaps(
       const hasCriticalReg =
         hasIdPrefix(params.blockingErrors, 'popia') ||
         hasIdPrefix(params.blockingErrors, 'pepuda') ||
-        hasIdPrefix(params.blockingErrors, 'unsupported-regulated');
+        hasIdPrefix(params.blockingErrors, 'unsupported-regulated') ||
+        hasIdPrefix(params.blockingErrors, 'unverified-accreditation-claim');
       const hasMissingDisclaimer = hasIdPrefix(params.warnings, 'missing-legal-disclaimer');
+      const hasUnresolvedCompliance = hasIdPrefix(params.warnings, 'unresolved-compliance-fields');
       if (hasCriticalReg) {
-        capAt(42, 'Score capped due to critical statutory/POPIA/PEPUDA misattributions.');
+        capAt(42, 'Score capped due to critical statutory/POPIA/PEPUDA misattributions or unverified accreditation claims.');
       } else if (hasMissingDisclaimer) {
         capAt(68, 'Score capped because legal/regulatory topics lack an educational non-legal-advice disclaimer.');
+      } else if (hasUnresolvedCompliance) {
+        capAt(74, 'Score capped because regulatory/accreditation requirements remain To Be Confirmed or Require SME Validation.');
       }
       break;
     }
@@ -105,16 +114,57 @@ function applyDeterministicDimensionCaps(
     case 'technical_accuracy': {
       const hasCritTech = hasIdPrefix(params.blockingErrors, 'tech-');
       const hasWarnTech = hasIdPrefix(params.warnings, 'tech-');
+      const hasTermConflict = hasIdPrefix(params.warnings, 'term-conflict');
       if (hasCritTech) {
         capAt(45, 'Score capped due to critical AI/ML conceptual misstatements (e.g., confidence calibration or SHAP causation).');
       } else if (hasWarnTech) {
         capAt(66, 'Score capped due to imprecise ML metric or statistical interval explanations.');
+      } else if (hasTermConflict) {
+        capAt(68, 'Score capped due to conflicting key terminology definitions across modules.');
       }
       break;
     }
     case 'assessment_quality': {
-      if (params.assessmentIssuesCount > 0) {
-        capAt(48, 'Score capped due to critical assessment weighting or pass-mark reconciliation mismatch.');
+      const hasBrokenMcqKey = hasIdPrefix(params.blockingErrors, 'mcq-key');
+      const hasWeakDistractors = hasIdPrefix(params.warnings, 'mcq-quality');
+      const hasMissingAssGuide = hasIdPrefix(
+        params.warnings,
+        'missing-facilitator-separation-ass'
+      );
+      const hasUnconfirmedThresholds = hasIdPrefix(
+        params.warnings,
+        'unconfirmed-assessment-thresholds'
+      );
+      if (params.assessmentIssuesCount > 0 || hasBrokenMcqKey) {
+        capAt(48, 'Score capped due to critical assessment weighting/pass-mark mismatch or broken MCQ answer keys.');
+      } else if (hasWeakDistractors || hasMissingAssGuide) {
+        capAt(68, 'Score capped due to weak MCQ distractors (<4 options or giveaways) or missing marking guides/model answers.');
+      } else if (hasUnconfirmedThresholds) {
+        capAt(78, 'Score capped until AI-proposed assessment weighting and final pass mark are explicitly confirmed.');
+      }
+      break;
+    }
+    case 'learning_experience': {
+      const hasPedagogicalDepthDefect =
+        hasIdPrefix(params.warnings, 'ped-repetition') ||
+        hasIdPrefix(params.warnings, 'ped-thin-lesson') ||
+        hasIdPrefix(params.warnings, 'ped-outcome-echo');
+      const hasMissingFacilitatorNotes = hasIdPrefix(
+        params.warnings,
+        'missing-facilitator-separation'
+      );
+      if (hasPedagogicalDepthDefect) {
+        capAt(62, 'Score capped due to cross-module repetition, thin lesson explanations/missing worked examples, or outcome echoing.');
+      } else if (hasMissingFacilitatorNotes) {
+        capAt(72, 'Score capped because case studies, scenarios, or assessments lack separate facilitator/marking guidance.');
+      }
+      break;
+    }
+    case 'presentation_quality': {
+      const missingIntro = hasIdPrefix(params.warnings, 'missing-course-intro');
+      const genericFiller = hasIdPrefix(params.warnings, 'generic-filler');
+      if (missingIntro || genericFiller) {
+        capAt(72, 'Score capped due to incomplete structured Course Introduction or generic AI filler phrasing.');
       }
       break;
     }
@@ -194,6 +244,9 @@ export async function evaluateCourseQAWithAI(params: {
       aiMode: params.project?.brief?.aiIntegrationMode || 'optional',
       saComplianceEnabled: Boolean(params.project?.brief?.saCompliance?.enabled),
       nqfLevel: params.project?.brief?.saCompliance?.nqfLevel || 'Unspecified',
+      unresolvedComplianceRequirements: getUnresolvedComplianceRequirements(params.project).map(
+        r => `${r.label}: ${formatFieldStatusLabel(r.status)}`
+      ),
     },
     durationValidation: structuralAudit.durationValidation,
     assessmentValidation: structuralAudit.assessmentValidation,
@@ -217,6 +270,7 @@ export async function evaluateCourseQAWithAI(params: {
       passMark: params.project?.assessments?.passRequirementPercent ?? 70,
       declaredKnowledgeWeight: params.project?.assessments?.knowledgeWeightPercent ?? 40,
       declaredPracticalWeight: params.project?.assessments?.practicalWeightPercent ?? 60,
+      thresholdsConfirmed: Boolean(params.project?.assessments?.thresholdsConfirmed),
       items: safeAssessmentItems.map(a => ({
         title: a.title,
         type: a.type,
@@ -224,10 +278,16 @@ export async function evaluateCourseQAWithAI(params: {
         weight: a.weightingPercent,
         durationMinutes: a.durationMinutes || null,
         promptExcerpt: String(a.promptOrQuestion || '').slice(0, 260),
+        optionsCount: Array.isArray(a.options) ? a.options.length : 0,
+        hasGiveawayDistractor:
+          Array.isArray(a.options) &&
+          a.options.some(o => /\b(all of the above|none of the above)\b/i.test(String(o || ''))),
         hasAnswer: Boolean(a.modelAnswer?.trim()),
+        hasMarkingGuide: Boolean(a.markingGuide?.trim()),
         rubricCount: a.rubric?.length || 0,
       })),
     },
+    courseIntroduction: params.project?.content?.courseIntroduction || null,
     alignmentSummary: {
       scorePercent: alignmentReport.scorePercent,
       untaughtOutcomes: alignmentReport.flags
@@ -256,16 +316,19 @@ export async function evaluateCourseQAWithAI(params: {
         activityExcerpt: String(l.guidedActivity || '').slice(0, 220),
         practicalExcerpt: String(l.practicalApplication || '').slice(0, 220),
         workedExamplesCount: l.workedExamples?.length || 0,
+        workedExampleExcerpt: String(l.workedExamples?.[0] || '').slice(0, 220),
         keyTermsCount: l.keyTerminology?.length || 0,
         sourceClaims: (l.sourceClaims || []).slice(0, 4),
       })),
       caseStudies: (m.workplaceCaseStudies || []).map(c => ({
         title: c.title,
         backgroundExcerpt: String(c.background || '').slice(0, 380),
+        hasFacilitatorNotes: Boolean(c.facilitatorNotes?.trim()),
       })),
       scenarios: (m.scenarios || []).map(s => ({
         title: s.title,
         situationExcerpt: String(s.situation || '').slice(0, 240),
+        hasModelDebrief: Boolean(s.modelDebrief?.trim()),
       })),
       knowledgeChecksCount: (m.knowledgeChecks || []).length,
     })),
@@ -506,12 +569,20 @@ Return JSON with ALL ${params.weights.length} dimension IDs from WEIGHTS:
       'Subject-Matter Expert (SME) Validation: Review flagged technical/AI claims marked NEEDS REVIEW or UNSUPPORTED.'
     );
   }
+  const unresolvedGov = getUnresolvedComplianceRequirements(params.project);
+  if (unresolvedGov.length > 0) {
+    humanReviewRequirements.push(
+      `Client / Stakeholder Confirmation Required: Resolve ${unresolvedGov.length} unconfirmed governance requirement(s) — ${unresolvedGov
+        .map(u => `${u.label} (${formatFieldStatusLabel(u.status)})`)
+        .join('; ')}.`
+    );
+  }
   humanReviewRequirements.push(
     'Assistive-Technology Accessibility Audit: Human verification of colour contrast, keyboard navigation, and screen-reader tagging in exported documents/LMS.'
   );
 
   return {
-    id: `qa-${Date.now()}`,
+    id: generateUniqueId('qa'),
     evaluatedAt: new Date().toISOString(),
     evaluatedDataSignature: structuralAudit.dataSignature,
     weights: params.weights,

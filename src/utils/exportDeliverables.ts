@@ -12,7 +12,9 @@ import {
 } from 'docx';
 import type { CourseProject } from '../types';
 import { computeFullAlignmentReport } from './alignmentHelpers';
-import { buildScorm12ZipBytes } from './scormExport';
+import { buildScorm12ZipBytes, type ExportBrandOptions } from './scormExport';
+
+export type { ExportBrandOptions };
 
 export type DeliverableType =
   | 'complete_course'
@@ -119,15 +121,64 @@ function buildTable(headers: string[], rows: string[][]): Table {
   });
 }
 
-function buildDocxChildren(project: CourseProject, type: DeliverableType): Array<Paragraph | Table> {
+function appendCourseIntroductionDocx(
+  children: Array<Paragraph | Table>,
+  project: CourseProject
+): void {
+  const intro = project.content?.courseIntroduction;
+  if (!intro) return;
+  const hasAny =
+    intro.whyThisMatters?.trim() ||
+    intro.intendedLearners?.trim() ||
+    intro.prerequisitesSummary?.trim() ||
+    intro.outcomesOverview?.trim() ||
+    intro.structureRoadmap?.trim() ||
+    intro.assessmentOverview?.trim();
+  if (!hasAny) return;
+
+  children.push(h1('Course Introduction & Learning Journey'));
+  if (intro.whyThisMatters?.trim()) children.push(para(intro.whyThisMatters, 'Why This Matters'));
+  if (intro.intendedLearners?.trim()) children.push(para(intro.intendedLearners, 'Intended Learners'));
+  if (intro.prerequisitesSummary?.trim()) children.push(para(intro.prerequisitesSummary, 'Prerequisites'));
+  if (intro.outcomesOverview?.trim()) children.push(para(intro.outcomesOverview, 'Outcomes Overview'));
+  if (intro.structureRoadmap?.trim()) children.push(para(intro.structureRoadmap, 'Course Structure & Roadmap'));
+  if (intro.assessmentOverview?.trim()) children.push(para(intro.assessmentOverview, 'Assessment Overview'));
+}
+
+function buildCourseIntroductionHtml(project: CourseProject): string {
+  const intro = project.content?.courseIntroduction;
+  if (!intro) return '';
+  const rows = [
+    intro.whyThisMatters?.trim() ? `<p><strong>Why This Matters:</strong> ${escapeHtml(intro.whyThisMatters)}</p>` : '',
+    intro.intendedLearners?.trim() ? `<p><strong>Intended Learners:</strong> ${escapeHtml(intro.intendedLearners)}</p>` : '',
+    intro.prerequisitesSummary?.trim() ? `<p><strong>Prerequisites:</strong> ${escapeHtml(intro.prerequisitesSummary)}</p>` : '',
+    intro.outcomesOverview?.trim() ? `<p><strong>Outcomes Overview:</strong> ${escapeHtml(intro.outcomesOverview)}</p>` : '',
+    intro.structureRoadmap?.trim() ? `<p><strong>Course Structure &amp; Roadmap:</strong> ${escapeHtml(intro.structureRoadmap)}</p>` : '',
+    intro.assessmentOverview?.trim() ? `<p><strong>Assessment Overview:</strong> ${escapeHtml(intro.assessmentOverview)}</p>` : '',
+  ].filter(Boolean);
+  if (rows.length === 0) return '';
+  return `<div class="box"><h2>Course Introduction &amp; Learning Journey</h2>${rows.join('')}</div>`;
+}
+
+function formatBrandPrefix(brand?: ExportBrandOptions): string {
+  const cleanCompany = (brand?.companyName || '').trim();
+  return cleanCompany ? `${cleanCompany} · eSTUDY SOUTH AFRICA` : 'eSTUDY SOUTH AFRICA';
+}
+
+function buildDocxChildren(
+  project: CourseProject,
+  type: DeliverableType,
+  brand?: ExportBrandOptions
+): Array<Paragraph | Table> {
   const title = project.brief.title || 'Untitled Course';
   const code = project.brief.code || 'TBC';
+  const brandPrefix = formatBrandPrefix(brand);
   const children: Array<Paragraph | Table> = [
     new Paragraph({
       alignment: AlignmentType.LEFT,
       spacing: { after: 80 },
       children: [
-        new TextRun({ text: 'eSTUDY SOUTH AFRICA · ', bold: true, size: 20, color: '45CC42' }),
+        new TextRun({ text: `${brandPrefix} · `, bold: true, size: 20, color: '45CC42' }),
         new TextRun({ text: type.replace(/_/g, ' ').toUpperCase(), bold: true, size: 20, color: '052B66' }),
       ],
     }),
@@ -259,6 +310,7 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
       );
     }
 
+    appendCourseIntroductionDocx(children, project);
     children.push(h1('4. Complete Course Modules & Learning Content'));
     for (const mod of project.content.modules) {
       children.push(h2(`Module ${mod.moduleNumber}: ${mod.title}`));
@@ -408,6 +460,7 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
   } else if (type === 'learner_manual' || type === 'facilitator_guide') {
     children.push(h1('Programme Overview & Learning Outcomes'));
     children.push(para(project.brief.purpose, 'Purpose'));
+    appendCourseIntroductionDocx(children, project);
     for (const out of project.outcomes.courseOutcomes) {
       children.push(para(`${out.code} [${out.bloomLevel}]: ${out.statement}`));
     }
@@ -688,24 +741,29 @@ function buildDocxChildren(project: CourseProject, type: DeliverableType): Array
 
 export function buildDeliverableDocxDocument(
   project: CourseProject,
-  type: Exclude<DeliverableType, 'lms_package'>
+  type: Exclude<DeliverableType, 'lms_package'>,
+  brand?: ExportBrandOptions
 ): Document {
   return new Document({
     sections: [
       {
         properties: {},
-        children: buildDocxChildren(project, type),
+        children: buildDocxChildren(project, type, brand),
       },
     ],
   });
 }
 
-export async function exportDeliverableDocx(project: CourseProject, type: DeliverableType): Promise<void> {
+export async function exportDeliverableDocx(
+  project: CourseProject,
+  type: DeliverableType,
+  brand?: ExportBrandOptions
+): Promise<void> {
   if (type === 'lms_package') {
-    exportLmsPackageJson(project);
+    exportLmsPackageJson(project, brand);
     return;
   }
-  const doc = buildDeliverableDocxDocument(project, type);
+  const doc = buildDeliverableDocxDocument(project, type, brand);
   const blob = await Packer.toBlob(doc);
   downloadBlob(blob, `${slugify(project.brief.title)}-${type}.docx`);
 }
@@ -713,15 +771,17 @@ export async function exportDeliverableDocx(project: CourseProject, type: Delive
 export function exportDeliverableHtmlOrPrint(
   project: CourseProject,
   type: DeliverableType,
-  mode: 'print' | 'download_html'
+  mode: 'print' | 'download_html',
+  brand?: ExportBrandOptions
 ): void {
   if (type === 'lms_package') {
-    exportLmsPackageJson(project);
+    exportLmsPackageJson(project, brand);
     return;
   }
   const title = project.brief.title || 'Untitled Course';
   const code = project.brief.code || 'TBC';
   const label = type.replace(/_/g, ' ').toUpperCase();
+  const brandPrefix = formatBrandPrefix(brand);
 
   let bodyHtml = '';
   if (type === 'complete_course') {
@@ -762,6 +822,7 @@ export function exportDeliverableHtmlOrPrint(
         .join('')}</tbody></table>`;
     }
 
+    bodyHtml += buildCourseIntroductionHtml(project);
     bodyHtml += `<div class="page-break"></div><h2>4. Complete Course Modules &amp; Learning Content</h2>`;
     for (const mod of project.content.modules) {
       bodyHtml += `<div class="page-break"></div><h3>Module ${mod.moduleNumber}: ${escapeHtml(mod.title)}</h3>`;
@@ -833,7 +894,7 @@ export function exportDeliverableHtmlOrPrint(
         .join('')}</tbody></table>`;
     }
   } else if (type === 'learner_manual' || type === 'facilitator_guide') {
-    bodyHtml += `<h2>Programme Overview</h2><p><strong>Purpose:</strong> ${escapeHtml(project.brief.purpose)}</p>`;
+    bodyHtml += `<h2>Programme Overview</h2><p><strong>Purpose:</strong> ${escapeHtml(project.brief.purpose)}</p>${buildCourseIntroductionHtml(project)}`;
     bodyHtml += `<h3>Course Learning Outcomes</h3><ul>${project.outcomes.courseOutcomes
       .map(o => `<li><strong>${escapeHtml(o.code)} (${escapeHtml(o.bloomLevel)}):</strong> ${escapeHtml(o.statement)}</li>`)
       .join('')}</ul>`;
@@ -929,7 +990,7 @@ export function exportDeliverableHtmlOrPrint(
 </head>
 <body>
   <header>
-    <div class="brand">eSTUDY SOUTH AFRICA · ${escapeHtml(label)}</div>
+    <div class="brand">${escapeHtml(brandPrefix)} · ${escapeHtml(label)}</div>
     <h1>${escapeHtml(title)} (${escapeHtml(code)})</h1>
     <div class="meta">${escapeHtml(project.brief.industryDomain)} · ${escapeHtml(project.brief.targetAudience)} · ${escapeHtml(project.brief.estimatedDuration)}</div>
   </header>
@@ -965,19 +1026,26 @@ export function exportDeliverableHtmlOrPrint(
   }
 }
 
-export function exportScorm12PackageZip(project: CourseProject): void {
-  const bytes = buildScorm12ZipBytes(project);
+export function exportScorm12PackageZip(
+  project: CourseProject,
+  brand?: ExportBrandOptions
+): void {
+  const bytes = buildScorm12ZipBytes(project, brand);
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   const blob = new Blob([copy.buffer], { type: 'application/zip' });
   downloadBlob(blob, `${slugify(project.brief.title)}-scorm-1.2.zip`);
 }
 
-export function exportLmsPackageJson(project: CourseProject): void {
+export function exportLmsPackageJson(
+  project: CourseProject,
+  brand?: ExportBrandOptions
+): void {
   const structuredManifest = {
     schema: 'eStudy-LMS-Structured-Data-v2',
     note: 'Structured JSON data export for custom LMS/CMS API ingestion (not a SCORM ZIP package).',
     exportedAt: new Date().toISOString(),
+    companyName: (brand?.companyName || '').trim() || undefined,
     metadata: {
       title: project.brief.title,
       code: project.brief.code,
@@ -988,6 +1056,7 @@ export function exportLmsPackageJson(project: CourseProject): void {
         ? 'Aligned to selected South African workplace standards; formal accreditation requires external verification.'
         : 'Non-accredited workplace learning programme.',
     },
+    courseIntroduction: project.content?.courseIntroduction || null,
     outcomes: [...project.outcomes.courseOutcomes, ...project.outcomes.moduleOutcomes],
     modules: project.content.modules,
     assessments: project.assessments,

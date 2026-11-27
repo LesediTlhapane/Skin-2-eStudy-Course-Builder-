@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import type { AIProvider, BloomLevel, CourseProject, LearningOutcome } from '../../types';
 import { detectVagueOutcomeWarning } from '../../utils/alignmentHelpers';
-import { apiFetch, parseApiJson } from '../../utils/apiClient';
+import { apiFetchWithAiBackup, formatAiErrorMessage } from '../../utils/apiClient';
 
 interface Stage3OutcomesProps {
   project: CourseProject;
@@ -35,7 +35,9 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
   const outcomes = project.outcomes;
 
   const updateOutcomes = (patch: Partial<typeof outcomes>) => {
@@ -50,29 +52,40 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
   };
 
   const handleGenerateOutcomes = async (confirmed = false) => {
+    if (inFlightRef.current) return;
     const hasExisting =
       outcomes.courseOutcomes.length > 0 || outcomes.moduleOutcomes.length > 0;
     if (hasExisting && !confirmed) {
       setConfirmOverwrite(true);
       return;
     }
+    inFlightRef.current = true;
     setConfirmOverwrite(false);
     setIsGenerating(true);
     setErrorMsg(null);
+    setBackupNotice(null);
     try {
-      const res = await apiFetch('/api/v2/outcomes/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/outcomes/generate',
+        {
           brief: project.brief,
           curriculum: project.curriculum,
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to generate learning outcomes.');
+        throw new Error(
+          formatAiErrorMessage(
+            res,
+            data,
+            usedBackupModel,
+            'Failed to generate learning outcomes. Existing outcomes were preserved.'
+          )
+        );
+      }
+      if (usedBackupModel) {
+        setBackupNotice('Primary AI request hit temporary capacity — backup AI model completed outcome generation.');
       }
       onUpdateProject(
         prev => ({
@@ -84,6 +97,7 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
     } catch (err: any) {
       setErrorMsg(err?.message || 'Outcome generation failed.');
     } finally {
+      inFlightRef.current = false;
       setIsGenerating(false);
     }
   };
@@ -195,6 +209,13 @@ export const Stage3Outcomes: React.FC<Stage3OutcomesProps> = ({
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {backupNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
+          <span>{backupNotice}</span>
         </div>
       )}
 

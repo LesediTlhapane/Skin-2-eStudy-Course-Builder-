@@ -42,8 +42,24 @@ export default function App() {
   const [preselectedTemplateId, setPreselectedTemplateId] = useState<string | undefined>(undefined);
   const [isCompanySettingsOpen, setIsCompanySettingsOpen] = useState(false);
   const [isLocalMigrationOpen, setIsLocalMigrationOpen] = useState(false);
+  const [pendingLeaveAction, setPendingLeaveAction] = useState<{
+    label: string;
+    proceed: () => void | Promise<void>;
+  } | null>(null);
+  const [isFlushingBeforeLeave, setIsFlushingBeforeLeave] = useState(false);
 
   const perms = getRolePermissions(activeRole, activeGovernanceRoles);
+  const needsUnsavedGuard =
+    !perms.isReadOnly &&
+    (store.hasUnsavedChanges || store.saveState === 'saving' || Boolean(store.saveError));
+
+  const runWithUnsavedGuard = (label: string, proceed: () => void | Promise<void>) => {
+    if (needsUnsavedGuard) {
+      setPendingLeaveAction({ label, proceed });
+      return;
+    }
+    void proceed();
+  };
 
   if (isInitializing) {
     return (
@@ -74,25 +90,92 @@ export default function App() {
         profile={profile}
         memberships={memberships}
         pendingLocalMigrationCount={store.pendingLocalMigrationCount}
-        onNavigate={store.setRoute}
+        onNavigate={nextRoute => {
+          if (nextRoute === store.route) return;
+          if (store.route === 'workspace' && nextRoute !== 'workspace') {
+            runWithUnsavedGuard(`switch to ${nextRoute}`, () => store.setRoute(nextRoute));
+            return;
+          }
+          store.setRoute(nextRoute);
+        }}
         onOpenNewCourse={() => {
           if (!perms.canCreateOrDeleteCourse) return;
           setPreselectedTemplateId(undefined);
           setIsNewCourseModalOpen(true);
         }}
-        onSwitchCompany={companyId => void setActiveCompanyId(companyId)}
+        onSwitchCompany={companyId => {
+          if (companyId === activeCompany.id) return;
+          runWithUnsavedGuard('switch company workspace', () => setActiveCompanyId(companyId));
+        }}
         onOpenCompanySettings={() => setIsCompanySettingsOpen(true)}
         onOpenLocalMigration={() => {
           if (!perms.canCreateOrDeleteCourse) return;
           setIsLocalMigrationOpen(true);
         }}
         onSignOut={() => {
-          void (async () => {
+          runWithUnsavedGuard('sign out', async () => {
             await store.flushSaveNow().catch(() => {});
             await signOut();
-          })();
+          });
         }}
       />
+
+      {pendingLeaveAction && (
+        <div className="bg-amber-50 border-b border-amber-300 px-4 sm:px-6 py-2.5 text-xs text-amber-950 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+            <span>
+              <strong>Unsaved changes detected:</strong>{' '}
+              {store.saveError
+                ? 'Your latest course edits failed to sync to the cloud. Save now or continue using your local browser backup before you'
+                : 'Your active course still has unsynced edits. Save now before you'}{' '}
+              {pendingLeaveAction.label}.
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={isFlushingBeforeLeave}
+              onClick={() => {
+                void (async () => {
+                  setIsFlushingBeforeLeave(true);
+                  try {
+                    const ok = await store.flushSaveNow();
+                    if (ok !== false) {
+                      const action = pendingLeaveAction.proceed;
+                      setPendingLeaveAction(null);
+                      await action();
+                    }
+                  } finally {
+                    setIsFlushingBeforeLeave(false);
+                  }
+                })();
+              }}
+              className="px-2.5 py-1 rounded bg-primary text-primary-contrast font-semibold cursor-pointer disabled:opacity-60"
+            >
+              {isFlushingBeforeLeave ? 'Saving...' : 'Save & Continue'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const action = pendingLeaveAction.proceed;
+                setPendingLeaveAction(null);
+                void action();
+              }}
+              className="px-2.5 py-1 rounded border border-amber-400 bg-white text-amber-950 font-semibold cursor-pointer"
+            >
+              Continue (Keep Local Backup)
+            </button>
+            <button
+              type="button"
+              onClick={() => setPendingLeaveAction(null)}
+              className="px-2 py-1 text-amber-800 hover:text-amber-950 font-semibold cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {store.saveError && (
         <div className="bg-red-50 border-b border-red-200 px-4 sm:px-6 py-2.5 text-xs text-red-800 flex items-center justify-between gap-3">
@@ -100,14 +183,23 @@ export default function App() {
             <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
             <span>{store.saveError}</span>
           </div>
-          <button
-            type="button"
-            onClick={store.clearSaveError}
-            aria-label="Dismiss save error"
-            className="p-1 text-red-700 hover:text-red-900 cursor-pointer shrink-0"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => void store.flushSaveNow()}
+              className="px-2.5 py-1 rounded bg-red-700 hover:bg-red-800 text-white font-semibold cursor-pointer"
+            >
+              Retry Save
+            </button>
+            <button
+              type="button"
+              onClick={store.clearSaveError}
+              aria-label="Dismiss save error"
+              className="p-1 text-red-700 hover:text-red-900 cursor-pointer shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -234,6 +326,7 @@ export default function App() {
       {store.route === 'workspace' && store.activeProject && (
         <CourseWorkspace
           project={store.activeProject}
+          companyName={activeCompany.companyName}
           template={activeTemplate}
           activeRole={activeRole}
           activeGovernanceRoles={activeGovernanceRoles}
@@ -242,6 +335,7 @@ export default function App() {
           saveState={store.saveState}
           lastSavedAt={store.lastSavedAt}
           saveError={store.saveError}
+          hasUnsavedChanges={store.hasUnsavedChanges}
           selectedProvider={store.selectedProvider}
           selectedModel={store.selectedModel}
           onBackToDashboard={() => store.setRoute('dashboard')}

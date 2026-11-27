@@ -331,7 +331,31 @@ describe('Priority 3 & Exports — Cloud Version History, Payload Compaction, Se
     }
   });
 
-  it('automatically activates backup AI model failover on 429/503 responses and reads backup Groq key/model env settings', async () => {
+  it('blocks backup failover on rate-limit/auth/concurrency infra errors and fails over cleanly on genuine AI provider capacity errors', async () => {
+    for (const infraError of [
+      { status: 503, code: 'RATE_LIMIT_UNAVAILABLE', error: 'Distributed rate limit unavailable.' },
+      { status: 503, code: 'AUTH_SERVICE_UNAVAILABLE', error: 'Auth verification unavailable.' },
+      { status: 429, code: 'AI_CONCURRENCY_LIMIT', error: 'Too many concurrent AI requests.', retryAfterSeconds: 5 },
+      { status: 401, code: undefined, error: 'Invalid token.' },
+    ]) {
+      const infraCalls: number[] = [];
+      const mockInfraFetch = async (): Promise<Response> => {
+        infraCalls.push(1);
+        return new Response(
+          JSON.stringify({ success: false, ...infraError }),
+          { status: infraError.status, headers: { 'Content-Type': 'application/json' } }
+        );
+      };
+      const infraRes = await apiFetchWithAiBackup<any>(
+        '/api/v2/content/regenerate',
+        { model: 'openai/gpt-oss-120b', targetType: 'lesson' },
+        { fetchImpl: mockInfraFetch, retryDelayMs: 0 }
+      );
+      expect(infraRes.usedBackupModel).toBe(false);
+      expect(infraCalls).toHaveLength(1);
+      expect(infraRes.res.status).toBe(infraError.status);
+    }
+
     const calls: Array<{ url: string; body: any }> = [];
     const mockFetch = async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const parsedBody = JSON.parse(String(init?.body || '{}'));
@@ -340,8 +364,7 @@ describe('Priority 3 & Exports — Cloud Version History, Payload Compaction, Se
         return new Response(
           JSON.stringify({
             success: false,
-            code: 'RATE_LIMIT_UNAVAILABLE',
-            error: 'Service temporarily unavailable while verifying request rate limits.',
+            error: 'Groq upstream model temporarily overloaded (503).',
           }),
           { status: 503, headers: { 'Content-Type': 'application/json' } }
         );
@@ -384,5 +407,79 @@ describe('Priority 3 & Exports — Cloud Version History, Payload Compaction, Se
       if (prevBackupModel === undefined) delete process.env.GROQ_BACKUP_MODEL;
       else process.env.GROQ_BACKUP_MODEL = prevBackupModel;
     }
+  });
+
+  it('rejects stale course saves with HTTP 409 VERSION_CONFLICT and returns authoritative serverCourse', async () => {
+    const env = createInMemoryTenantEnv();
+    const app = express();
+    app.use(express.json({ limit: '4mb' }));
+    app.use(
+      '/api',
+      createApiRouter({
+        rateLimitStore: new MemoryRateLimitStore(),
+        tenantDeps: {
+          authVerifier: env.authVerifier,
+          service: env.service,
+          isConfiguredFn: () => true,
+        },
+      })
+    );
+
+    const initialCourse = await env.service.getCourse?.(COMPANY_A_ID, 'course-1');
+    expect(initialCourse).toBeDefined();
+    const initialUpdatedAt = initialCourse!.updatedAt;
+
+    // Tab A saves cleanly with expectedUpdatedAt matching server
+    const firstSave = await request(app)
+      .put('/api/v2/courses/course-1')
+      .set('Authorization', 'Bearer token-author-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({
+        expectedUpdatedAt: initialUpdatedAt,
+        project: {
+          ...initialCourse,
+          brief: { ...initialCourse!.brief, title: 'Tab A Newer Title' },
+        },
+      });
+    expect(firstSave.status).toBe(200);
+    expect(firstSave.body.course.updatedAt).not.toBe(initialUpdatedAt);
+
+    // Tab B submits stale expectedUpdatedAt -> must fail with 409 VERSION_CONFLICT without overwriting Tab A
+    const staleSave = await request(app)
+      .put('/api/v2/courses/course-1')
+      .set('Authorization', 'Bearer token-author-a')
+      .set('X-Company-Id', COMPANY_A_ID)
+      .send({
+        expectedUpdatedAt: initialUpdatedAt,
+        project: {
+          ...initialCourse,
+          brief: { ...initialCourse!.brief, title: 'Tab B Stale Overwrite' },
+        },
+      });
+    expect(staleSave.status).toBe(409);
+    expect(staleSave.body.code).toBe('VERSION_CONFLICT');
+    expect(staleSave.body.serverCourse.brief.title).toBe('Tab A Newer Title');
+  });
+
+  it('propagates Stage 2 and Stage 5 lesson durations into SCORM 1.2 and DOCX exports', async () => {
+    const project = buildSampleCourseProject();
+    project.curriculum.modules[0].lessons[0].durationMinutes = 45;
+    project.content.modules[0].lessons[0].durationMinutes = 45;
+
+    const scormEntries = buildScorm12ZipEntries(project);
+    const mod1Entry = scormEntries.find(e => e.name === 'module-1.html');
+    const mod1Html =
+      typeof mod1Entry?.content === 'string'
+        ? mod1Entry.content
+        : mod1Entry?.content
+          ? new TextDecoder().decode(mod1Entry.content)
+          : '';
+    expect(mod1Html).toContain('45 min');
+
+    const doc = buildDeliverableDocxDocument(project, 'complete_course');
+    const docxBuffer = await Packer.toBuffer(doc);
+    expect(docxBuffer.byteLength).toBeGreaterThan(1000);
+    expect(docxBuffer[0]).toBe(0x50);
+    expect(docxBuffer[1]).toBe(0x4b);
   });
 });

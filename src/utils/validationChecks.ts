@@ -8,6 +8,10 @@ import type {
   SourceVerificationSummary,
   TechnicalValidationSummary,
 } from '../types.js';
+import {
+  detectUnsupportedComplianceClaims,
+  getUnresolvedComplianceRequirements,
+} from './complianceGovernance.js';
 
 function splitSentences(text: string): string[] {
   return text
@@ -834,6 +838,11 @@ export function runDomainQualityChecks(project: CourseProject): {
     }
   }
 
+  // 7. COMPLIANCE ANTI-FABRICATION & UNRESOLVED GOVERNANCE CONFIRMATION CHECKS
+  for (const compIssue of detectUnsupportedComplianceClaims(project)) {
+    pushUnique(compIssue.id, compIssue);
+  }
+
   const unverifiedStatClaims = issues.filter(i => i.id.startsWith('warn-unverified-stat-')).length;
 
   return {
@@ -870,6 +879,13 @@ export function runTechnicalValidationChecks(project: CourseProject): TechnicalV
 
   const unverifiedBriefFields = Object.entries(project.brief?.fieldStatuses || {}).filter(
     ([, st]) => st === 'to_be_confirmed' || st === 'requires_sme_validation'
+  );
+  const unresolvedComplianceReqs = getUnresolvedComplianceRequirements(project);
+  const combinedUnverifiedLabels = Array.from(
+    new Set([
+      ...unverifiedBriefFields.map(([k]) => k),
+      ...unresolvedComplianceReqs.map(r => r.label),
+    ])
   );
 
   const combinedCorpus = modules
@@ -953,13 +969,22 @@ export function runTechnicalValidationChecks(project: CourseProject): TechnicalV
     },
     {
       id: 'tech-metadata-tbc',
-      label: 'Unverified Programme Metadata Flags',
-      status: unverifiedBriefFields.length === 0 ? 'pass' : 'warning',
+      label: 'Unverified Programme & Compliance Metadata Flags',
+      status: combinedUnverifiedLabels.length === 0 ? 'pass' : 'warning',
       details:
-        unverifiedBriefFields.length === 0
-          ? 'All tracked Stage 1 brief metadata fields are marked Confirmed.'
-          : `${unverifiedBriefFields.length} metadata field(s) remain To Be Confirmed or Require SME Validation: ${unverifiedBriefFields.map(([k]) => k).join(', ')}.`,
-      affectedSections: unverifiedBriefFields.length > 0 ? ['Stage 1 · Course Brief'] : [],
+        combinedUnverifiedLabels.length === 0
+          ? 'All tracked Stage 1 brief & Stage 4 governance compliance items are Confirmed or marked Not Applicable.'
+          : `${combinedUnverifiedLabels.length} metadata/compliance item(s) remain To Be Confirmed or Require SME Validation: ${combinedUnverifiedLabels.join(', ')}.`,
+      affectedSections:
+        combinedUnverifiedLabels.length > 0
+          ? Array.from(
+              new Set(
+                unresolvedComplianceReqs.some(r => r.stage === 4)
+                  ? ['Stage 1 · Course Brief', 'Stage 4 · Assessments']
+                  : ['Stage 1 · Course Brief']
+              )
+            )
+          : [],
     },
   ];
 
@@ -967,8 +992,443 @@ export function runTechnicalValidationChecks(project: CourseProject): TechnicalV
     verifiedClaimsCount: verifiedClaims.length,
     needsReviewClaimsCount: needsReviewClaims.length,
     unsupportedClaimsCount: unsupportedClaims.length,
-    unverifiedBriefFieldsCount: unverifiedBriefFields.length,
+    unverifiedBriefFieldsCount: combinedUnverifiedLabels.length,
     technicalIndicatorsDetected,
     checks,
   };
 }
+
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'your', 'will',
+  'have', 'what', 'when', 'where', 'which', 'how', 'are', 'was', 'were', 'been',
+  'being', 'about', 'their', 'there', 'these', 'those', 'such', 'than', 'then',
+  'only', 'also', 'more', 'most', 'some', 'many', 'each', 'other', 'within',
+  'across', 'through', 'between', 'using', 'used', 'can', 'could', 'should',
+  'would', 'must', 'may', 'might', 'course', 'module', 'lesson', 'learners',
+  'learner', 'participants',
+]);
+
+function significantTokens(text: string): Set<string> {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 4 && !STOPWORDS.has(w));
+  return new Set(words);
+}
+
+function buildFiveWordShingles(text: string): Set<string> {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const shingles = new Set<string>();
+  if (words.length < 5) return shingles;
+  for (let i = 0; i <= words.length - 5; i++) {
+    shingles.add(words.slice(i, i + 5).join(' '));
+  }
+  return shingles;
+}
+
+const GENERIC_FILLER_REGEX =
+  /\b(in today'?s fast[- ]paced world|delve into|game[- ]changer|ever[- ]evolving landscape|tapestry of|testament to|unlock the power of|navigating the complexities|paradigm shift|at the end of the day|synergistic leverage)\b/i;
+
+export function runPedagogicalAndQualityChecks(project: CourseProject): {
+  issues: QAIssueItem[];
+} {
+  const issues: QAIssueItem[] = [];
+  const seenIds = new Set<string>();
+  const addIssue = (issue: QAIssueItem) => {
+    if (seenIds.has(issue.id)) return;
+    seenIds.add(issue.id);
+    issues.push(issue);
+  };
+
+  const genModules = project.content?.modules || [];
+  const allOutcomes = [
+    ...(project.outcomes?.courseOutcomes || []),
+    ...(project.outcomes?.moduleOutcomes || []),
+  ];
+  const outcomeById = new Map(allOutcomes.map(o => [o.id, o]));
+
+  // 1. Structured Course Introduction Check (when generated content exists)
+  if (genModules.length > 0) {
+    const intro = project.content?.courseIntroduction;
+    const missingIntroFields: string[] = [];
+    if (!intro?.whyThisMatters?.trim()) missingIntroFields.push('Why This Matters');
+    if (!intro?.intendedLearners?.trim()) missingIntroFields.push('Intended Learners');
+    if (!intro?.prerequisitesSummary?.trim()) missingIntroFields.push('Prerequisites Summary');
+    if (!intro?.outcomesOverview?.trim()) missingIntroFields.push('Outcomes Overview');
+    if (!intro?.structureRoadmap?.trim()) missingIntroFields.push('Structure Roadmap');
+    if (!intro?.assessmentOverview?.trim()) missingIntroFields.push('Assessment Overview');
+
+    const titleNorm = (project.brief?.title || '').trim().toLowerCase();
+    const purposeNorm = (project.brief?.purpose || '').trim().toLowerCase();
+    const whyNorm = (intro?.whyThisMatters || '').trim().toLowerCase();
+    const echoesTitleOrPurpose =
+      Boolean(intro?.whyThisMatters?.trim()) &&
+      ((titleNorm.length > 10 && whyNorm === titleNorm) ||
+        (purposeNorm.length > 15 && whyNorm === purposeNorm));
+
+    if (missingIntroFields.length > 0 || echoesTitleOrPurpose) {
+      addIssue({
+        id: 'warn-missing-course-intro',
+        severity: 'warning',
+        prioritySeverity: 'medium',
+        verificationOrigin: 'automated',
+        rule: 'Structured Course Introduction',
+        description: echoesTitleOrPurpose
+          ? 'The Course Introduction "Why This Matters" field merely repeats the Stage 1 title or purpose verbatim instead of framing workplace relevance for learners.'
+          : `Course Introduction is incomplete for the learning journey (missing: ${missingIntroFields.join(', ')}).`,
+        stage: 5,
+        affectedSection: 'Stage 5 · Course Introduction',
+        recommendedFix:
+          'Author or generate a complete 6-part Course Introduction in Stage 5 explaining relevance, audience, prerequisites, outcomes, roadmap, and assessment expectations.',
+      });
+    }
+  }
+
+  // 2. Lesson Depth, Outcome-Echoing, Cross-Lesson Repetition, Filler & Terminology Conflicts
+  const lessonShingleRecords: Array<{
+    label: string;
+    moduleNumber: number;
+    shingles: Set<string>;
+  }> = [];
+  const termDefinitions = new Map<
+    string,
+    Array<{ moduleNumber: number; term: string; definition: string; tokens: Set<string> }>
+  >();
+
+  const titleTokens = significantTokens(project.brief?.title || '');
+
+  for (const mod of genModules) {
+    for (const lesson of mod.lessons || []) {
+      const label = `M${mod.moduleNumber}: ${lesson.title}`;
+      const explanation = (lesson.explanation || '').trim();
+      const explanationWords = countWords(explanation);
+      const hasWorkedExample =
+        Array.isArray(lesson.workedExamples) &&
+        lesson.workedExamples.some(ex => String(ex || '').trim().length >= 25);
+      const hasPractice =
+        Boolean(lesson.practicalApplication?.trim()) ||
+        Boolean(lesson.guidedActivity?.trim());
+
+      if (explanationWords < 120 || !hasWorkedExample || !hasPractice) {
+        const gaps: string[] = [];
+        if (explanationWords < 120) gaps.push(`explanation only ${explanationWords} words (<120)`);
+        if (!hasWorkedExample) gaps.push('missing substantive worked example');
+        if (!hasPractice) gaps.push('missing practical application or guided activity');
+        addIssue({
+          id: `warn-ped-thin-lesson-${mod.moduleNumber}-${lesson.id}`,
+          severity: 'warning',
+          prioritySeverity: 'medium',
+          verificationOrigin: 'automated',
+          rule: 'Instructional Depth: Thin Lesson Content',
+          description: `${label} lacks instructional depth (${gaps.join('; ')}).`,
+          stage: 5,
+          moduleNumber: mod.moduleNumber,
+          affectedSection: `Stage 5 · ${label}`,
+          recommendedFix:
+            'Expand the lesson explanation with concrete domain mechanics, at least one realistic worked example, and an audience-appropriate practical activity.',
+        });
+      }
+
+      // Hollow outcome-echoing check
+      if (explanationWords > 0 && explanationWords < 180) {
+        const mappedOutText = (lesson.outcomeIds || [])
+          .map(id => outcomeById.get(id)?.statement || '')
+          .join(' ');
+        const referenceTokens = new Set([
+          ...Array.from(significantTokens(mappedOutText)),
+          ...Array.from(titleTokens),
+        ]);
+        const explTokens = significantTokens(explanation);
+        if (explTokens.size > 0 && referenceTokens.size > 0) {
+          let shared = 0;
+          for (const tok of explTokens) {
+            if (referenceTokens.has(tok)) shared++;
+          }
+          const echoRatio = shared / explTokens.size;
+          if (echoRatio >= 0.72) {
+            addIssue({
+              id: `warn-ped-outcome-echo-${mod.moduleNumber}-${lesson.id}`,
+              severity: 'warning',
+              prioritySeverity: 'medium',
+              verificationOrigin: 'automated',
+              rule: 'Instructional Depth: Outcome Echoing',
+              description: `${label} mostly restates the learning outcome or course title without teaching underlying concepts, steps, or decision criteria.`,
+              stage: 5,
+              moduleNumber: mod.moduleNumber,
+              affectedSection: `Stage 5 · ${label}`,
+              recommendedFix:
+                'Replace summary-style restatement with concrete instructional exposition, decision criteria, and illustrative workplace examples.',
+            });
+          }
+        }
+      }
+
+      // Generic AI filler phrase check
+      const combinedLessonText = [
+        explanation,
+        ...(lesson.workedExamples || []),
+        lesson.practicalApplication || '',
+        lesson.guidedActivity || '',
+      ].join('\n');
+      const fillerMatch = combinedLessonText.match(GENERIC_FILLER_REGEX);
+      if (fillerMatch) {
+        addIssue({
+          id: `warn-generic-filler-${mod.moduleNumber}-${lesson.id}`,
+          severity: 'warning',
+          prioritySeverity: 'low',
+          verificationOrigin: 'automated',
+          rule: 'Commercial Prose Quality: Generic AI Cliché',
+          description: `${label} contains generic AI filler phrasing ("${fillerMatch[0]}").`,
+          stage: 5,
+          moduleNumber: mod.moduleNumber,
+          affectedSection: `Stage 5 · ${label}`,
+          exampleExcerpt: excerptAround(combinedLessonText, fillerMatch.index || 0),
+          recommendedFix:
+            'Replace generic buzzwords with concrete domain terminology and specific workplace actions.',
+        });
+      }
+
+      // Track shingles for cross-lesson/module repetition
+      const shingles = buildFiveWordShingles(explanation);
+      if (shingles.size >= 15) {
+        lessonShingleRecords.push({
+          label,
+          moduleNumber: mod.moduleNumber,
+          shingles,
+        });
+      }
+
+      // Track terminology definitions
+      for (const kt of lesson.keyTerminology || []) {
+        const termKey = (kt.term || '').trim().toLowerCase();
+        const def = (kt.definition || '').trim();
+        if (!termKey || countWords(def) < 5) continue;
+        const list = termDefinitions.get(termKey) || [];
+        list.push({
+          moduleNumber: mod.moduleNumber,
+          term: kt.term.trim(),
+          definition: def,
+          tokens: significantTokens(def),
+        });
+        termDefinitions.set(termKey, list);
+      }
+    }
+
+    // Learner vs Facilitator separation in Stage 5
+    for (const cs of mod.workplaceCaseStudies || []) {
+      if (!cs.facilitatorNotes?.trim()) {
+        addIssue({
+          id: `warn-missing-facilitator-separation-cs-${mod.moduleNumber}-${cs.id}`,
+          severity: 'warning',
+          prioritySeverity: 'medium',
+          verificationOrigin: 'automated',
+          rule: 'Learner vs Facilitator Separation',
+          description: `Module ${mod.moduleNumber} case study "${cs.title}" is missing Facilitator Notes / evaluation guidance.`,
+          stage: 5,
+          moduleNumber: mod.moduleNumber,
+          affectedSection: `Stage 5 · Module ${mod.moduleNumber} Case Study`,
+          recommendedFix:
+            'Add structured facilitator debrief notes kept separate from learner-facing case questions.',
+        });
+      }
+    }
+    for (const sc of mod.scenarios || []) {
+      if (!sc.modelDebrief?.trim()) {
+        addIssue({
+          id: `warn-missing-facilitator-separation-sc-${mod.moduleNumber}-${sc.id}`,
+          severity: 'warning',
+          prioritySeverity: 'medium',
+          verificationOrigin: 'automated',
+          rule: 'Learner vs Facilitator Separation',
+          description: `Module ${mod.moduleNumber} scenario "${sc.title}" is missing a Model Debrief for facilitator/assessment review.`,
+          stage: 5,
+          moduleNumber: mod.moduleNumber,
+          affectedSection: `Stage 5 · Module ${mod.moduleNumber} Scenario`,
+          recommendedFix:
+            'Add a model debrief explaining the sound reasoning and common errors for this scenario.',
+        });
+      }
+    }
+
+    // Stage 5 Knowledge Check MCQ validation
+    for (const kc of mod.knowledgeChecks || []) {
+      const opts = Array.isArray(kc.options) ? kc.options : [];
+      const badKey =
+        opts.length < 2 ||
+        !Number.isInteger(kc.correctIndex) ||
+        kc.correctIndex < 0 ||
+        kc.correctIndex >= opts.length;
+      if (badKey) {
+        addIssue({
+          id: `blk-mcq-key-kc-${mod.moduleNumber}-${kc.id}`,
+          severity: 'blocking',
+          prioritySeverity: 'critical',
+          verificationOrigin: 'automated',
+          rule: 'Valid Knowledge Check Answer Key',
+          description: `Module ${mod.moduleNumber} knowledge check "${kc.question.slice(0, 60)}" has fewer than 2 options or an out-of-range correctIndex (${kc.correctIndex}).`,
+          stage: 5,
+          moduleNumber: mod.moduleNumber,
+          affectedSection: `Stage 5 · Module ${mod.moduleNumber} Knowledge Check`,
+          recommendedFix:
+            'Provide 4 plausible options and verify that correctIndex points to the valid correct option.',
+        });
+      } else {
+        const normOpts = opts.map(o => String(o || '').trim().toLowerCase()).filter(Boolean);
+        const hasDup = normOpts.length !== opts.length || new Set(normOpts).size < normOpts.length;
+        const hasGiveaway = opts.some(o =>
+          /\b(all of the above|none of the above|all the above|none the above)\b/i.test(String(o || ''))
+        );
+        if (opts.length < 4 || hasDup || hasGiveaway || !kc.explanation?.trim()) {
+          addIssue({
+            id: `warn-mcq-quality-kc-${mod.moduleNumber}-${kc.id}`,
+            severity: 'warning',
+            prioritySeverity: 'medium',
+            verificationOrigin: 'automated',
+            rule: 'Knowledge Check Distractor & Rationale Quality',
+            description: `Module ${mod.moduleNumber} knowledge check "${kc.question.slice(0, 55)}" needs 4 distinct plausible options without "all/none of the above" and an answer rationale.`,
+            stage: 5,
+            moduleNumber: mod.moduleNumber,
+            affectedSection: `Stage 5 · Module ${mod.moduleNumber} Knowledge Check`,
+            recommendedFix:
+              'Ensure 4 non-duplicate options with realistic distractors and a clear explanation of why the correct option works.',
+          });
+        }
+      }
+    }
+  }
+
+  // Pairwise repetition check across lessons
+  for (let i = 0; i < lessonShingleRecords.length; i++) {
+    for (let j = i + 1; j < lessonShingleRecords.length; j++) {
+      const a = lessonShingleRecords[i];
+      const b = lessonShingleRecords[j];
+      const smaller = Math.min(a.shingles.size, b.shingles.size);
+      if (smaller === 0) continue;
+      let intersection = 0;
+      for (const sh of a.shingles) {
+        if (b.shingles.has(sh)) intersection++;
+      }
+      const overlap = intersection / smaller;
+      if (overlap >= 0.35 && intersection >= 8) {
+        addIssue({
+          id: `warn-ped-repetition-${i}-${j}`,
+          severity: 'warning',
+          prioritySeverity: 'high',
+          verificationOrigin: 'automated',
+          rule: 'Cross-Module / Cross-Lesson Content Repetition',
+          description: `${a.label} and ${b.label} share ${Math.round(overlap * 100)}% identical phrasing (${intersection} repeated 5-word sequences).`,
+          stage: 5,
+          moduleNumber: b.moduleNumber,
+          affectedSection: `${a.label} vs ${b.label}`,
+          recommendedFix:
+            'Differentiate each lesson so subsequent modules advance application depth instead of repeating foundational definitions verbatim.',
+        });
+      }
+    }
+  }
+
+  // Terminology conflict check across modules
+  for (const [, defs] of termDefinitions.entries()) {
+    if (defs.length < 2) continue;
+    const distinctMods = new Set(defs.map(d => d.moduleNumber));
+    if (distinctMods.size < 2) continue;
+    const first = defs[0];
+    for (let k = 1; k < defs.length; k++) {
+      const curr = defs[k];
+      if (curr.moduleNumber === first.moduleNumber) continue;
+      const union = new Set([...Array.from(first.tokens), ...Array.from(curr.tokens)]);
+      if (union.size === 0) continue;
+      let shared = 0;
+      for (const t of first.tokens) {
+        if (curr.tokens.has(t)) shared++;
+      }
+      const jaccard = shared / union.size;
+      if (jaccard < 0.16 && first.tokens.size >= 4 && curr.tokens.size >= 4) {
+        addIssue({
+          id: `warn-term-conflict-${first.term.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+          severity: 'warning',
+          prioritySeverity: 'medium',
+          verificationOrigin: 'automated',
+          rule: 'Cross-Module Terminology Consistency',
+          description: `Key term "${first.term}" is defined inconsistently across Module ${first.moduleNumber} and Module ${curr.moduleNumber}.`,
+          stage: 5,
+          moduleNumber: curr.moduleNumber,
+          affectedSection: `Stage 5 · Module ${curr.moduleNumber} Key Terminology`,
+          recommendedFix:
+            'Standardize the definition of shared terminology across modules so learners do not encounter conflicting explanations.',
+        });
+        break;
+      }
+    }
+  }
+
+  // 3. Stage 4 MCQ Key, Distractor Quality & Marking Separation
+  for (const item of project.assessments?.items || []) {
+    if (item.type === 'mcq' || item.type === 'multi_response') {
+      const opts = Array.isArray(item.options) ? item.options : [];
+      const keys = Array.isArray(item.correctIndices) ? item.correctIndices : [];
+      const invalidKey =
+        opts.length < 2 ||
+        keys.length === 0 ||
+        keys.some(idx => !Number.isInteger(idx) || idx < 0 || idx >= opts.length);
+
+      if (invalidKey) {
+        addIssue({
+          id: `blk-mcq-key-ass-${item.id}`,
+          severity: 'blocking',
+          prioritySeverity: 'critical',
+          verificationOrigin: 'automated',
+          rule: 'Valid Assessment Answer Key',
+          description: `Stage 4 assessment "${item.title}" has invalid options (<2) or out-of-range correctIndices.`,
+          stage: 4,
+          affectedSection: `Stage 4 · ${item.title}`,
+          recommendedFix:
+            'Ensure at least 2 (ideally 4) distinct options and valid 0-based correctIndices.',
+        });
+      } else {
+        const normOpts = opts.map(o => String(o || '').trim().toLowerCase()).filter(Boolean);
+        const hasDup = normOpts.length !== opts.length || new Set(normOpts).size < normOpts.length;
+        const hasGiveaway = opts.some(o =>
+          /\b(all of the above|none of the above|all the above|none the above)\b/i.test(String(o || ''))
+        );
+        if (opts.length < 4 || hasDup || hasGiveaway) {
+          addIssue({
+            id: `warn-mcq-quality-ass-${item.id}`,
+            severity: 'warning',
+            prioritySeverity: 'medium',
+            verificationOrigin: 'automated',
+            rule: 'Assessment MCQ Distractor Strength',
+            description: `Stage 4 item "${item.title}" has weak distractors (<4 options, duplicates, or "all/none of the above" giveaways).`,
+            stage: 4,
+            affectedSection: `Stage 4 · ${item.title}`,
+            recommendedFix:
+              'Upgrade distractors to 4 plausible, domain-realistic alternatives that diagnose common misconceptions.',
+          });
+        }
+      }
+    }
+
+    if (!item.markingGuide?.trim() || !item.modelAnswer?.trim()) {
+      addIssue({
+        id: `warn-missing-facilitator-separation-ass-${item.id}`,
+        severity: 'warning',
+        prioritySeverity: 'medium',
+        verificationOrigin: 'automated',
+        rule: 'Learner Task vs Assessor Marking Guide Separation',
+        description: `Stage 4 assessment "${item.title}" is missing either a dedicated Model Answer or Assessor Marking Guide.`,
+        stage: 4,
+        affectedSection: `Stage 4 · ${item.title}`,
+        recommendedFix:
+          'Provide both a clear model answer/rationale and an explicit marking guide so facilitators grade consistently without exposing answers in the learner brief.',
+      });
+    }
+  }
+
+  return { issues };
+}
+

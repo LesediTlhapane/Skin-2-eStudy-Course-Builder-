@@ -26,7 +26,10 @@ import {
   exportScorm12PackageZip,
 } from '../../utils/exportDeliverables';
 import { apiFetch, parseApiJson } from '../../utils/apiClient';
-import { runStructuralAndConsistencyAudit } from '../../utils/courseValidation';
+import {
+  runPreExportCompletenessCheck,
+  runStructuralAndConsistencyAudit,
+} from '../../utils/courseValidation';
 import {
   getRolePermissions,
   GOVERNANCE_ROLE_LABELS,
@@ -35,6 +38,7 @@ import {
 
 interface Stage7PublishProps {
   project: CourseProject;
+  companyName?: string;
   activeRole?: CompanyRole | null;
   activeGovernanceRoles?: GovernanceRole[];
   onSyncServerProject?: (project: CourseProject) => void;
@@ -95,6 +99,7 @@ const DELIVERABLES: Array<{
 
 export const Stage7Publish: React.FC<Stage7PublishProps> = ({
   project,
+  companyName,
   activeRole,
   activeGovernanceRoles,
   onSyncServerProject,
@@ -110,6 +115,11 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
   const isCompleted = project.lifecycleStatus === 'completed';
 
   const structuralAudit = useMemo(() => runStructuralAndConsistencyAudit(project), [project]);
+  const preExportReport = useMemo(() => runPreExportCompletenessCheck(project), [project]);
+  const exportBrand = useMemo(
+    () => (companyName ? { companyName } : undefined),
+    [companyName]
+  );
   const qa = project.latestQA;
   const isQaStale = Boolean(
     qa?.evaluatedDataSignature && qa.evaluatedDataSignature !== structuralAudit.dataSignature
@@ -146,7 +156,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
     setBusyType(type);
     setExportNotice(null);
     try {
-      await exportDeliverableDocx(project, type);
+      await exportDeliverableDocx(project, type, exportBrand);
       setExportNotice(`Generated ${type.replace(/_/g, ' ')} Word (.docx) from latest saved project state.`);
     } finally {
       setBusyType(null);
@@ -154,12 +164,12 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
   };
 
   const handleScormZip = () => {
-    exportScorm12PackageZip(project);
+    exportScorm12PackageZip(project, exportBrand);
     setExportNotice('Downloaded SCORM 1.2 (.zip) package containing imsmanifest.xml and module SCO pages.');
   };
 
   const handleLmsJson = () => {
-    exportLmsPackageJson(project);
+    exportLmsPackageJson(project, exportBrand);
     setExportNotice('Downloaded LMS-compatible structured data (.json).');
   };
 
@@ -375,6 +385,73 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
             )}
           </div>
         )}
+
+        {/* Pre-Export Completeness Validation: Critical Blockers vs Advisory Polish */}
+        <div className="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+          <div
+            className={`p-3 rounded-lg border space-y-1.5 ${
+              preExportReport.criticalBlockers.length === 0
+                ? 'bg-emerald-50/60 border-emerald-200'
+                : 'bg-red-50/70 border-red-200'
+            }`}
+          >
+            <div className="flex items-center justify-between font-bold text-primary">
+              <span>Critical Release Blockers</span>
+              <span className="font-mono">{preExportReport.criticalBlockers.length}</span>
+            </div>
+            {preExportReport.criticalBlockers.length === 0 ? (
+              <p className="text-[11px] text-emerald-800">
+                All structural, outcome-alignment, and key checks passed.
+              </p>
+            ) : (
+              <ul className="space-y-1 text-[11px] text-red-900">
+                {preExportReport.criticalBlockers.slice(0, 4).map(issue => (
+                  <li key={issue.id} className="flex items-center justify-between gap-2">
+                    <span className="truncate">{issue.title}: {issue.description}</span>
+                    {onJumpToStage && (
+                      <button
+                        type="button"
+                        onClick={() => onJumpToStage(issue.stage)}
+                        className="px-2 py-0.5 rounded bg-white border border-red-200 text-red-800 font-semibold shrink-0 cursor-pointer"
+                      >
+                        Stage {issue.stage}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="p-3 rounded-lg border border-slate-200 bg-surface space-y-1.5">
+            <div className="flex items-center justify-between font-bold text-primary">
+              <span>Advisory Polish Items</span>
+              <span className="font-mono">{preExportReport.advisoryPolish.length}</span>
+            </div>
+            {preExportReport.advisoryPolish.length === 0 ? (
+              <p className="text-[11px] text-emerald-700">
+                Zero advisory polish recommendations outstanding.
+              </p>
+            ) : (
+              <ul className="space-y-1 text-[11px] text-slate-700">
+                {preExportReport.advisoryPolish.slice(0, 4).map(issue => (
+                  <li key={issue.id} className="flex items-center justify-between gap-2">
+                    <span className="truncate">{issue.title}</span>
+                    {onJumpToStage && (
+                      <button
+                        type="button"
+                        onClick={() => onJumpToStage(issue.stage)}
+                        className="px-2 py-0.5 rounded bg-white border border-slate-200 text-primary font-semibold shrink-0 cursor-pointer"
+                      >
+                        Stage {issue.stage}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Non-accreditation safeguard notice */}
@@ -425,7 +502,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => exportDeliverableHtmlOrPrint(project, 'complete_course', 'print')}
+            onClick={() => exportDeliverableHtmlOrPrint(project, 'complete_course', 'print', exportBrand)}
             className="py-2.5 px-3.5 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
             title="Print or Save Complete Course as PDF"
           >
@@ -435,7 +512,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
           <button
             type="button"
             onClick={() => {
-              exportDeliverableHtmlOrPrint(project, 'complete_course', 'download_html');
+              exportDeliverableHtmlOrPrint(project, 'complete_course', 'download_html', exportBrand);
               setExportNotice('Downloaded Complete Course Document HTML file.');
             }}
             className="py-2.5 px-3.5 rounded-lg border border-slate-200 hover:border-accent text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
@@ -490,7 +567,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => exportDeliverableHtmlOrPrint(project, item.type, 'print')}
+                  onClick={() => exportDeliverableHtmlOrPrint(project, item.type, 'print', exportBrand)}
                   className="py-2 px-3 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
                   title="Print or Save as PDF"
                 >
@@ -500,7 +577,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    exportDeliverableHtmlOrPrint(project, item.type, 'download_html');
+                    exportDeliverableHtmlOrPrint(project, item.type, 'download_html', exportBrand);
                     setExportNotice(`Downloaded ${item.title} HTML file.`);
                   }}
                   className="py-2 px-2.5 rounded-lg border border-slate-200 hover:border-accent text-slate-700 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"

@@ -15,7 +15,16 @@ import type {
   CourseTemplate,
   FieldStatus,
 } from '../../types';
-import { apiFetch, compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
+import {
+  apiFetchWithAiBackup,
+  compactSourcesForApi,
+  formatAiErrorMessage,
+} from '../../utils/apiClient';
+import {
+  formatFieldStatusLabel,
+  getTrackedComplianceRequirements,
+  getUnresolvedComplianceRequirements,
+} from '../../utils/complianceGovernance';
 import {
   exportTemplateAsDocx,
   uploadAndParseFilledTemplateFile,
@@ -60,8 +69,11 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
   const [isDocxUploading, setIsDocxUploading] = useState(false);
   const [copilotBriefPrompt, setCopilotBriefPrompt] = useState('');
   const [copilotNotice, setCopilotNotice] = useState<string | null>(null);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const wordUploadRef = useRef<HTMLInputElement>(null);
+  const copilotInFlightRef = useRef(false);
+  const analyseInFlightRef = useRef(false);
   const brief = project.brief;
 
   const handleDownloadWordForm = async () => {
@@ -170,26 +182,36 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
   const handleCopilotAutoFillStage1 = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = copilotBriefPrompt.trim();
-    if (!text || isCopilotDrafting) return;
+    if (!text || copilotInFlightRef.current) return;
+    copilotInFlightRef.current = true;
     setIsCopilotDrafting(true);
     setErrorMsg(null);
     setCopilotNotice(null);
+    setBackupNotice(null);
     try {
-      const res = await apiFetch('/api/v2/copilot/draft-course', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/copilot/draft-course',
+        {
           prompt: text,
           template,
           currentBrief: brief,
           currentModules: project.curriculum.modules,
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Copilot could not draft Stage 1 placeholders.');
+        throw new Error(
+          formatAiErrorMessage(
+            res,
+            data,
+            usedBackupModel,
+            'Copilot could not draft Stage 1 placeholders.'
+          )
+        );
+      }
+      if (usedBackupModel) {
+        setBackupNotice('Primary AI request hit temporary capacity — backup AI model completed Stage 1 auto-fill.');
       }
       const drafted = data.brief || {};
       const protectedKeys = new Set([
@@ -253,6 +275,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
     } catch (err: any) {
       setErrorMsg(err?.message || 'Copilot auto-fill failed.');
     } finally {
+      copilotInFlightRef.current = false;
       setIsCopilotDrafting(false);
     }
   };
@@ -278,23 +301,45 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
     });
   };
 
+  const setFieldStatusNote = (field: string, note: string) => {
+    updateBrief({
+      fieldStatusNotes: {
+        ...(brief.fieldStatusNotes || {}),
+        [field]: note,
+      },
+    });
+  };
+
+  const trackedCompliance = getTrackedComplianceRequirements(project).filter(
+    item => item.stage === 1
+  );
+  const unresolvedCompliance = getUnresolvedComplianceRequirements(project).filter(
+    item => item.stage === 1
+  );
+
   const handleAnalyseBrief = async () => {
+    if (analyseInFlightRef.current) return;
+    analyseInFlightRef.current = true;
     setIsAnalysing(true);
     setErrorMsg(null);
+    setBackupNotice(null);
     try {
-      const res = await apiFetch('/api/v2/brief/analyse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/brief/analyse',
+        {
           brief,
           sources: compactSourcesForApi(project.sources),
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to analyse brief.');
+        throw new Error(
+          formatAiErrorMessage(res, data, usedBackupModel, 'Failed to analyse brief.')
+        );
+      }
+      if (usedBackupModel) {
+        setBackupNotice('Primary AI request hit temporary capacity — backup AI model completed brief analysis.');
       }
       onUpdateProject(
         prev => {
@@ -318,6 +363,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
     } catch (err: any) {
       setErrorMsg(err?.message || 'Brief analysis failed.');
     } finally {
+      analyseInFlightRef.current = false;
       setIsAnalysing(false);
     }
   };
@@ -572,7 +618,8 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
                   >
                     <option value="confirmed">Confirmed</option>
                     <option value="to_be_confirmed">To Be Confirmed</option>
-                    <option value="requires_sme_validation">Requires SME Validation</option>
+                    <option value="requires_sme_validation">Requires SME/Stakeholder Validation</option>
+                    <option value="not_applicable">Not Applicable</option>
                   </select>
                 </div>
                 <input
@@ -851,11 +898,82 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
         </div>
       </section>
 
+      {/* Compliance & Organisational Requirements Confirmation Summary */}
+      <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold text-primary">
+              Compliance &amp; Requirements Confirmation Summary
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Unverified regulatory, accreditation, privacy, or AI tool claims must remain To Be Confirmed or Requires SME/Stakeholder Validation until confirmed by the client or an authorised specialist.
+            </p>
+          </div>
+          <span
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold border shrink-0 ${
+              unresolvedCompliance.length === 0
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+            }`}
+          >
+            {unresolvedCompliance.length === 0
+              ? 'All Tracked Items Confirmed or N/A'
+              : `${unresolvedCompliance.length} Item(s) Pending Confirmation`}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {trackedCompliance.map(item => (
+            <div
+              key={item.key}
+              className="p-3 rounded-lg bg-surface border border-slate-200 space-y-2"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-primary">{item.label}</div>
+                  <div className="text-[11px] text-slate-600 truncate" title={item.value}>
+                    {item.value}
+                  </div>
+                </div>
+                <select
+                  aria-label={`${item.label} confirmation status`}
+                  value={item.status}
+                  onChange={e => setFieldStatus(item.key, e.target.value as FieldStatus)}
+                  className={`text-[11px] font-semibold border rounded px-1.5 py-0.5 shrink-0 ${
+                    item.status === 'confirmed'
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                      : item.status === 'not_applicable'
+                      ? 'bg-slate-100 border-slate-300 text-slate-700'
+                      : 'bg-amber-50 border-amber-300 text-amber-900'
+                  }`}
+                >
+                  <option value="confirmed">Confirmed</option>
+                  <option value="to_be_confirmed">To Be Confirmed</option>
+                  <option value="requires_sme_validation">Requires SME/Stakeholder Validation</option>
+                  <option value="not_applicable">Not Applicable</option>
+                </select>
+              </div>
+              <input
+                type="text"
+                value={brief.fieldStatusNotes?.[item.key] ?? item.note}
+                onChange={e => setFieldStatusNote(item.key, e.target.value)}
+                placeholder={item.resolutionGuidance}
+                aria-label={`${item.label} confirmation note`}
+                className="w-full px-2 py-1 text-[11px] bg-white border border-slate-200 rounded focus:outline-none focus:border-accent"
+              />
+              <div className="text-[10px] text-slate-500">
+                Status: {formatFieldStatusLabel(item.status)} · {item.resolutionGuidance}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* Template-Specific Fields */}
       {template && template.sections.length > 0 && (
         <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
           <h3 className="text-sm font-bold text-primary">
-            4. Template-Specific Fields ({template.name})
+            Template-Specific Fields ({template.name})
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {template.sections.flatMap(s => s.fields).map(field => (
@@ -916,6 +1034,13 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
             </div>
           )}
         </section>
+      )}
+
+      {backupNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
+          <span>{backupNotice}</span>
+        </div>
       )}
 
       {errorMsg && (

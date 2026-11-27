@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import express from 'express';
 import {
   checkKeysConfigured,
@@ -15,6 +14,7 @@ import {
   generateModuleContentWithAI,
   generateModuleScaffoldWithAI,
   generateSingleLessonWithAI,
+  generateCourseIntroductionWithAI,
   regenerateComponentWithAI,
   processCopilotChatWithAI,
   draftCourseFromCopilotPromptWithAI,
@@ -60,6 +60,7 @@ function resolveErrorStatus(err: any): number {
   if (msg.includes('401') || msg.includes('403') || msg.includes('authentication') || msg.includes('api key')) return 401;
   if (msg.includes('429') || msg.includes('rate limit') || msg.includes('quota') || msg.includes('tpm')) return 429;
   if (msg.includes('timed out') || msg.includes('timeout')) return 504;
+  if (msg.includes('503') || msg.includes('overloaded') || msg.includes('temporarily unavailable')) return 503;
   return 502;
 }
 
@@ -349,35 +350,101 @@ export function resolveDefaultRateLimitStore(): RateLimitStore {
   return new MemoryRateLimitStore();
 }
 
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function normalizeClientIp(raw: string): string {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return 'local';
+  return trimmed.replace(/^::ffff:/i, '');
+}
 
-export function buildRateLimitKey(req: express.Request): string {
-  const fwd = req.headers['x-forwarded-for'];
-  const rawIp =
-    (Array.isArray(fwd) ? fwd[0] : String(fwd || '').split(',')[0].trim()) ||
-    req.ip ||
-    'local';
-  const reqPath = String(req.path || req.originalUrl || '');
+export function resolveTrustedClientIp(req: express.Request): string {
+  const trustProxy =
+    Boolean(typeof req.app?.get === 'function' && req.app.get('trust proxy')) ||
+    process.env.VERCEL === '1';
 
-  if (reqPath.startsWith('/auth/') || reqPath.startsWith('/v2/auth/')) {
-    return `v2:auth:ip:${rawIp}`;
-  }
-
-  const authHeader = String(req.headers.authorization || '').trim();
-  if (authHeader.toLowerCase().startsWith('bearer ')) {
-    const token = authHeader.slice(7).trim();
-    if (token) {
-      const actorHash = crypto.createHash('sha256').update(token).digest('hex').slice(0, 16);
-      const companyHeader = String(req.headers['x-company-id'] || '').trim();
-      if (companyHeader && UUID_REGEX.test(companyHeader)) {
-        return `v2:tenant:${companyHeader.toLowerCase()}:actor:${actorHash}`;
-      }
-      return `v2:actor:${actorHash}`;
+  if (trustProxy) {
+    const fwd = req.headers['x-forwarded-for'];
+    const firstFwd = Array.isArray(fwd)
+      ? fwd[0]
+      : String(fwd || '')
+          .split(',')[0]
+          .trim();
+    if (firstFwd) {
+      return normalizeClientIp(firstFwd);
     }
   }
 
-  return `v2:ip:${rawIp}`;
+  return normalizeClientIp(req.ip || req.socket?.remoteAddress || 'local');
+}
+
+export function buildRateLimitKey(req: express.Request): string {
+  const clientIp = resolveTrustedClientIp(req);
+  const reqPath = String(req.path || req.originalUrl || '');
+  const authReq = req as AuthenticatedRequest;
+
+  if (reqPath.startsWith('/auth/') || reqPath.startsWith('/v2/auth/')) {
+    return `v2:auth:ip:${clientIp}`;
+  }
+
+  // Only trust server-verified identity for tenant/user rate-limit buckets.
+  // Unverified Authorization headers must NEVER carve out separate bypass buckets.
+  if (authReq.tenantAuth) {
+    return `v2:tenant:${authReq.tenantAuth.companyId.toLowerCase()}:user:${authReq.tenantAuth.userId}`;
+  }
+  if (authReq.userSession) {
+    return `v2:user:${authReq.userSession.userId}`;
+  }
+
+  return `v2:ip:${clientIp}`;
+}
+
+async function enforceRateLimitBucket(
+  store: RateLimitStore,
+  key: string,
+  maxRequests: number,
+  windowMs: number,
+  res: express.Response
+): Promise<'allowed' | 'blocked' | 'unavailable'> {
+  try {
+    const result = await store.consume(key, maxRequests, windowMs);
+    if (!result.allowed) {
+      res.setHeader('Retry-After', String(result.retryAfterSeconds));
+      res.status(429).json({
+        success: false,
+        error: `Too many requests (${maxRequests}/min limit). Please wait ${result.retryAfterSeconds}s and retry.`,
+        retryAfterSeconds: result.retryAfterSeconds,
+      });
+      return 'blocked';
+    }
+    return 'allowed';
+  } catch (err) {
+    const storeName =
+      err instanceof RateLimitStoreUnavailableError ? err.storeName : 'rate_limit_store';
+    logRateLimitFailure({
+      store: storeName,
+      reason: 'rate_limit_enforcement_unavailable',
+      statusCode: 503,
+    });
+    if (isProductionRuntime() || err instanceof RateLimitStoreUnavailableError) {
+      res.status(503).json({
+        success: false,
+        code: 'RATE_LIMIT_UNAVAILABLE',
+        error:
+          'Service temporarily unavailable while verifying request rate limits. Please retry shortly.',
+      });
+      return 'unavailable';
+    }
+    return 'allowed';
+  }
+}
+
+export function resolveConfiguredRateLimitMax(explicitMax?: number): number {
+  const envMax = Number(
+    process.env.RATE_LIMIT_MAX_PER_MIN || process.env.RATE_LIMIT_MAX_PER_LIMIT
+  );
+  return (
+    explicitMax ||
+    Math.max(5, Number.isFinite(envMax) && envMax > 0 ? Math.round(envMax) : 60)
+  );
 }
 
 export function createRateLimiter(options?: {
@@ -386,12 +453,7 @@ export function createRateLimiter(options?: {
   store?: RateLimitStore;
 }) {
   validateRateLimitConfiguration({ injectedStore: options?.store });
-  const envMax = Number(
-    process.env.RATE_LIMIT_MAX_PER_MIN || process.env.RATE_LIMIT_MAX_PER_LIMIT
-  );
-  const maxRequests =
-    options?.maxRequests ||
-    Math.max(5, Number.isFinite(envMax) && envMax > 0 ? Math.round(envMax) : 60);
+  const maxRequests = resolveConfiguredRateLimitMax(options?.maxRequests);
   const windowMs = options?.windowMs || 60_000;
   const store = options?.store || resolveDefaultRateLimitStore();
   if (isProductionRuntime() && store instanceof MemoryRateLimitStore) {
@@ -400,35 +462,116 @@ export function createRateLimiter(options?: {
 
   return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const key = buildRateLimitKey(req);
-    try {
-      const result = await store.consume(key, maxRequests, windowMs);
-      if (!result.allowed) {
-        res.setHeader('Retry-After', String(result.retryAfterSeconds));
-        return res.status(429).json({
-          success: false,
-          error: `Too many requests (${maxRequests}/min limit). Please wait ${result.retryAfterSeconds}s and retry.`,
-          retryAfterSeconds: result.retryAfterSeconds,
-        });
-      }
-      return next();
-    } catch (err) {
-      const storeName =
-        err instanceof RateLimitStoreUnavailableError ? err.storeName : 'rate_limit_store';
-      logRateLimitFailure({
-        store: storeName,
-        reason: 'rate_limit_enforcement_unavailable',
-        statusCode: 503,
-      });
-      if (isProductionRuntime() || err instanceof RateLimitStoreUnavailableError) {
-        return res.status(503).json({
-          success: false,
-          code: 'RATE_LIMIT_UNAVAILABLE',
-          error:
-            'Service temporarily unavailable while verifying request rate limits. Please retry shortly.',
-        });
-      }
+    const hasBearerHeader = String(req.headers.authorization || '').trim().toLowerCase().startsWith('bearer ');
+    const isAuthPath = key.startsWith('v2:auth:ip:');
+
+    // Pre-auth IP ceiling allows corporate NAT sharing for Bearer-authenticated requests
+    // (exact per-user/per-tenant limits are enforced post-auth via verified session identity).
+    const preAuthLimit =
+      !isAuthPath && hasBearerHeader ? Math.max(maxRequests * 5, maxRequests + 20) : maxRequests;
+    const preAuthKey = !isAuthPath && hasBearerHeader ? `v2:nat:${key}` : key;
+
+    const status = await enforceRateLimitBucket(store, preAuthKey, preAuthLimit, windowMs, res);
+    if (status === 'allowed') {
       return next();
     }
+    return;
+  };
+}
+
+export function createPostAuthRateLimiter(options?: {
+  maxRequests?: number;
+  windowMs?: number;
+  store?: RateLimitStore;
+}) {
+  const maxRequests = resolveConfiguredRateLimitMax(options?.maxRequests);
+  const windowMs = options?.windowMs || 60_000;
+  const store = options?.store || resolveDefaultRateLimitStore();
+
+  return async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+    if (!req.tenantAuth && !req.userSession) {
+      return next();
+    }
+    const key = buildRateLimitKey(req);
+    const status = await enforceRateLimitBucket(store, key, maxRequests, windowMs, res);
+    if (status === 'allowed') {
+      return next();
+    }
+    return;
+  };
+}
+
+export function createAiConcurrencyLimiter(options?: {
+  maxPerUser?: number;
+  maxPerCompany?: number;
+}) {
+  const envUser = Number(process.env.MAX_CONCURRENT_AI_PER_USER);
+  const envCompany = Number(process.env.MAX_CONCURRENT_AI_PER_COMPANY);
+  const maxPerUser =
+    options?.maxPerUser ||
+    Math.min(10, Math.max(1, Number.isFinite(envUser) && envUser > 0 ? Math.round(envUser) : 2));
+  const maxPerCompany =
+    options?.maxPerCompany ||
+    Math.min(
+      25,
+      Math.max(maxPerUser, Number.isFinite(envCompany) && envCompany > 0 ? Math.round(envCompany) : 5)
+    );
+
+  const userActive = new Map<string, number>();
+  const companyActive = new Map<string, number>();
+
+  return (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+    const auth = req.tenantAuth;
+    if (!auth) {
+      return next();
+    }
+
+    const userKey = `${auth.companyId}:${auth.userId}`;
+    const companyKey = auth.companyId;
+    const currentUser = userActive.get(userKey) || 0;
+    const currentCompany = companyActive.get(companyKey) || 0;
+
+    if (currentUser >= maxPerUser) {
+      res.setHeader('Retry-After', '5');
+      return res.status(429).json({
+        success: false,
+        code: 'AI_CONCURRENCY_LIMIT',
+        scope: 'user',
+        retryAfterSeconds: 5,
+        error: `Too many concurrent AI requests for your user account (limit: ${maxPerUser}). Please wait for an active generation to finish and retry.`,
+      });
+    }
+
+    if (currentCompany >= maxPerCompany) {
+      res.setHeader('Retry-After', '5');
+      return res.status(429).json({
+        success: false,
+        code: 'AI_CONCURRENCY_LIMIT',
+        scope: 'company',
+        retryAfterSeconds: 5,
+        error: `Your workspace has reached the concurrent AI generation limit (${maxPerCompany} active jobs). Please retry in a few seconds.`,
+      });
+    }
+
+    userActive.set(userKey, currentUser + 1);
+    companyActive.set(companyKey, currentCompany + 1);
+
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      const u = (userActive.get(userKey) || 1) - 1;
+      if (u <= 0) userActive.delete(userKey);
+      else userActive.set(userKey, u);
+
+      const c = (companyActive.get(companyKey) || 1) - 1;
+      if (c <= 0) companyActive.delete(companyKey);
+      else companyActive.set(companyKey, c);
+    };
+
+    res.once('finish', release);
+    res.once('close', release);
+    return next();
   };
 }
 
@@ -455,6 +598,7 @@ export function createApiRouter(options?: {
   rateLimitMaxPerMin?: number;
   rateLimitStore?: RateLimitStore;
   tenantDeps?: TenantRouterDependencies;
+  aiConcurrency?: { maxPerUser?: number; maxPerCompany?: number };
 }): express.Router {
   const router = express.Router();
 
@@ -493,26 +637,45 @@ export function createApiRouter(options?: {
     });
   });
 
+  validateRateLimitConfiguration({ injectedStore: options?.rateLimitStore });
+  const sharedRateLimitStore = options?.rateLimitStore || resolveDefaultRateLimitStore();
+
   router.use(
     '/v2',
     createRateLimiter({
       maxRequests: options?.rateLimitMaxPerMin,
-      store: options?.rateLimitStore,
+      store: sharedRateLimitStore,
     })
   );
 
-  // Attach multi-tenant onboarding, workspace, RBAC, storage, and persistence routes
-  attachTenantRoutes(router, options?.tenantDeps);
+  const postAuthRateLimit = createPostAuthRateLimiter({
+    maxRequests: options?.rateLimitMaxPerMin,
+    store: sharedRateLimitStore,
+  });
 
-  const requireTenantAuth = createTenantAuthMiddleware(options?.tenantDeps?.authVerifier);
+  // Attach multi-tenant onboarding, workspace, RBAC, storage, and persistence routes
+  attachTenantRoutes(router, {
+    ...options?.tenantDeps,
+    postAuthRateLimit,
+  });
+
+  const baseTenantAuth = createTenantAuthMiddleware(options?.tenantDeps?.authVerifier);
+  const requireTenantAuth: express.RequestHandler = (req, res, next) => {
+    baseTenantAuth(req, res, (err?: any) => {
+      if (err) return next(err);
+      return postAuthRateLimit(req as AuthenticatedRequest, res, next);
+    });
+  };
   const requireEditorRole = requireCompanyRole(['company_admin', 'author', 'reviewer']);
   const requireAuthorOrAdminRole = requireCompanyRole(['company_admin', 'author']);
+  const requireAiConcurrencySlot = createAiConcurrencyLimiter(options?.aiConcurrency);
 
   // Tenant-authenticated AI authoring, QA, Copilot, Source analysis, and Template round-trip endpoints
   router.post(
     '/v2/sources/analyse',
     requireTenantAuth,
     requireAuthorOrAdminRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, existingSources, provider, model } = req.body || {};
@@ -557,6 +720,7 @@ export function createApiRouter(options?: {
     '/v2/improve/diagnose',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, provider, model } = req.body || {};
@@ -597,6 +761,7 @@ export function createApiRouter(options?: {
     '/v2/templates/extract',
     requireTenantAuth,
     requireAuthorOrAdminRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, provider, model } = req.body || {};
@@ -634,6 +799,7 @@ export function createApiRouter(options?: {
     '/v2/templates/parse-filled',
     requireTenantAuth,
     requireAuthorOrAdminRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { fileName, mimeType, base64Data, rawText, template, provider, model } = req.body || {};
@@ -694,6 +860,7 @@ export function createApiRouter(options?: {
     '/v2/brief/analyse',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, sources, provider, model } = req.body || {};
@@ -714,6 +881,7 @@ export function createApiRouter(options?: {
     '/v2/curriculum/propose',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, sources, desiredModuleCount, existingModules, provider, model } = req.body || {};
@@ -741,6 +909,7 @@ export function createApiRouter(options?: {
     '/v2/curriculum/check-coverage',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, sources, curriculum, provider, model } = req.body || {};
@@ -765,6 +934,7 @@ export function createApiRouter(options?: {
     '/v2/outcomes/generate',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, curriculum, provider, model } = req.body || {};
@@ -783,6 +953,7 @@ export function createApiRouter(options?: {
     '/v2/assessments/design',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, curriculum, outcomes, provider, model } = req.body || {};
@@ -803,6 +974,7 @@ export function createApiRouter(options?: {
     '/v2/content/generate-module',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, modulePlan, allModules, outcomes, assessments, sources, provider, model } = req.body || {};
@@ -832,6 +1004,7 @@ export function createApiRouter(options?: {
     '/v2/content/generate-module-scaffold',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, modulePlan, allModules, outcomes, assessments, sources, provider, model } = req.body || {};
@@ -861,6 +1034,7 @@ export function createApiRouter(options?: {
     '/v2/content/generate-lesson',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { brief, modulePlan, lessonPlan, lessonIndex, outcomes, sources, provider, model } = req.body || {};
@@ -887,9 +1061,34 @@ export function createApiRouter(options?: {
   );
 
   router.post(
+    '/v2/content/generate-course-intro',
+    requireTenantAuth,
+    requireEditorRole,
+    requireAiConcurrencySlot,
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const { project, provider, model } = req.body || {};
+        if (!project || typeof project !== 'object' || !project.brief) {
+          return res.status(400).json({ success: false, error: 'Missing project payload.' });
+        }
+        const courseIntroduction = await runWithAiTelemetry(req, 'content.generate_course_intro', () =>
+          generateCourseIntroductionWithAI({ project, provider, model })
+        );
+        return res.json({ success: true, courseIntroduction });
+      } catch (err: any) {
+        return res.status(resolveErrorStatus(err)).json({
+          success: false,
+          error: sanitizeErrorMessage(err, 'Course introduction generation failed.'),
+        });
+      }
+    }
+  );
+
+  router.post(
     '/v2/content/regenerate',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { project, targetType, moduleId, targetId, instruction, provider, model } = req.body || {};
@@ -918,6 +1117,7 @@ export function createApiRouter(options?: {
     '/v2/qa/evaluate',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { project, weights, provider, model } = req.body || {};
@@ -938,6 +1138,7 @@ export function createApiRouter(options?: {
     '/v2/qa/remediate',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { project, provider, model } = req.body || {};
@@ -961,6 +1162,7 @@ export function createApiRouter(options?: {
     '/v2/copilot/chat',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { project, messages, userMessage, selectedTextContext, activeModuleId, provider, model } = req.body || {};
@@ -989,6 +1191,7 @@ export function createApiRouter(options?: {
     '/v2/copilot/draft-course',
     requireTenantAuth,
     requireEditorRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { prompt, template, currentBrief, currentModules, messages, provider, model } = req.body || {};
@@ -1017,6 +1220,7 @@ export function createApiRouter(options?: {
     '/v2/templates/copilot-draft',
     requireTenantAuth,
     requireAuthorOrAdminRole,
+    requireAiConcurrencySlot,
     async (req: AuthenticatedRequest, res) => {
       try {
         const { prompt, currentTemplate, messages, provider, model } = req.body || {};

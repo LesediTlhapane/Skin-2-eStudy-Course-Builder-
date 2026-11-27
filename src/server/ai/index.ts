@@ -16,6 +16,7 @@ export {
   generateModuleContentWithAI,
   generateModuleScaffoldWithAI,
   generateSingleLessonWithAI,
+  generateCourseIntroductionWithAI,
   regenerateComponentWithAI,
   processCopilotChatWithAI,
   draftCourseFromCopilotPromptWithAI,

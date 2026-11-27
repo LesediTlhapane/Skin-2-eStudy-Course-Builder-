@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -28,12 +28,21 @@ import type {
 } from '../../types';
 import { DEFAULT_QA_WEIGHTS } from '../../data/templates';
 import { computeFullAlignmentReport } from '../../utils/alignmentHelpers';
-import { runStructuralAndConsistencyAudit } from '../../utils/courseValidation';
+import {
+  runPreExportCompletenessCheck,
+  runStructuralAndConsistencyAudit,
+} from '../../utils/courseValidation';
 import {
   runAccessibilityChecks,
   runTechnicalValidationChecks,
 } from '../../utils/validationChecks';
-import { apiFetch, compactProjectForApi, parseApiJson } from '../../utils/apiClient';
+import {
+  apiFetch,
+  apiFetchWithAiBackup,
+  compactProjectForApi,
+  formatAiErrorMessage,
+  parseApiJson,
+} from '../../utils/apiClient';
 import {
   canApproveGovernanceRole,
   getRolePermissions,
@@ -123,11 +132,14 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
   const [isRunning, setIsRunning] = useState(false);
   const [isRemediating, setIsRemediating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [repairNotice, setRepairNotice] = useState<string | null>(null);
   const [remediationNotes, setRemediationNotes] = useState<string[] | null>(null);
   const [releaseFeedback, setReleaseFeedback] = useState<string | null>(null);
   const [govBusyRole, setGovBusyRole] = useState<GovernanceRole | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
+  const qaInFlightRef = useRef(false);
+  const remediateInFlightRef = useRef(false);
   const [eligibleReviewers, setEligibleReviewers] = useState<EligibleReviewerSummary[]>([]);
   const [serverHumanSignOff, setServerHumanSignOff] = useState<
     NonNullable<CourseProject['latestQA']>['humanSignOff'] | null
@@ -175,6 +187,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
   const liveTechnical = useMemo(() => runTechnicalValidationChecks(project), [project]);
   const liveAlignment = useMemo(() => computeFullAlignmentReport(project), [project]);
   const liveStructural = useMemo(() => runStructuralAndConsistencyAudit(project), [project]);
+  const preExportReport = useMemo(() => runPreExportCompletenessCheck(project), [project]);
 
   const isQaStale = Boolean(
     qa && (!qa.evaluatedDataSignature || qa.evaluatedDataSignature !== liveStructural.dataSignature)
@@ -279,26 +292,34 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
   };
 
   const handleRunQA = async () => {
+    if (qaInFlightRef.current) return;
     if (totalWeight !== 100) {
       setErrorMsg(`Dimension weights must sum to 100% (currently ${totalWeight}%).`);
       return;
     }
+    qaInFlightRef.current = true;
     setIsRunning(true);
     setErrorMsg(null);
+    setBackupNotice(null);
     try {
-      const res = await apiFetch('/api/v2/qa/evaluate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/qa/evaluate',
+        {
           project: compactProjectForApi(project),
           weights,
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'QA evaluation failed.');
+        throw new Error(
+          formatAiErrorMessage(res, data, usedBackupModel, 'QA evaluation failed.')
+        );
+      }
+      if (usedBackupModel) {
+        setBackupNotice(
+          'Primary AI request hit temporary capacity — backup AI model completed 12-dimension QA evaluation.'
+        );
       }
       const report = data.report;
       onUpdateProject(
@@ -320,27 +341,36 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     } catch (err: any) {
       setErrorMsg(err?.message || 'QA audit failed.');
     } finally {
+      qaInFlightRef.current = false;
       setIsRunning(false);
     }
   };
 
   const handleGuidedRemediation = async () => {
+    if (remediateInFlightRef.current) return;
+    remediateInFlightRef.current = true;
     setIsRemediating(true);
     setErrorMsg(null);
+    setBackupNotice(null);
     setRemediationNotes(null);
     try {
-      const res = await apiFetch('/api/v2/qa/remediate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/qa/remediate',
+        {
           project: compactProjectForApi(project),
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success || !data.updatedProject) {
-        throw new Error(data.error || 'Guided QA remediation failed.');
+        throw new Error(
+          formatAiErrorMessage(res, data, usedBackupModel, 'Guided QA remediation failed.')
+        );
+      }
+      if (usedBackupModel) {
+        setBackupNotice(
+          'Primary AI request hit temporary capacity — backup AI model completed Guided QA Remediation.'
+        );
       }
       const changes: string[] = Array.isArray(data.changesSummary) ? data.changesSummary : [];
       onUpdateProject(
@@ -361,6 +391,7 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
     } catch (err: any) {
       setErrorMsg(err?.message || 'Guided QA remediation failed.');
     } finally {
+      remediateInFlightRef.current = false;
       setIsRemediating(false);
     }
   };
@@ -640,6 +671,13 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
         </div>
       )}
 
+      {backupNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
+          <span>{backupNotice}</span>
+        </div>
+      )}
+
       {remediationNotes && remediationNotes.length > 0 && (
         <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-xl text-xs text-emerald-950 space-y-2">
           <div className="flex items-center justify-between gap-2">
@@ -730,6 +768,54 @@ export const Stage6QA: React.FC<Stage6QAProps> = ({
           <p className="text-[11px] text-slate-600">
             Course readiness metrics, accessibility scope boundaries, and alignment governance notices.
           </p>
+        </div>
+      </section>
+
+      {/* Pre-Export Completeness Validation Card */}
+      <section className="bg-white border border-slate-200 rounded-xl p-4 space-y-2.5 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="font-bold text-primary">
+            Pre-Export Completeness Validation
+          </div>
+          <span
+            className={`px-2 py-0.5 rounded font-bold text-[11px] border ${
+              preExportReport.readyForExport
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-red-50 border-red-200 text-red-800'
+            }`}
+          >
+            {preExportReport.summary}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
+          <div className="p-2.5 rounded-lg bg-surface border border-slate-200">
+            <div className="font-bold text-slate-800">
+              Critical Release Blockers: {preExportReport.criticalBlockers.length}
+            </div>
+            {preExportReport.criticalBlockers.length === 0 ? (
+              <div className="text-emerald-700 mt-0.5">None detected — structural &amp; assessment gates clear.</div>
+            ) : (
+              <ul className="list-disc pl-4 mt-1 text-red-700 space-y-0.5">
+                {preExportReport.criticalBlockers.slice(0, 3).map(b => (
+                  <li key={b.id}>{b.title} (Stage {b.stage})</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="p-2.5 rounded-lg bg-surface border border-slate-200">
+            <div className="font-bold text-slate-800">
+              Advisory Polish Items: {preExportReport.advisoryPolish.length}
+            </div>
+            {preExportReport.advisoryPolish.length === 0 ? (
+              <div className="text-emerald-700 mt-0.5">All recommended pedagogical &amp; polish checks passed.</div>
+            ) : (
+              <ul className="list-disc pl-4 mt-1 text-amber-800 space-y-0.5">
+                {preExportReport.advisoryPolish.slice(0, 3).map(a => (
+                  <li key={a.id}>{a.title} (Stage {a.stage})</li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </section>
 

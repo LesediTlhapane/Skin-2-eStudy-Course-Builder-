@@ -3,6 +3,7 @@ import type {
   AssessmentItem,
   BriefAnalysisResult,
   CourseBrief,
+  CourseIntroduction,
   CourseProject,
   CourseTemplate,
   CurriculumArchitecture,
@@ -16,6 +17,19 @@ import type {
   SourceDocument,
 } from '../../types.js';
 import { aiRouter, extractAndParseJSON } from './aiRouter.js';
+import { COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK } from '../../utils/complianceGovernance.js';
+import {
+  normalizeAssessmentPlanOutput,
+  normalizeCaseStudyContent,
+  normalizeCourseIntroduction,
+  normalizeCurriculumProposal,
+  normalizeKnowledgeCheckItem,
+  normalizeLearningOutcomesPlan,
+  normalizeLessonContentOutput,
+  normalizeModuleScaffoldOutput,
+  normalizeScenarioContent,
+} from '../../utils/aiOutputValidation.js';
+import { generateUniqueId } from '../../utils/id.js';
 
 function summarizeSourcesForPrompt(sources: SourceDocument[]): string {
   if (!sources || sources.length === 0) return 'No external source documents uploaded.';
@@ -208,9 +222,10 @@ export async function analyseCourseBriefWithAI(params: {
     systemInstruction: `You are an instructional design reviewer auditing a Stage 1 Course Brief.
 STRICT RULES:
 - Treat supplied metadata (title, code, duration, target audience, accreditation) as protected. NEVER alter or invent values.
-- Flag missing essential items with recommendedStatus "to_be_confirmed" or "requires_sme_validation".
+- Flag missing essential items (including NQF/accreditation, SETA/SAQA/QCTO, POPIA/GDPR, industry legislation, approved AI tools, AI ethics framework) with recommendedStatus "to_be_confirmed" or "requires_sme_validation", or "not_applicable" when outside scope (e.g. Financial Literacy benchmark on non-financial courses).
 - Identify any contradictions between the brief fields (e.g., duration vs depth, prerequisites vs experience level, AI disabled vs AI requirements, or source conflicts).
 - Extract a clean list of explicit subject topics from the brief and sources for Stage 2 curriculum coverage checking.
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 Return ONLY valid JSON.`,
     prompt: `Audit this Stage 1 Course Brief:
 ${JSON.stringify(params.brief, null, 2)}
@@ -263,13 +278,15 @@ export async function proposeCurriculumWithAI(params: {
     model: params.model,
     responseFormat: 'json',
     systemInstruction: `You are a Principal Curriculum Architect for eStudy South Africa.
-CRITICAL CURRICULUM PRESERVATION & DURATION RULES:
+CRITICAL CURRICULUM PRESERVATION, SEQUENCING & DURATION RULES:
 1. Every subject topic supplied in the brief and sources is AUTHORITATIVE. NEVER silently omit, replace, or over-generalise required subject matter.
-2. Do NOT force every course into 3 modules or a generic AI/SOP structure. Adapt module count, titles, and sequencing to the actual subject, declared duration (${params.brief.estimatedDuration || 'unspecified'}), and learner level (${params.brief.experienceLevel}).
-3. Reconcile total lesson durationMinutes across all modules PLUS estimated assessment time so the sum aligns cleanly with the declared course duration (${params.brief.estimatedDuration || 'unspecified'}). Explicitly explain this time budget in rationale.
-4. If AI integration mode is "none", do NOT inject AI modules or AI topics.
-5. If QCTO module pattern is enabled (${params.brief.saCompliance?.qctoModulePattern ? 'YES' : 'NO'}), tag modules appropriately as "Knowledge Module", "Practical Skill Module", or "Work Experience Module"; otherwise use "Standard Module".
-6. Build an exhaustive coverageChecks array comparing EVERY supplied topic against your proposed curriculum (status: "mapped", "omitted", "generalised", "clarification_needed", or "recommended").
+2. Sequence modules logically from foundational principles -> core workflows -> applied practice -> synthesis/governance, with zero generic padding or repetitive module themes.
+3. Do NOT force every course into 3 modules or a generic AI/SOP structure. Adapt module count, titles, and sequencing to the actual subject, declared duration (${params.brief.estimatedDuration || 'unspecified'}), and learner level (${params.brief.experienceLevel}).
+4. Reconcile total lesson durationMinutes across all modules PLUS estimated assessment time so the sum aligns cleanly with the declared course duration (${params.brief.estimatedDuration || 'unspecified'}). Explicitly explain this time budget in rationale.
+5. If AI integration mode is "none", do NOT inject AI modules or AI topics.
+6. If QCTO module pattern is enabled (${params.brief.saCompliance?.qctoModulePattern ? 'YES' : 'NO'}), tag modules appropriately as "Knowledge Module", "Practical Skill Module", or "Work Experience Module"; otherwise use "Standard Module".
+7. Build an exhaustive coverageChecks array comparing EVERY supplied topic against your proposed curriculum (status: "mapped", "omitted", "generalised", "clarification_needed", or "recommended").
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 Return ONLY valid JSON.`,
     prompt: `Design the Stage 2 Curriculum Architecture for:
 Title: ${params.brief.title || 'Untitled Course'}
@@ -331,13 +348,7 @@ Return JSON matching:
   });
 
   const parsed = extractAndParseJSON<any>(res.text);
-  return {
-    rationale: parsed.rationale || '',
-    modules: Array.isArray(parsed.modules) ? parsed.modules : [],
-    coverageChecks: Array.isArray(parsed.coverageChecks) ? parsed.coverageChecks : [],
-    conflicts: Array.isArray(parsed.conflicts) ? parsed.conflicts : [],
-    approval: { approved: false },
-  };
+  return normalizeCurriculumProposal(parsed, params.brief);
 }
 
 /* ============================================================================
@@ -420,6 +431,7 @@ RULES:
 - Connect every outcome to concrete workplace performance for "${params.brief.targetJobRoles || params.brief.targetAudience}".
 - Keep outcomes realistic for "${params.brief.estimatedDuration || 'the programme duration'}".
 - If SA NQF alignment is enabled (${params.brief.saCompliance?.enabled ? `NQF ${params.brief.saCompliance.nqfLevel || 'Unspecified'}` : 'Not enabled'}), reflect cognitive complexity WITHOUT inventing qualification codes or unit standards.
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 Return ONLY valid JSON.`,
     prompt: `Generate measurable Course-Level and Module-Level Learning Outcomes for:
 Course: ${params.brief.title} (${params.brief.industryDomain})
@@ -462,13 +474,7 @@ Return JSON:
   });
 
   const parsed = extractAndParseJSON<any>(res.text);
-  return {
-    courseOutcomes: Array.isArray(parsed.courseOutcomes) ? parsed.courseOutcomes : [],
-    moduleOutcomes: Array.isArray(parsed.moduleOutcomes) ? parsed.moduleOutcomes : [],
-    durationRealismNote: parsed.durationRealismNote || '',
-    nqfSummaryNote: parsed.nqfSummaryNote || '',
-    approval: { approved: false },
-  };
+  return normalizeLearningOutcomesPlan(parsed, params.curriculum);
 }
 
 /* ============================================================================
@@ -485,6 +491,7 @@ export async function designAssessmentsWithAI(params: {
   passRequirementPercent: number;
   knowledgeWeightPercent: number;
   practicalWeightPercent: number;
+  thresholdsConfirmed: boolean;
   items: AssessmentItem[];
 }> {
   const allOutcomes = [...params.outcomes.courseOutcomes, ...params.outcomes.moduleOutcomes];
@@ -498,11 +505,15 @@ Design a rigorous, balanced assessment strategy BEFORE course content is written
 CRITICAL RULES:
 1. Distinguish between Knowledge Assessment ("knowledge") and Practical Competence ("practical").
 2. STRICT WEIGHTING MATH: knowledgeWeightPercent + practicalWeightPercent MUST equal 100. The sum of weightingPercent across ALL items MUST equal 100. The sum of weightingPercent for "knowledge" items MUST equal knowledgeWeightPercent, and the sum of weightingPercent for "practical" items MUST equal practicalWeightPercent. Never allow weighting totals to mismatch.
-3. Include an explicit realistic durationMinutes for every assessment item and ensure strategySummary states the exact same passRequirementPercent and Knowledge/Practical weight split.
-4. AUDIENCE SUITABILITY: Match task format strictly to target audience/roles ("${params.brief.targetJobRoles || params.brief.targetAudience}", level: "${params.brief.experienceLevel}"). For Executive, Board, Director, or non-technical decision-maker cohorts, NEVER mandate writing Python/Pandas/Fairlearn/SQL code; instead assess governance interpretation, vendor evaluation, risk-threshold sign-off, ethical impact review, and executive decision memos.
-5. Use diverse formats from: "mcq", "multi_response", "matching", "sequencing", "short_answer", "case_study", "branching_scenario", "problem_solving", "practical_task", "competency_demo", "reflection".
-6. EVERY outcome ID across courseOutcomes and moduleOutcomes MUST be mapped via outcomeIds to at least one assessment item!
-7. Every item MUST include: objective, instructions, promptOrQuestion, modelAnswer, explanation, feedbackCorrect, feedbackIncorrect, markingGuide, and a 100%-weighted evaluation rubric for practical/open items.
+3. Treat passRequirementPercent, knowledgeWeightPercent, and practicalWeightPercent as AI-PROPOSED recommendations subject to client/stakeholder confirmation unless explicitly mandated in the brief. State clearly in strategySummary whether thresholds remain proposed pending client approval.
+4. Include an explicit realistic durationMinutes for every assessment item and ensure strategySummary states the exact same passRequirementPercent and Knowledge/Practical weight split.
+5. AUDIENCE SUITABILITY: Match task format strictly to target audience/roles ("${params.brief.targetJobRoles || params.brief.targetAudience}", level: "${params.brief.experienceLevel}"). For Executive, Board, Director, or non-technical decision-maker cohorts, NEVER mandate writing Python/Pandas/Fairlearn/SQL code; instead assess governance interpretation, vendor evaluation, risk-threshold sign-off, ethical impact review, and executive decision memos.
+6. STRONG MCQ DESIGN: Every "mcq" or "multi_response" item MUST have at least 4 distinct, plausible workplace options grounded in realistic misconceptions. NEVER use "All of the above" or "None of the above". Ensure correctIndices are valid 0-based indices within options.
+7. LEARNER VS ASSESSOR SEPARATION: Keep learner-facing "instructions" and "promptOrQuestion" clean without leaking answers; place scoring rules and exemplar answers strictly in "modelAnswer", "markingGuide", and "rubric".
+8. Use diverse formats from: "mcq", "multi_response", "matching", "sequencing", "short_answer", "case_study", "branching_scenario", "problem_solving", "practical_task", "competency_demo", "reflection".
+9. EVERY outcome ID across courseOutcomes and moduleOutcomes MUST be mapped via outcomeIds to at least one assessment item!
+10. Every item MUST include: objective, instructions, promptOrQuestion, modelAnswer, explanation, feedbackCorrect, feedbackIncorrect, markingGuide, and a 100%-weighted evaluation rubric for practical/open items.
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 Return ONLY valid JSON.`,
     prompt: `Design Stage 4 Assessment Plan for:
 Course: ${params.brief.title} (${params.brief.industryDomain})
@@ -559,7 +570,8 @@ Return JSON:
 }`,
   });
 
-  return extractAndParseJSON(res.text);
+  const parsed = extractAndParseJSON<any>(res.text);
+  return normalizeAssessmentPlanOutput(parsed, params.outcomes);
 }
 
 /* ============================================================================
@@ -603,8 +615,10 @@ NON-NEGOTIABLE QUALITY, LEGAL & TECHNICAL ACCURACY STANDARDS:
 4. SOUTH AFRICAN LEGAL PRECISION: When citing POPIA (Act 4 of 2013), use verified sections accurately (Accountability s8; Processing Limitation s9–12, noting s11(1)(a)–(f) has SIX lawful grounds — consent is NOT the only lawful justification; Purpose Specification s13–14; Further Processing s15; Information Quality s16; Openness s17–18; Security Safeguards s19–22; Data Subject Participation s23–25; Automated Decision-Making s71). Always write PEPUDA's exact title: "Promotion of Equality and Prevention of Unfair Discrimination Act 4 of 2000". Distinguish statute vs regulatory guidance vs governance codes (e.g. King IV), and include an educational non-legal-advice disclaimer when discussing legal duties.
 5. NO FABRICATED EVIDENCE: NEVER invent statistics, percentages, ZAR savings, or real company success stories. Any illustrative numerical or workplace scenario NOT backed by a supplied verified source MUST be explicitly labelled "Illustrative hypothetical scenario (not empirical data)".
 6. AI/ML TECHNICAL PRECISION: Never equate raw model confidence scores to calibrated probability without explaining empirical calibration; never present AUC > 0.8 as a universal readiness rule without prevalence, operating threshold, and asymmetric error cost context; distinguish statistical confidence intervals from prediction intervals and model uncertainty; never claim SHAP values prove real-world causation (SHAP measures correlational feature attribution).
-7. NEVER use generic filler or repeat explanations covered in other modules (${otherModuleTitles || 'none'}).
-8. Accessibility & Citation Honesty: Cite supplied sources inline (e.g. [Source 1]) where supported. Include descriptive alt captions ("This diagram illustrates...") when referencing any visual/diagram. Tag sourceClaims accurately ("VERIFIED", "NEEDS REVIEW", or "UNSUPPORTED").
+7. ANTI-REPETITION & COMMERCIAL DEPTH: Teach with real mechanisms, concrete workedExamples (at least 1 substantive step-by-step workplace example per lesson), and specific guidedActivity/practicalApplication tasks. NEVER pad with generic AI phrases ("in today's fast-paced world", "delve into", "game-changer", "ever-evolving landscape") and NEVER echo module outcomes verbatim or repeat material from other modules (${otherModuleTitles || 'none'}).
+8. LEARNER VS FACILITATOR SEPARATION & STRONG KNOWLEDGE CHECKS: Keep learner tasks/questions separate from case study facilitatorNotes and scenario modelDebriefs. Every knowledge check MUST have 4 distinct plausible options without "All/None of the above" and a valid 0-based correctIndex.
+9. Accessibility & Citation Honesty: Cite supplied sources inline (e.g. [Source 1]) where supported. Include descriptive alt captions ("This diagram illustrates...") when referencing any visual/diagram. Tag sourceClaims accurately ("VERIFIED", "NEEDS REVIEW", or "UNSUPPORTED").
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 Return ONLY valid JSON.`,
     prompt: `Author full learning content for Module ${params.modulePlan.order}: "${params.modulePlan.title}".
 
@@ -690,25 +704,31 @@ Return JSON matching:
 }`,
   });
 
-  const parsed = extractAndParseJSON<GeneratedModuleContent>(res.text);
+  const parsed = extractAndParseJSON<any>(res.text);
+  const modScaffold = normalizeModuleScaffoldOutput(parsed, params.modulePlan, params.outcomes);
   const fallbackOutcomeIds = modOutcomes.map(o => o.id);
-  const normalizedLessons = Array.isArray(parsed.lessons)
-    ? parsed.lessons.map(l => ({
-        ...l,
-        outcomeIds:
-          Array.isArray(l.outcomeIds) && l.outcomeIds.length > 0
-            ? l.outcomeIds
-            : fallbackOutcomeIds,
-      }))
-    : [];
+  const rawLessons = Array.isArray(parsed?.lessons) ? parsed.lessons : [];
+  const plannedLessons = params.modulePlan.lessons || [];
+  const normalizedLessons: GeneratedLessonContent[] = rawLessons.map((rawLesson: any, idx: number) => {
+    const matchedPlan =
+      plannedLessons.find(pl => pl.id === rawLesson?.lessonPlanId) ||
+      plannedLessons[idx] || {
+        id: rawLesson?.lessonPlanId || `les-${params.modulePlan.order}-${idx + 1}`,
+        title: rawLesson?.title || `Lesson ${idx + 1}`,
+        durationMinutes: Number(rawLesson?.durationMinutes) || 35,
+      };
+    return normalizeLessonContentOutput(
+      rawLesson,
+      params.modulePlan,
+      matchedPlan,
+      idx,
+      fallbackOutcomeIds
+    );
+  });
+
   return {
-    ...parsed,
+    ...modScaffold,
     lessons: normalizedLessons,
-    moduleId: params.modulePlan.id,
-    moduleNumber: params.modulePlan.order,
-    title: params.modulePlan.title,
-    editStatus: 'ai_draft',
-    lastGeneratedAt: new Date().toISOString(),
   };
 }
 
@@ -751,6 +771,7 @@ Tailor scenarios to "${params.brief.industryDomain}" and roles "${params.brief.t
 NON-NEGOTIABLE EVIDENCE & ACCURACY RULES:
 - Never fabricate statistics, percentages, ZAR savings, or real-company case results. Label illustrative workplace scenarios explicitly as "Illustrative hypothetical scenario".
 - Ensure any POPIA (Act 4 of 2013) or PEPUDA ("Promotion of Equality and Prevention of Unfair Discrimination Act 4 of 2000") mentions are exact and educational (not legal advice).
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 Return ONLY valid JSON.`,
     prompt: `Author the module wrapper (excluding individual lesson essays) for Module ${params.modulePlan.order}: "${params.modulePlan.title}".
 Topics: ${JSON.stringify(params.modulePlan.topics.map(t => t.title))}
@@ -808,26 +829,7 @@ Return JSON:
   });
 
   const parsed = extractAndParseJSON<any>(res.text);
-  return {
-    id: `content-${params.modulePlan.id}`,
-    moduleId: params.modulePlan.id,
-    moduleNumber: params.modulePlan.order,
-    title: params.modulePlan.title,
-    introduction: parsed.introduction || `Module ${params.modulePlan.order}: ${params.modulePlan.title}`,
-    learningObjectives: Array.isArray(parsed.learningObjectives)
-      ? parsed.learningObjectives
-      : modOutcomes.map(o => `${o.code}: ${o.statement}`),
-    lessons: [],
-    workplaceCaseStudies: Array.isArray(parsed.workplaceCaseStudies) ? parsed.workplaceCaseStudies : [],
-    scenarios: Array.isArray(parsed.scenarios) ? parsed.scenarios : [],
-    knowledgeChecks: Array.isArray(parsed.knowledgeChecks) ? parsed.knowledgeChecks : [],
-    summary: parsed.summary || '',
-    furtherLearningResources: Array.isArray(parsed.furtherLearningResources)
-      ? parsed.furtherLearningResources
-      : [],
-    editStatus: 'ai_draft',
-    lastGeneratedAt: new Date().toISOString(),
-  };
+  return normalizeModuleScaffoldOutput(parsed, params.modulePlan, params.outcomes);
 }
 
 export async function generateSingleLessonWithAI(params: {
@@ -872,7 +874,9 @@ QUALITY, LEGAL & TECHNICAL GUARDRAILS:
 - South African Law: Use exact POPIA Act 4 of 2013 sections (s8 Accountability, s11(1)(a)-(f) six lawful grounds beyond consent alone, s16 Information Quality, s19-22 Security Safeguards, s23-25 Participation, s71 Automated Decision-Making) and exact PEPUDA title ("Promotion of Equality and Prevention of Unfair Discrimination Act 4 of 2000"), with an educational non-legal-advice caveat.
 - Anti-Fabrication: Never invent financial savings or statistics; explicitly label illustrative examples as "Illustrative hypothetical scenario" unless backed by a supplied verified source (cite inline as [Source N]).
 - ML Accuracy: Distinguish confidence scores vs model calibration, explain AUC context dependence, separate confidence intervals from prediction intervals, and describe SHAP as associative feature contribution (not causation).
+- Instructional Depth: Write substantive explanation prose (320-480 words), include at least 1 concrete step-by-step workedExample, and avoid generic AI clichés ("delve into", "game-changer", "fast-paced world") or merely echoing outcome statements.
 - Accessibility: Use structured headings, concise paragraphs, and plain-text descriptive alt captions ("This diagram illustrates...") for any visual. Tag sourceClaims honestly ("VERIFIED", "NEEDS REVIEW", or "UNSUPPORTED").
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 Return ONLY valid JSON.`,
     prompt: `Author Lesson ${params.lessonIndex + 1} inside Module ${params.modulePlan.order} ("${params.modulePlan.title}").
 Course Domain: ${params.brief.industryDomain} | Purpose: ${params.brief.purpose}
@@ -900,24 +904,74 @@ Return JSON:
 }`,
   });
 
-  const parsed = extractAndParseJSON<GeneratedLessonContent>(res.text);
-  return {
-    id: parsed.id || `les-content-${params.modulePlan.order}-${params.lessonIndex + 1}`,
-    lessonPlanId: parsed.lessonPlanId || params.lessonPlan.id,
-    outcomeIds:
-      Array.isArray(parsed.outcomeIds) && parsed.outcomeIds.length > 0
-        ? parsed.outcomeIds
-        : fallbackOutcomeIds,
-    title: parsed.title || params.lessonPlan.title,
-    durationMinutes: Number(parsed.durationMinutes) || Number(params.lessonPlan.durationMinutes) || 35,
-    explanation: parsed.explanation || '',
-    keyTerminology: Array.isArray(parsed.keyTerminology) ? parsed.keyTerminology : [],
-    workedExamples: Array.isArray(parsed.workedExamples) ? parsed.workedExamples : [],
-    practicalApplication: parsed.practicalApplication || '',
-    guidedActivity: parsed.guidedActivity || '',
-    sourceClaims: Array.isArray(parsed.sourceClaims) ? parsed.sourceClaims : [],
-    editStatus: 'ai_draft',
-  };
+  const parsed = extractAndParseJSON<any>(res.text);
+  return normalizeLessonContentOutput(
+    parsed,
+    params.modulePlan,
+    params.lessonPlan,
+    params.lessonIndex,
+    fallbackOutcomeIds
+  );
+}
+
+/* ============================================================================
+ * 8C. STAGE 5 COURSE INTRODUCTION GENERATOR
+ * ============================================================================ */
+export async function generateCourseIntroductionWithAI(params: {
+  project: CourseProject;
+  provider?: AIProvider;
+  model?: string;
+}): Promise<CourseIntroduction> {
+  const b = params.project.brief;
+  const modules = params.project.curriculum?.modules || [];
+  const outcomes = params.project.outcomes?.courseOutcomes || [];
+  const assessments = params.project.assessments;
+
+  const res = await aiRouter.execute({
+    provider: params.provider,
+    model: params.model,
+    responseFormat: 'json',
+    timeoutMs: 28000,
+    maxTokens: 1600,
+    systemInstruction: `You are a Principal Instructional Designer authoring the structured Course Introduction for "${b.title}" (${b.industryDomain}).
+CRITICAL QUALITY RULES:
+1. Write a coherent, learner-ready programme orientation across 6 distinct sections.
+2. NEVER simply echo the brief title or copy-paste the brief purpose verbatim in whyThisMatters — frame the genuine workplace need, risks, and operational stakes clearly.
+3. Describe intendedLearners, prerequisitesSummary, outcomesOverview, structureRoadmap, and assessmentOverview accurately against the approved Curriculum, Outcomes, and Assessment settings without inventing unverified accreditation or pass-mark client approvals.
+4. Keep prose crisp, commercially credible, and free of generic AI filler ("ever-evolving landscape", "game-changer", "delve into").
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
+Return ONLY valid JSON.`,
+    prompt: `Author the 6-part Course Introduction for:
+Title: ${b.title} (${b.code})
+Domain: ${b.industryDomain}
+Brief Purpose: ${b.purpose}
+Workplace Problem: ${b.workplaceProblem}
+Target Audience & Roles: ${b.targetAudience} (${b.targetJobRoles}) | Level: ${b.experienceLevel}
+Prerequisites: ${b.prerequisites}
+Duration: ${b.estimatedDuration}
+
+Curriculum Modules:
+${JSON.stringify(modules.map(m => ({ order: m.order, title: m.title, purpose: m.purpose })))}
+
+Course Outcomes:
+${JSON.stringify(outcomes.map(o => ({ code: o.code, statement: o.statement })))}
+
+Assessment Overview:
+Knowledge ${assessments.knowledgeWeightPercent}% / Practical ${assessments.practicalWeightPercent}%, Proposed Pass Mark ${assessments.passRequirementPercent}% (Confirmed: ${Boolean(assessments.thresholdsConfirmed)})
+
+Return JSON:
+{
+  "whyThisMatters": "2-4 sentences framing the workplace stakes, operational urgency, and learner payoff without echoing the title verbatim",
+  "intendedLearners": "Who the programme is designed for and how different target roles benefit",
+  "prerequisitesSummary": "Clear entry readiness expectations and prior context assumed",
+  "outcomesOverview": "Concise synthesis of the capabilities learners will be able to demonstrate on completion",
+  "structureRoadmap": "How the modules build progressively from foundations to workplace mastery across the programme",
+  "assessmentOverview": "How learners will be assessed (knowledge vs practical balance, expectations, and threshold status)"
+}`,
+  });
+
+  const parsed = extractAndParseJSON<any>(res.text);
+  return normalizeCourseIntroduction(parsed, params.project);
 }
 
 /* ============================================================================
@@ -955,6 +1009,9 @@ export async function regenerateComponentWithAI(params: {
     responseFormat: 'json',
     systemInstruction: `You are regenerating ONLY a single ${params.targetType} inside "${params.project.brief.title}" (${params.project.brief.industryDomain}).
 Preserve exact IDs and approved curriculum alignment. Do NOT modify course metadata or unrelated modules.
+If regenerating a knowledge_check, provide 4 distinct plausible workplace options without "All/None of the above" and a valid 0-based correctIndex.
+If regenerating a lesson, write substantive prose (280+ words), at least one realistic workedExample, and avoid generic AI clichés.
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 Return ONLY valid JSON matching the exact schema of the target object.`,
     prompt: `Course Brief: ${params.project.brief.title} | Audience: ${params.project.brief.targetAudience} | Level: ${params.project.brief.experienceLevel}
 Module ${modPlan.order}: ${modPlan.title}
@@ -966,7 +1023,50 @@ ${JSON.stringify(currentItem, null, 2)}
 Return the improved JSON object ONLY.`,
   });
 
-  const updatedItem = extractAndParseJSON(res.text);
+  const rawUpdated = extractAndParseJSON<any>(res.text);
+  let updatedItem = rawUpdated;
+  if (params.targetType === 'knowledge_check') {
+    updatedItem = normalizeKnowledgeCheckItem(
+      { ...rawUpdated, id: currentItem?.id || params.targetId || rawUpdated?.id },
+      params.targetId || `kc-${modPlan.order}-1`,
+      currentItem?.outcomeCode || 'MLO-1'
+    );
+  } else if (params.targetType === 'scenario') {
+    updatedItem = normalizeScenarioContent(
+      { ...rawUpdated, id: currentItem?.id || params.targetId || rawUpdated?.id },
+      params.targetId || `sc-${modPlan.order}-1`
+    );
+  } else if (params.targetType === 'case_study') {
+    updatedItem = normalizeCaseStudyContent(
+      { ...rawUpdated, id: currentItem?.id || params.targetId || rawUpdated?.id },
+      params.targetId || `cs-${modPlan.order}-1`
+    );
+  } else if (params.targetType === 'lesson') {
+    const modOutcomes = (params.project.outcomes?.moduleOutcomes || []).filter(
+      o => o.moduleId === modPlan.id
+    );
+    const lessonPlanMatch =
+      modPlan.lessons.find(l => l.id === currentItem?.lessonPlanId) || {
+        id: currentItem?.lessonPlanId || currentItem?.id || 'les-1',
+        title: currentItem?.title || rawUpdated?.title || 'Lesson',
+        durationMinutes: Number(currentItem?.durationMinutes) || 35,
+      };
+    const lessonIndex = Math.max(
+      0,
+      modContent.lessons.findIndex(l => l.id === (currentItem?.id || params.targetId))
+    );
+    updatedItem = normalizeLessonContentOutput(
+      {
+        ...rawUpdated,
+        id: currentItem?.id || params.targetId || rawUpdated?.id,
+        lessonPlanId: currentItem?.lessonPlanId || rawUpdated?.lessonPlanId,
+      },
+      modPlan,
+      lessonPlanMatch,
+      lessonIndex,
+      modOutcomes.map(o => o.id)
+    );
+  }
   return { updatedItem };
 }
 
@@ -1265,9 +1365,9 @@ Return JSON:
   return {
     reply: parsed.reply || 'Here are my instructional design recommendations.',
     proposedChanges: Array.isArray(parsed.proposedChanges)
-      ? parsed.proposedChanges.map((p: any, idx: number) => ({
+      ? parsed.proposedChanges.map((p: any) => ({
           ...p,
-          id: p.id || `prop-${Date.now()}-${idx}`,
+          id: p.id || generateUniqueId('prop'),
           executionMode: p.executionMode === 'direct' ? 'direct' : 'confirm',
           stageHint:
             p.stageHint && p.stageHint >= 1 && p.stageHint <= 7
@@ -1376,10 +1476,11 @@ CRITICAL RULES:
 2. Fill EVERY template field key listed under TEMPLATE FIELDS inside "brief.templateFieldValues" with domain-specific, practical instructional content matching that field's label/purpose.
 3. If the user asks for a specific number of modules (e.g. "6 modules"), generate EXACTLY that number of detailed starter modules in "modules" (with topics and lessons). Otherwise generate an optimal 4 to 6 modules suited to the subject and duration.
 4. Honesty & Metadata Integrity:
-   - Never fabricate official SAQA/QCTO qualification IDs, SETA accreditation claims, or unverified legislation.
-   - Suggest a sensible provisional Course Code (e.g. "EST-GENAI-101") and mark "code" as "to_be_confirmed" in "fieldStatuses" so the user knows they can edit or confirm it.
+   - Never fabricate official SAQA/QCTO qualification IDs, SETA accreditation claims, client policies, approved AI tool lists, AI ethics frameworks, or unverified legislation.
+   - Suggest a sensible provisional Course Code (e.g. "EST-GENAI-101") and mark "code", "nqfLevel", "setaSaqaQcto", "popiaGdpr", "industryLegislation", "approvedAiTools", and "aiEthicsFramework" honestly as "to_be_confirmed" or "requires_sme_validation" (or "not_applicable" where not applicable, e.g. "financialLiteracyBenchmark": "not_applicable" for non-financial courses) in "fieldStatuses".
    - Use "Entry / Foundational", "Intermediate", "Advanced", or "Executive / Specialist" for "experienceLevel".
    - Use "none", "optional", or "core" for "aiIntegrationMode" strictly based on whether AI belongs in the course subject.
+${COMPLIANCE_ANTI_FABRICATION_PROMPT_BLOCK}
 5. If "CURRENT DRAFT BRIEF" already has user-entered values, preserve them unless the user's latest prompt explicitly asks to change or refine them.
 Return ONLY valid JSON.`,
     prompt: `USER PROMPT:
@@ -1452,7 +1553,7 @@ Return JSON matching this exact schema:
   const parsed = extractAndParseJSON<any>(res.text);
   const rawModules = Array.isArray(parsed.modules) ? parsed.modules : [];
   const modules: CurriculumModulePlan[] = rawModules.map((m: any, idx: number) => ({
-    id: m.id || `mod-${Date.now()}-${idx + 1}`,
+    id: m.id || generateUniqueId(`mod-${idx + 1}`),
     order: idx + 1,
     title: m.title || `Module ${idx + 1}`,
     qctoModuleType: m.qctoModuleType || 'Standard Module',

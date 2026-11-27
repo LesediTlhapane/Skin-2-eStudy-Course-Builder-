@@ -4,6 +4,7 @@ import { getContrastText } from '../utils/brandTheme';
 interface BrandLogoProps {
   variant?: 'full' | 'icon';
   size?: 'sm' | 'md' | 'lg';
+  surface?: 'light' | 'dark';
   className?: string;
   companyName?: string | null;
   logoUrl?: string | null;
@@ -14,6 +15,7 @@ interface BrandLogoProps {
 export const BrandLogo: React.FC<BrandLogoProps> = ({
   variant = 'full',
   size = 'md',
+  surface = 'light',
   className = '',
   companyName,
   logoUrl,
@@ -32,13 +34,21 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     lg: 'h-10',
   };
 
-  if (logoUrl && !imgFailed) {
+  const trimmedLogoUrl = typeof logoUrl === 'string' ? logoUrl.trim() : '';
+
+  if (trimmedLogoUrl && !imgFailed) {
     return (
       <div className={`inline-flex items-center gap-2.5 shrink-0 select-none ${className}`}>
-        <div className="bg-slate-50 border border-slate-200/80 rounded-lg px-1.5 py-1 flex items-center justify-center shrink-0">
+        <div
+          className={`rounded-lg px-2 py-1 flex items-center justify-center shrink-0 ${
+            surface === 'dark'
+              ? 'bg-white/95 border border-white/30 shadow-xs'
+              : 'bg-white border border-slate-200/90 shadow-2xs'
+          }`}
+        >
           <img
-            src={logoUrl}
-            alt={companyName || 'Company Logo'}
+            src={trimmedLogoUrl}
+            alt={companyName ? `${companyName} logo` : 'Company logo'}
             onError={() => setImgFailed(true)}
             className={`${heightClasses[size]} w-auto max-w-[140px] object-contain shrink-0`}
             referrerPolicy="no-referrer"
@@ -46,8 +56,8 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
         </div>
         {variant === 'full' && companyName && (
           <span
-            className="text-sm font-bold tracking-tight truncate max-w-[180px]"
-            style={{ color: primaryColour }}
+            className="text-sm font-bold tracking-tight truncate max-w-[200px]"
+            style={surface === 'dark' ? { color: '#FFFFFF' } : { color: primaryColour }}
           >
             {companyName}
           </span>
@@ -82,8 +92,8 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
         </span>
         {variant === 'full' && (
           <span
-            className="text-sm font-bold tracking-tight truncate max-w-[190px]"
-            style={{ color: primaryColour }}
+            className="text-sm font-bold tracking-tight truncate max-w-[200px]"
+            style={surface === 'dark' ? { color: '#FFFFFF' } : { color: primaryColour }}
           >
             {companyName}
           </span>

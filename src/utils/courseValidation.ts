@@ -13,8 +13,10 @@ import {
   parseEstimatedHours,
   runAccessibilityChecks,
   runDomainQualityChecks,
+  runPedagogicalAndQualityChecks,
   runTechnicalValidationChecks,
 } from './validationChecks.js';
+import { getUnresolvedComplianceRequirements } from './complianceGovernance.js';
 
 export { parseEstimatedHours };
 
@@ -84,6 +86,7 @@ export function computeCourseDataSignature(project: CourseProject): string {
       saCompliance: project.brief?.saCompliance || {},
       templateFieldValues: project.brief?.templateFieldValues || {},
       fieldStatuses: project.brief?.fieldStatuses || {},
+      fieldStatusNotes: project.brief?.fieldStatusNotes || {},
     },
     sources: (project.sources || []).map(s => ({
       id: s.id,
@@ -142,6 +145,7 @@ export function computeCourseDataSignature(project: CourseProject): string {
       passRequirementPercent: project.assessments?.passRequirementPercent,
       knowledgeWeightPercent: project.assessments?.knowledgeWeightPercent,
       practicalWeightPercent: project.assessments?.practicalWeightPercent,
+      thresholdsConfirmed: Boolean(project.assessments?.thresholdsConfirmed),
       items: (project.assessments?.items || []).map(it => ({
         id: it.id,
         moduleId: it.moduleId,
@@ -174,27 +178,117 @@ export function computeCourseDataSignature(project: CourseProject): string {
         practicalApplication: l.practicalApplication,
         guidedActivity: l.guidedActivity,
         workedExamples: l.workedExamples,
+        keyTerminology: l.keyTerminology,
         sourceClaims: (l.sourceClaims || []).map(sc => ({
           id: sc.id,
           status: sc.status,
           claim: sc.claim,
         })),
       })),
-      scenarios: (cm.scenarios || []).map(s => ({ id: s.id, title: s.title, situation: s.situation })),
+      scenarios: (cm.scenarios || []).map(s => ({
+        id: s.id,
+        title: s.title,
+        situation: s.situation,
+        challenge: s.challenge,
+        decisionPrompt: s.decisionPrompt,
+        modelDebrief: s.modelDebrief,
+      })),
       workplaceCaseStudies: (cm.workplaceCaseStudies || []).map(c => ({
         id: c.id,
         title: c.title,
         background: c.background,
+        analysisQuestions: c.analysisQuestions,
+        facilitatorNotes: c.facilitatorNotes,
       })),
       knowledgeChecks: (cm.knowledgeChecks || []).map(k => ({
         id: k.id,
         question: k.question,
+        options: k.options,
         correctIndex: k.correctIndex,
+        explanation: k.explanation,
       })),
     })),
+    courseIntroduction: project.content?.courseIntroduction || null,
   };
 
   return fnv1aHash(JSON.stringify(canonical));
+}
+
+export interface UpstreamStageSignatures {
+  briefSignature: string;
+  curriculumSignature: string;
+  outcomesSignature: string;
+  stage4UpstreamSignature: string;
+  stage5UpstreamSignature: string;
+}
+
+export function computeUpstreamStageSignatures(project: CourseProject): UpstreamStageSignatures {
+  const briefCanonical = {
+    templateId: project.templateId,
+    title: project.brief?.title || '',
+    industryDomain: project.brief?.industryDomain || '',
+    purpose: project.brief?.purpose || '',
+    workplaceProblem: project.brief?.workplaceProblem || '',
+    targetAudience: project.brief?.targetAudience || '',
+    targetJobRoles: project.brief?.targetJobRoles || '',
+    experienceLevel: project.brief?.experienceLevel || '',
+    prerequisites: project.brief?.prerequisites || '',
+    estimatedDuration: project.brief?.estimatedDuration || '',
+    language: project.brief?.language || '',
+    subjectTopicsInput: project.brief?.subjectTopicsInput || '',
+    aiIntegrationMode: project.brief?.aiIntegrationMode || 'optional',
+    saCompliance: project.brief?.saCompliance || {},
+  };
+  const briefSignature = fnv1aHash(JSON.stringify(briefCanonical));
+
+  const curriculumSignature = fnv1aHash(
+    JSON.stringify({
+      briefSignature,
+      modules: (project.curriculum?.modules || []).map(m => ({
+        id: m.id,
+        order: m.order,
+        title: m.title,
+        purpose: m.purpose,
+        topics: m.topics,
+        lessons: (m.lessons || []).map(l => ({
+          id: l.id,
+          title: l.title,
+          durationMinutes: l.durationMinutes,
+          outcomeIds: l.outcomeIds || [],
+        })),
+      })),
+    })
+  );
+
+  const outcomesSignature = fnv1aHash(
+    JSON.stringify({
+      briefSignature,
+      courseOutcomes: (project.outcomes?.courseOutcomes || []).map(o => ({
+        id: o.id,
+        code: o.code,
+        bloomLevel: o.bloomLevel,
+        statement: o.statement,
+      })),
+      moduleOutcomes: (project.outcomes?.moduleOutcomes || []).map(o => ({
+        id: o.id,
+        moduleId: o.moduleId,
+        code: o.code,
+        bloomLevel: o.bloomLevel,
+        statement: o.statement,
+      })),
+    })
+  );
+
+  const stage4UpstreamSignature = outcomesSignature;
+  const stage5UpstreamSignature = fnv1aHash(`${curriculumSignature}:${outcomesSignature}`);
+
+  return {
+    briefSignature,
+    curriculumSignature,
+    outcomesSignature,
+    stage4UpstreamSignature,
+    stage5UpstreamSignature,
+  };
 }
 
 export function detectUnresolvedPlaceholders(project: CourseProject): PlaceholderOccurrence[] {
@@ -604,11 +698,29 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
   // 9. Source, Regulatory, Factual, ML Technical & Audience Checks
   const techSummary = runTechnicalValidationChecks(project);
   const domainAudit = runDomainQualityChecks(project);
+  const seenIssueIds = new Set<string>([
+    ...blockingErrors.map(b => b.id),
+    ...warnings.map(w => w.id),
+  ]);
   for (const domIssue of domainAudit.issues) {
+    if (seenIssueIds.has(domIssue.id)) continue;
+    seenIssueIds.add(domIssue.id);
     if (domIssue.severity === 'blocking') {
       blockingErrors.push(domIssue);
     } else {
       warnings.push(domIssue);
+    }
+  }
+
+  // 9b. Pedagogical Depth, Course Introduction, Distractor & Anti-Repetition Checks
+  const pedAudit = runPedagogicalAndQualityChecks(project);
+  for (const pedIssue of pedAudit.issues) {
+    if (seenIssueIds.has(pedIssue.id)) continue;
+    seenIssueIds.add(pedIssue.id);
+    if (pedIssue.severity === 'blocking') {
+      blockingErrors.push(pedIssue);
+    } else {
+      warnings.push(pedIssue);
     }
   }
 
@@ -751,5 +863,112 @@ export function runStructuralAndConsistencyAudit(project: CourseProject): Struct
     durationValidation,
     assessmentValidation,
     sourceVerificationSummary: domainAudit.sourceVerificationSummary,
+  };
+}
+
+export interface PreExportIssue {
+  id: string;
+  tier: 'critical_blocker' | 'advisory_polish';
+  stage: WorkflowStage;
+  title: string;
+  description: string;
+  recommendedFix: string;
+}
+
+export interface PreExportCompletenessReport {
+  readyForExport: boolean;
+  criticalBlockers: PreExportIssue[];
+  advisoryPolish: PreExportIssue[];
+  summary: string;
+}
+
+export function runPreExportCompletenessCheck(
+  project: CourseProject
+): PreExportCompletenessReport {
+  const audit = runStructuralAndConsistencyAudit(project);
+  const criticalBlockers: PreExportIssue[] = audit.blockingErrors.map(err => ({
+    id: err.id,
+    tier: 'critical_blocker',
+    stage: err.stage,
+    title: err.rule,
+    description: err.description,
+    recommendedFix: err.recommendedFix,
+  }));
+
+  const advisoryPolish: PreExportIssue[] = audit.warnings.map(warn => ({
+    id: warn.id,
+    tier: 'advisory_polish',
+    stage: warn.stage,
+    title: warn.rule,
+    description: warn.description,
+    recommendedFix: warn.recommendedFix,
+  }));
+
+  if (!project.assessments?.thresholdsConfirmed && (project.assessments?.items?.length || 0) > 0) {
+    advisoryPolish.push({
+      id: 'adv-thresholds-unconfirmed',
+      tier: 'advisory_polish',
+      stage: 4,
+      title: 'Assessment Weighting & Pass Mark Client Confirmation',
+      description:
+        'Assessment weighting split and pass mark are still marked as proposed/unconfirmed and should be confirmed with the client.',
+      recommendedFix:
+        'Confirm weighting split and pass requirement in Stage 4 once client/stakeholder approval is recorded.',
+    });
+  }
+
+  const unresolvedCompliance = getUnresolvedComplianceRequirements(project);
+  if (unresolvedCompliance.length > 0) {
+    advisoryPolish.push({
+      id: 'adv-compliance-confirmations',
+      tier: 'advisory_polish',
+      stage: unresolvedCompliance.some(r => r.stage === 4) ? 4 : 1,
+      title: 'Client Compliance & Accreditation Confirmations Pending',
+      description: `${unresolvedCompliance.length} compliance/governance field(s) remain unconfirmed (${unresolvedCompliance.slice(0, 3).map(r => r.label).join(', ')}).`,
+      recommendedFix:
+        'Confirm or mark Not Applicable in Stage 1/Stage 4 before final commercial sign-off.',
+    });
+  }
+
+  const signOffRoles = project.latestQA?.humanSignOff?.roles;
+  const approvedEntries = signOffRoles
+    ? [
+        signOffRoles.sme,
+        signOffRoles.instructionalDesigner,
+        signOffRoles.complianceAuthorizer,
+      ].filter(
+        r =>
+          r &&
+          r.signedOff &&
+          r.status !== 'rejected' &&
+          Boolean(r.reviewerUserId) &&
+          Boolean(r.signedOffAt)
+      )
+    : [];
+  const distinctApproverCount = new Set(approvedEntries.map(r => r.reviewerUserId)).size;
+  if (approvedEntries.length < 3 || distinctApproverCount < 3) {
+    advisoryPolish.push({
+      id: 'adv-governance-signoffs',
+      tier: 'advisory_polish',
+      stage: 6,
+      title: 'Three-Role Human Governance Sign-Off Pending',
+      description: `${approvedEntries.length}/3 governance role approvals (${distinctApproverCount} distinct reviewer(s)) recorded (SME, Instructional Designer, Compliance Authoriser).`,
+      recommendedFix:
+        'Complete all three distinct authenticated approvals in Stage 6 before formal publishing.',
+    });
+  }
+
+  const readyForExport = criticalBlockers.length === 0;
+  const summary = readyForExport
+    ? advisoryPolish.length === 0
+      ? 'Course passed all critical release checks and advisory quality checks.'
+      : `Ready for draft export (${advisoryPolish.length} advisory polish recommendation(s) noted).`
+    : `${criticalBlockers.length} critical release blocker(s) must be resolved before final release.`;
+
+  return {
+    readyForExport,
+    criticalBlockers,
+    advisoryPolish,
+    summary,
   };
 }

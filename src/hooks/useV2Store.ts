@@ -21,6 +21,7 @@ import {
   STORE_TEMPLATES,
   type CloudRecoveryDraft,
 } from '../utils/cloudRecovery';
+import { generateUniqueId } from '../utils/id';
 
 const FALLBACK_PROJECTS_KEY = 'estudy_v2_projects_fallback';
 const FALLBACK_TEMPLATES_KEY = 'estudy_v2_templates_fallback';
@@ -155,6 +156,9 @@ export function normalizeProjectSchema(raw: any): CourseProject {
       fieldStatuses: {
         ...(raw?.brief?.fieldStatuses || {}),
       },
+      fieldStatusNotes: {
+        ...(raw?.brief?.fieldStatusNotes || {}),
+      },
       approval: raw?.brief?.approval || { approved: false },
     },
     curriculum: {
@@ -181,6 +185,14 @@ export function normalizeProjectSchema(raw: any): CourseProject {
     assessments: {
       ...base.assessments,
       ...(raw?.assessments || {}),
+      thresholdsConfirmed:
+        typeof raw?.assessments?.thresholdsConfirmed === 'boolean'
+          ? raw.assessments.thresholdsConfirmed
+          : undefined,
+      upstreamOutcomesSignature:
+        typeof raw?.assessments?.upstreamOutcomesSignature === 'string'
+          ? raw.assessments.upstreamOutcomesSignature
+          : undefined,
       items: Array.isArray(raw?.assessments?.items) ? raw.assessments.items : [],
       alignmentFlags: Array.isArray(raw?.assessments?.alignmentFlags)
         ? raw.assessments.alignmentFlags
@@ -190,6 +202,31 @@ export function normalizeProjectSchema(raw: any): CourseProject {
     content: {
       ...base.content,
       ...(raw?.content || {}),
+      courseIntroduction:
+        raw?.content?.courseIntroduction && typeof raw.content.courseIntroduction === 'object'
+          ? {
+              whyThisMatters: String(raw.content.courseIntroduction.whyThisMatters || ''),
+              intendedLearners: String(raw.content.courseIntroduction.intendedLearners || ''),
+              prerequisitesSummary: String(
+                raw.content.courseIntroduction.prerequisitesSummary || ''
+              ),
+              outcomesOverview: String(raw.content.courseIntroduction.outcomesOverview || ''),
+              structureRoadmap: String(raw.content.courseIntroduction.structureRoadmap || ''),
+              assessmentOverview: String(raw.content.courseIntroduction.assessmentOverview || ''),
+              editStatus:
+                raw.content.courseIntroduction.editStatus === 'human_edited'
+                  ? 'human_edited'
+                  : 'ai_draft',
+            }
+          : undefined,
+      upstreamCurriculumSignature:
+        typeof raw?.content?.upstreamCurriculumSignature === 'string'
+          ? raw.content.upstreamCurriculumSignature
+          : undefined,
+      upstreamOutcomesSignature:
+        typeof raw?.content?.upstreamOutcomesSignature === 'string'
+          ? raw.content.upstreamOutcomesSignature
+          : undefined,
       modules: Array.isArray(raw?.content?.modules) ? raw.content.modules : [],
       generationHistory: Array.isArray(raw?.content?.generationHistory)
         ? raw.content.generationHistory
@@ -258,6 +295,23 @@ export function useV2Store(options?: UseV2StoreOptions) {
   const lastCloudCompanyIdRef = useRef<string | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authBlockedRef = useRef<boolean>(false);
+  const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const activeSaveCountRef = useRef<number>(0);
+  const pendingCreationPromisesRef = useRef<Map<string, Promise<void>>>(new Map());
+  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+  const tabIdRef = useRef<string>(generateUniqueId('tab'));
+
+  const beginSaving = useCallback(() => {
+    activeSaveCountRef.current += 1;
+    setSaveState('saving');
+  }, []);
+
+  const endSaving = useCallback(() => {
+    activeSaveCountRef.current = Math.max(0, activeSaveCountRef.current - 1);
+    if (activeSaveCountRef.current === 0) {
+      setSaveState('saved');
+    }
+  }, []);
 
   const clearSaveError = useCallback(() => setSaveError(null), []);
   const clearRecoveryNotice = useCallback(() => setRecoveryNotice(null), []);
@@ -496,124 +550,226 @@ export function useV2Store(options?: UseV2StoreOptions) {
     })();
   }, [isCloudMode, companyId, reloadCloudWorkspace, backupDirtyProjects]);
 
-  const persistNow = useCallback(
-    async (projList?: CourseProject[], tplList?: CourseTemplate[]) => {
-      const currentProjects = projList || projectsRef.current;
-      const currentTemplates = tplList || customTemplatesRef.current;
-
-      setSaveState('saving');
-      setSaveError(null);
-      try {
-        if (isCloudMode && companyId) {
-          const dirtyIds = Array.from(dirtyProjectIdsRef.current);
-          if (dirtyIds.length > 0) {
-            for (const id of dirtyIds) {
-              const target =
-                projectsRef.current.find(p => p.id === id) ||
-                currentProjects.find(p => p.id === id);
-              if (!target) {
-                dirtyProjectIdsRef.current.delete(id);
-                continue;
-              }
-              const sentRevision = editRevisionRef.current.get(id) || 0;
-              const draft = buildDraftForProject(companyId, target);
-              void saveCloudRecoveryDraft(draft);
-
-              const compacted = compactProjectForCloudPayload(target, 2_800_000).project;
-              const isNewUnsaved = unsavedNewCourseIdsRef.current.has(id);
-
-              let res = await apiFetch(
-                isNewUnsaved
-                  ? '/api/v2/courses'
-                  : `/api/v2/courses/${encodeURIComponent(id)}`,
-                {
-                  method: isNewUnsaved ? 'POST' : 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ project: compacted }),
-                }
-              );
-              let data = await parseApiJson<any>(res);
-
-              // If PUT returned 404 for a course that was never successfully POSTed, retry as POST
-              if (!isNewUnsaved && res.status === 404 && !lastSyncedUpdatedAtRef.current.has(id)) {
-                res = await apiFetch('/api/v2/courses', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ project: compacted }),
-                });
-                data = await parseApiJson<any>(res);
-              }
-
-              if (!res.ok || !data.success) {
-                const isAuthIssue = res.status === 401 || res.status === 403;
-                authBlockedRef.current = isAuthIssue;
-                const friendlyError = isAuthIssue
-                  ? 'Your session expired or workspace access changed. Your latest edits are backed up locally in this browser — sign in again to sync them to the cloud.'
-                  : data.error || `Cloud save failed (HTTP ${res.status}). Local backup preserved.`;
-                void saveCloudRecoveryDraft(buildDraftForProject(companyId, target, friendlyError));
-                const err = new Error(friendlyError) as Error & { status?: number };
-                err.status = res.status;
-                throw err;
-              }
-
-              authBlockedRef.current = false;
-              unsavedNewCourseIdsRef.current.delete(id);
-              const syncedTimestamp = String(data.course?.updatedAt || target.updatedAt || '');
-              if (syncedTimestamp) {
-                lastSyncedUpdatedAtRef.current.set(id, syncedTimestamp);
-              }
-
-              // Only mark clean if no newer local edits happened while the request was in flight
-              if ((editRevisionRef.current.get(id) || 0) === sentRevision) {
-                dirtyProjectIdsRef.current.delete(id);
-                await clearCloudRecoveryDraft(companyId, id);
-              }
-            }
-          }
-          setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
-          setLastSavedAt(new Date().toISOString());
+  // Cross-tab course sync notifications so concurrent tabs avoid silent last-write-wins overwrites
+  useEffect(() => {
+    if (!isCloudMode || !companyId || typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel('estudy-v2-course-sync');
+    broadcastChannelRef.current = channel;
+    channel.onmessage = (event: MessageEvent) => {
+      const msg = event?.data;
+      if (!msg || msg.tabId === tabIdRef.current || msg.companyId !== companyId) return;
+      if (msg.type === 'course_saved' && msg.courseId && msg.updatedAt) {
+        if (lastSyncedUpdatedAtRef.current.get(msg.courseId) === msg.updatedAt) return;
+        if (dirtyProjectIdsRef.current.has(msg.courseId)) {
+          setSaveError(
+            'This course was updated in another browser tab. Save or reload to review potential conflicts.'
+          );
           return;
         }
-
-        await Promise.all([
-          idbPutAll(STORE_PROJECTS, currentProjects),
-          idbPutAll(STORE_TEMPLATES, currentTemplates),
-        ]);
-        setLastSavedAt(new Date().toISOString());
-      } catch (err: any) {
-        if (!isCloudMode) {
+        void (async () => {
           try {
-            localStorage.setItem(FALLBACK_PROJECTS_KEY, JSON.stringify(currentProjects));
-            localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(currentTemplates));
+            const res = await apiFetch(`/api/v2/courses/${encodeURIComponent(msg.courseId)}`);
+            const data = await parseApiJson<any>(res);
+            if (res.ok && data.success && data.course) {
+              const normalized = normalizeProjectSchema(data.course);
+              if (normalized.updatedAt) {
+                lastSyncedUpdatedAtRef.current.set(normalized.id, normalized.updatedAt);
+              }
+              setProjects(prev => prev.map(p => (p.id === normalized.id ? normalized : p)));
+            }
+          } catch {
+            /* ignore background cross-tab refresh failure */
+          }
+        })();
+      }
+    };
+    return () => {
+      channel.close();
+      if (broadcastChannelRef.current === channel) {
+        broadcastChannelRef.current = null;
+      }
+    };
+  }, [isCloudMode, companyId]);
+
+  const persistNow = useCallback(
+    async (projList?: CourseProject[], tplList?: CourseTemplate[]): Promise<boolean> => {
+      let succeeded = true;
+      const runSave = async () => {
+        const currentProjects = projList || projectsRef.current;
+        const currentTemplates = tplList || customTemplatesRef.current;
+
+        beginSaving();
+        setSaveError(null);
+        try {
+          if (isCloudMode && companyId) {
+            for (let pass = 0; pass < 4 && dirtyProjectIdsRef.current.size > 0; pass++) {
+              const dirtyIds = Array.from(dirtyProjectIdsRef.current);
+              for (const id of dirtyIds) {
+                const pendingCreation = pendingCreationPromisesRef.current.get(id);
+                if (pendingCreation) {
+                  await pendingCreation.catch(() => {});
+                }
+                if (!dirtyProjectIdsRef.current.has(id)) {
+                  continue;
+                }
+
+                const target =
+                  projectsRef.current.find(p => p.id === id) ||
+                  currentProjects.find(p => p.id === id);
+                if (!target) {
+                  dirtyProjectIdsRef.current.delete(id);
+                  continue;
+                }
+
+                const sentRevision = editRevisionRef.current.get(id) || 0;
+                const draft = buildDraftForProject(companyId, target);
+                void saveCloudRecoveryDraft(draft);
+
+                const compacted = compactProjectForCloudPayload(target, 2_800_000).project;
+                const isNewUnsaved = unsavedNewCourseIdsRef.current.has(id);
+                const expectedUpdatedAt = !isNewUnsaved
+                  ? lastSyncedUpdatedAtRef.current.get(id)
+                  : undefined;
+
+                let res = await apiFetch(
+                  isNewUnsaved
+                    ? '/api/v2/courses'
+                    : `/api/v2/courses/${encodeURIComponent(id)}`,
+                  {
+                    method: isNewUnsaved ? 'POST' : 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(
+                      expectedUpdatedAt
+                        ? { project: compacted, expectedUpdatedAt }
+                        : { project: compacted }
+                    ),
+                  }
+                );
+                let data = await parseApiJson<any>(res);
+
+                // If PUT returned 404 for a course that was never successfully POSTed, retry as POST
+                if (!isNewUnsaved && res.status === 404 && !lastSyncedUpdatedAtRef.current.has(id)) {
+                  res = await apiFetch('/api/v2/courses', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project: compacted }),
+                  });
+                  data = await parseApiJson<any>(res);
+                }
+
+                if (res.status === 409 && data?.code === 'VERSION_CONFLICT') {
+                  const conflictMsg =
+                    data.error ||
+                    'Another session updated this course in the cloud. Review your local draft before overwriting.';
+                  const conflictDraft = buildDraftForProject(companyId, target, conflictMsg);
+                  saveCloudRecoveryDraftsSync([conflictDraft]);
+                  void saveCloudRecoveryDraft(conflictDraft);
+
+                  if (data.serverCourse) {
+                    const serverNorm = normalizeProjectSchema(data.serverCourse);
+                    if (serverNorm.updatedAt) {
+                      lastSyncedUpdatedAtRef.current.set(id, serverNorm.updatedAt);
+                    }
+                    setProjects(prev => prev.map(p => (p.id === id ? serverNorm : p)));
+                  }
+
+                  dirtyProjectIdsRef.current.delete(id);
+                  setPendingRecoveryDrafts(prev => [
+                    conflictDraft,
+                    ...prev.filter(d => d.projectId !== id),
+                  ]);
+                  setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
+                  const err = new Error(conflictMsg) as Error & { status?: number };
+                  err.status = 409;
+                  throw err;
+                }
+
+                if (!res.ok || !data.success) {
+                  const isAuthIssue = res.status === 401 || res.status === 403;
+                  authBlockedRef.current = isAuthIssue;
+                  const friendlyError = isAuthIssue
+                    ? 'Your session expired or workspace access changed. Your latest edits are backed up locally in this browser — sign in again to sync them to the cloud.'
+                    : data.error || `Cloud save failed (HTTP ${res.status}). Local backup preserved.`;
+                  void saveCloudRecoveryDraft(buildDraftForProject(companyId, target, friendlyError));
+                  const err = new Error(friendlyError) as Error & { status?: number };
+                  err.status = res.status;
+                  throw err;
+                }
+
+                authBlockedRef.current = false;
+                unsavedNewCourseIdsRef.current.delete(id);
+                const syncedTimestamp = String(data.course?.updatedAt || target.updatedAt || '');
+                if (syncedTimestamp) {
+                  lastSyncedUpdatedAtRef.current.set(id, syncedTimestamp);
+                  broadcastChannelRef.current?.postMessage({
+                    type: 'course_saved',
+                    companyId,
+                    courseId: id,
+                    updatedAt: syncedTimestamp,
+                    tabId: tabIdRef.current,
+                  });
+                }
+
+                // Only mark clean if no newer local edits happened while the request was in flight
+                if ((editRevisionRef.current.get(id) || 0) === sentRevision) {
+                  dirtyProjectIdsRef.current.delete(id);
+                  await clearCloudRecoveryDraft(companyId, id);
+                }
+              }
+            }
+            setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
             setLastSavedAt(new Date().toISOString());
             return;
-          } catch {
-            /* ignore localStorage unavailable */
           }
-        } else if (companyId) {
-          backupDirtyProjects(companyId, err?.message || 'Cloud save failed.');
-          setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
 
-          const status = typeof err?.status === 'number' ? err.status : 0;
-          const isAuthIssue = status === 401 || status === 403;
-          if (!isAuthIssue && dirtyProjectIdsRef.current.size > 0 && !retryTimerRef.current) {
-            retryTimerRef.current = setTimeout(() => {
-              retryTimerRef.current = null;
-              if (dirtyProjectIdsRef.current.size > 0 && !authBlockedRef.current) {
-                void persistNow();
-              }
-            }, 5000);
+          await Promise.all([
+            idbPutAll(STORE_PROJECTS, currentProjects),
+            idbPutAll(STORE_TEMPLATES, currentTemplates),
+          ]);
+          setLastSavedAt(new Date().toISOString());
+        } catch (err: any) {
+          succeeded = false;
+          if (!isCloudMode) {
+            try {
+              localStorage.setItem(FALLBACK_PROJECTS_KEY, JSON.stringify(currentProjects));
+              localStorage.setItem(FALLBACK_TEMPLATES_KEY, JSON.stringify(currentTemplates));
+              setLastSavedAt(new Date().toISOString());
+              succeeded = true;
+              return;
+            } catch {
+              /* ignore localStorage unavailable */
+            }
+          } else if (companyId) {
+            backupDirtyProjects(companyId, err?.message || 'Cloud save failed.');
+            setHasUnsavedChanges(dirtyProjectIdsRef.current.size > 0);
+
+            const status = typeof err?.status === 'number' ? err.status : 0;
+            const isAuthIssue = status === 401 || status === 403;
+            const isConflict = status === 409;
+            if (!isAuthIssue && !isConflict && dirtyProjectIdsRef.current.size > 0 && !retryTimerRef.current) {
+              retryTimerRef.current = setTimeout(() => {
+                retryTimerRef.current = null;
+                if (dirtyProjectIdsRef.current.size > 0 && !authBlockedRef.current) {
+                  void persistNow();
+                }
+              }, 5000);
+            }
           }
+          setSaveError(
+            err?.message ||
+              'Failed to save changes to cloud. A local recovery copy is preserved in this browser.'
+          );
+        } finally {
+          endSaving();
         }
-        setSaveError(
-          err?.message ||
-            'Failed to save changes to cloud. A local recovery copy is preserved in this browser.'
-        );
-      } finally {
-        setSaveState('saved');
-      }
+      };
+
+      const chained = persistQueueRef.current.then(runSave, runSave);
+      persistQueueRef.current = chained.catch(() => {});
+      await chained;
+      return succeeded;
     },
-    [isCloudMode, companyId, buildDraftForProject, backupDirtyProjects]
+    [isCloudMode, companyId, buildDraftForProject, backupDirtyProjects, beginSaving, endSaving]
   );
 
   // Retry automatically when browser regains network connectivity
@@ -664,7 +820,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [saveState, isCloudMode, companyId, backupDirtyProjects]);
 
-  const flushSaveNow = useCallback(async () => {
+  const flushSaveNow = useCallback(async (): Promise<boolean> => {
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
@@ -672,7 +828,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
     if (isCloudMode && activeProjectIdRef.current) {
       dirtyProjectIdsRef.current.add(activeProjectIdRef.current);
     }
-    await persistNow(projectsRef.current, customTemplatesRef.current);
+    return persistNow(projectsRef.current, customTemplatesRef.current);
   }, [persistNow, isCloudMode]);
 
   const restoreRecoveryDraft = useCallback(
@@ -764,8 +920,8 @@ export function useV2Store(options?: UseV2StoreOptions) {
       setRouteState('workspace');
 
       if (isCloudMode && companyId) {
-        void (async () => {
-          setSaveState('saving');
+        const createPromise = (async () => {
+          beginSaving();
           const sentRevision = editRevisionRef.current.get(enriched.id) || 1;
           try {
             const compacted = compactProjectForCloudPayload(enriched, 2_800_000).project;
@@ -796,12 +952,15 @@ export function useV2Store(options?: UseV2StoreOptions) {
             void saveCloudRecoveryDraft(buildDraftForProject(companyId, enriched, msg));
             setSaveError(msg);
           } finally {
-            setSaveState('saved');
+            pendingCreationPromisesRef.current.delete(enriched.id);
+            endSaving();
           }
         })();
+        pendingCreationPromisesRef.current.set(enriched.id, createPromise);
+        void createPromise;
       }
     },
-    [isCloudMode, companyId, buildDraftForProject]
+    [isCloudMode, companyId, buildDraftForProject, beginSaving, endSaving]
   );
 
   const openProject = useCallback(
@@ -850,7 +1009,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
           if (snapshotOptions) {
             const { versions: _ignored, ...rest } = p;
             createdSnapshot = {
-              id: `ver-${Date.now()}`,
+              id: generateUniqueId('ver'),
               versionNumber: versions.length + 1,
               createdAt: now,
               stage: p.currentStage,
@@ -877,6 +1036,10 @@ export function useV2Store(options?: UseV2StoreOptions) {
         };
         void (async () => {
           try {
+            const pendingCreation = pendingCreationPromisesRef.current.get(projectId);
+            if (pendingCreation) {
+              await pendingCreation.catch(() => {});
+            }
             const res = await apiFetch(
               `/api/v2/courses/${encodeURIComponent(projectId)}/versions`,
               {
@@ -970,7 +1133,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
       const { versions: _curr, ...currentRest } = current;
       const now = new Date().toISOString();
       const backupBeforeRestore: CourseVersionSnapshot = {
-        id: `ver-${Date.now()}`,
+        id: generateUniqueId('ver'),
         versionNumber: current.versions.length + 1,
         createdAt: now,
         stage: current.currentStage,
@@ -996,6 +1159,10 @@ export function useV2Store(options?: UseV2StoreOptions) {
       if (isCloudMode) {
         void (async () => {
           try {
+            const pendingCreation = pendingCreationPromisesRef.current.get(projectId);
+            if (pendingCreation) {
+              await pendingCreation.catch(() => {});
+            }
             const snapshotPayload: CourseVersionSnapshot = {
               ...backupBeforeRestore,
               data: compactProjectForCloudPayload(
@@ -1031,7 +1198,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
       const now = new Date().toISOString();
       const copy: CourseProject = {
         ...JSON.parse(JSON.stringify(target)),
-        id: `course-${Date.now()}`,
+        id: generateUniqueId('course'),
         localSourceId: undefined,
         lifecycleStatus: 'draft',
         createdAt: now,
@@ -1049,8 +1216,8 @@ export function useV2Store(options?: UseV2StoreOptions) {
       setProjects(prev => [copy, ...prev]);
 
       if (isCloudMode && companyId) {
-        void (async () => {
-          setSaveState('saving');
+        const dupPromise = (async () => {
+          beginSaving();
           const sentRevision = editRevisionRef.current.get(copy.id) || 1;
           try {
             const compacted = compactProjectForCloudPayload(copy, 2_800_000).project;
@@ -1081,12 +1248,15 @@ export function useV2Store(options?: UseV2StoreOptions) {
             void saveCloudRecoveryDraft(buildDraftForProject(companyId, copy, msg));
             setSaveError(msg);
           } finally {
-            setSaveState('saved');
+            pendingCreationPromisesRef.current.delete(copy.id);
+            endSaving();
           }
         })();
+        pendingCreationPromisesRef.current.set(copy.id, dupPromise);
+        void dupPromise;
       }
     },
-    [projects, isCloudMode, companyId, buildDraftForProject]
+    [projects, isCloudMode, companyId, buildDraftForProject, beginSaving, endSaving]
   );
 
   const deleteProject = useCallback(
@@ -1170,7 +1340,7 @@ export function useV2Store(options?: UseV2StoreOptions) {
       const now = new Date().toISOString();
       const copy: CourseTemplate = {
         ...JSON.parse(JSON.stringify(found)),
-        id: `tpl-custom-${Date.now()}`,
+        id: generateUniqueId('tpl-custom'),
         name: `${found.name} (Copy)`,
         isSystemReference: false,
         visibility: 'company',

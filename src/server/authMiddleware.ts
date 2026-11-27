@@ -71,14 +71,88 @@ function mapCompanyRow(row: any): CompanyWorkspace {
   };
 }
 
+export class AuthServiceUnavailableError extends Error {
+  constructor(message = 'Authentication service temporarily unavailable. Please retry shortly.') {
+    super(message);
+    this.name = 'AuthServiceUnavailableError';
+  }
+}
+
+export function isTransientAuthError(err: any): boolean {
+  if (!err) return false;
+  if (err instanceof AuthServiceUnavailableError) return true;
+  const status = typeof err?.status === 'number' ? err.status : 0;
+  if (status >= 500) return true;
+  const code = String(err?.code || '').toUpperCase();
+  if (['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT'].includes(code)) {
+    return true;
+  }
+  const msg = `${err?.name || ''} ${err?.message || ''}`.toLowerCase();
+  if (
+    msg.includes('invalid jwt') ||
+    msg.includes('jwt expired') ||
+    msg.includes('bad_jwt') ||
+    msg.includes('token is expired') ||
+    msg.includes('invalid claim') ||
+    msg.includes('session_not_found') ||
+    msg.includes('user not found') ||
+    msg.includes('authsessionmissingerror')
+  ) {
+    return false;
+  }
+  return (
+    msg.includes('supabase_not_configured') ||
+    msg.includes('fetch failed') ||
+    msg.includes('network') ||
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('enotfound') ||
+    msg.includes('service unavailable') ||
+    msg.includes('temporarily unavailable') ||
+    msg.includes('bad gateway') ||
+    msg.includes('gateway timeout') ||
+    msg.includes('502') ||
+    msg.includes('503') ||
+    msg.includes('504') ||
+    msg.includes('socket hang up')
+  );
+}
+
 class SupabaseTenantVerifier implements TenantAuthVerifier {
   async verifyAccessToken(token: string): Promise<VerifiedUserSession | null> {
     if (!isSupabaseServerConfigured()) {
-      throw new Error('SUPABASE_NOT_CONFIGURED');
+      throw new AuthServiceUnavailableError(
+        'Multi-tenant Supabase authentication is not configured on this server (missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY).'
+      );
     }
     const admin = getSupabaseAdminClient();
-    const { data: userResult, error: userError } = await admin.auth.getUser(token);
-    if (userError || !userResult?.user) {
+    let userResult: any;
+    let userError: any;
+    try {
+      const response = await admin.auth.getUser(token);
+      userResult = response.data;
+      userError = response.error;
+    } catch (err: any) {
+      if (isTransientAuthError(err)) {
+        throw new AuthServiceUnavailableError(
+          'Unable to reach authentication service. Please retry shortly.'
+        );
+      }
+      return null;
+    }
+
+    if (userError) {
+      if (isTransientAuthError(userError)) {
+        throw new AuthServiceUnavailableError(
+          'Authentication service returned a temporary error. Please retry shortly.'
+        );
+      }
+      return null;
+    }
+
+    if (!userResult?.user) {
       return null;
     }
 
@@ -102,19 +176,30 @@ class SupabaseTenantVerifier implements TenantAuthVerifier {
     }
 
     // Ensure profile row exists
-    const { data: profileRow } = await admin
+    const { data: profileRow, error: profileErr } = await admin
       .from('user_profiles')
       .select('id, full_name, email, created_at, updated_at')
       .eq('id', authUser.id)
       .maybeSingle();
 
+    if (profileErr) {
+      throw new AuthServiceUnavailableError(
+        `Unable to load user profile from database: ${profileErr.message}`
+      );
+    }
+
     let profile: UserProfile;
     if (!profileRow) {
-      await admin.from('user_profiles').upsert({
+      const { error: upsertErr } = await admin.from('user_profiles').upsert({
         id: authUser.id,
         email,
         full_name: metaName,
       });
+      if (upsertErr) {
+        throw new AuthServiceUnavailableError(
+          `Unable to initialise user profile in database: ${upsertErr.message}`
+        );
+      }
       profile = {
         id: authUser.id,
         fullName: metaName,
@@ -168,7 +253,9 @@ class SupabaseTenantVerifier implements TenantAuthVerifier {
     }
 
     if (memError) {
-      throw new Error(`Membership verification failed: ${memError.message}`);
+      throw new AuthServiceUnavailableError(
+        `Membership verification unavailable: ${memError.message}`
+      );
     }
 
     const memberships: CompanyMembership[] = (membershipRows || []).map((row: any) => ({
@@ -241,11 +328,15 @@ export function createUserSessionMiddleware(verifier: TenantAuthVerifier = defau
       req.userSession = session;
       return next();
     } catch (err: any) {
-      if (String(err?.message || '').includes('SUPABASE_NOT_CONFIGURED')) {
+      if (isTransientAuthError(err)) {
+        console.error('Auth service unavailable during session check:', String(err?.message || 'unknown_error').slice(0, 200));
         return res.status(503).json({
           success: false,
+          code: 'AUTH_SERVICE_UNAVAILABLE',
           error:
-            'Multi-tenant Supabase authentication is not configured on this server (missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY).',
+            err instanceof AuthServiceUnavailableError
+              ? err.message
+              : 'Authentication service temporarily unavailable. Please retry shortly.',
         });
       }
       console.error('Auth session verification failed:', String(err?.message || 'unknown_error').slice(0, 200));
@@ -358,11 +449,15 @@ export function createTenantAuthMiddleware(verifier: TenantAuthVerifier = defaul
 
       return next();
     } catch (err: any) {
-      if (String(err?.message || '').includes('SUPABASE_NOT_CONFIGURED')) {
+      if (isTransientAuthError(err)) {
+        console.error('Auth service unavailable during tenant check:', String(err?.message || 'unknown_error').slice(0, 200));
         return res.status(503).json({
           success: false,
+          code: 'AUTH_SERVICE_UNAVAILABLE',
           error:
-            'Multi-tenant Supabase authentication is not configured on this server (missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY).',
+            err instanceof AuthServiceUnavailableError
+              ? err.message
+              : 'Authentication service temporarily unavailable. Please retry shortly.',
         });
       }
       return res.status(401).json({

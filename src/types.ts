@@ -26,7 +26,8 @@ export type WorkflowStage = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export type FieldStatus =
   | 'confirmed'
   | 'to_be_confirmed'
-  | 'requires_sme_validation';
+  | 'requires_sme_validation'
+  | 'not_applicable';
 
 export type SourceVerificationStatus =
   | 'VERIFIED'
@@ -167,6 +168,7 @@ export interface CourseBrief {
   saCompliance: SAComplianceProfile;
   templateFieldValues: Record<string, string>;
   fieldStatuses: Record<string, FieldStatus>;
+  fieldStatusNotes?: Record<string, string>;
   metadataLocked: boolean;
   analysis?: BriefAnalysisResult;
   approval: ApprovalRecord;
@@ -321,6 +323,7 @@ export interface AlignmentFlag {
     | 'recall_when_practical_expected'
     | 'missing_evidence'
     | 'ambiguous_item'
+    | 'weak_distractors'
     | 'insufficient_competence_evidence';
   message: string;
   targetId: string;
@@ -356,6 +359,8 @@ export interface AssessmentPlan {
   passRequirementPercent: number;
   knowledgeWeightPercent: number;
   practicalWeightPercent: number;
+  thresholdsConfirmed?: boolean;
+  upstreamOutcomesSignature?: string;
   items: AssessmentItem[];
   alignmentFlags: AlignmentFlag[];
   alignmentScorePercent?: number;
@@ -432,7 +437,20 @@ export interface GeneratedModuleContent {
   lastGeneratedAt?: string;
 }
 
+export interface CourseIntroduction {
+  whyThisMatters: string;
+  intendedLearners: string;
+  prerequisitesSummary: string;
+  outcomesOverview: string;
+  structureRoadmap: string;
+  assessmentOverview: string;
+  editStatus?: 'ai_draft' | 'human_edited';
+}
+
 export interface LearningContentPlan {
+  courseIntroduction?: CourseIntroduction;
+  upstreamCurriculumSignature?: string;
+  upstreamOutcomesSignature?: string;
   modules: GeneratedModuleContent[];
   generationHistory: Array<{
     id: string;

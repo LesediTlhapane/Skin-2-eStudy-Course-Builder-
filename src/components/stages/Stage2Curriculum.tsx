@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDown,
@@ -15,7 +15,12 @@ import type {
   CourseProject,
   CurriculumModulePlan,
 } from '../../types';
-import { apiFetch, compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
+import {
+  apiFetchWithAiBackup,
+  compactSourcesForApi,
+  formatAiErrorMessage,
+} from '../../utils/apiClient';
+import { generateUniqueId } from '../../utils/id';
 
 interface Stage2CurriculumProps {
   project: CourseProject;
@@ -41,7 +46,10 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
   const [isProposing, setIsProposing] = useState(false);
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const [isAuditing, setIsAuditing] = useState(false);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const proposeInFlightRef = useRef(false);
+  const auditInFlightRef = useRef(false);
 
   const curriculum = project.curriculum;
 
@@ -57,29 +65,40 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
   };
 
   const handleProposeCurriculum = async (confirmed = false) => {
+    if (proposeInFlightRef.current) return;
     if (curriculum.modules.length > 0 && !confirmed) {
       setConfirmOverwrite(true);
       return;
     }
+    proposeInFlightRef.current = true;
     setConfirmOverwrite(false);
     setIsProposing(true);
     setErrorMsg(null);
+    setBackupNotice(null);
     try {
-      const res = await apiFetch('/api/v2/curriculum/propose', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/curriculum/propose',
+        {
           brief: project.brief,
           sources: compactSourcesForApi(project.sources),
           desiredModuleCount: desiredCount ? Number(desiredCount) : undefined,
           existingModules: curriculum.modules.length > 0 ? curriculum.modules : undefined,
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to propose curriculum.');
+        throw new Error(
+          formatAiErrorMessage(
+            res,
+            data,
+            usedBackupModel,
+            'Failed to propose curriculum. Existing curriculum modules were preserved.'
+          )
+        );
+      }
+      if (usedBackupModel) {
+        setBackupNotice('Primary AI request hit temporary capacity — backup AI model completed curriculum proposal.');
       }
       onUpdateProject(
         prev => ({
@@ -91,28 +110,35 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to propose curriculum.');
     } finally {
+      proposeInFlightRef.current = false;
       setIsProposing(false);
     }
   };
 
   const handleCheckCoverage = async () => {
+    if (auditInFlightRef.current) return;
+    auditInFlightRef.current = true;
     setIsAuditing(true);
     setErrorMsg(null);
+    setBackupNotice(null);
     try {
-      const res = await apiFetch('/api/v2/curriculum/check-coverage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/curriculum/check-coverage',
+        {
           brief: project.brief,
           sources: compactSourcesForApi(project.sources),
           curriculum,
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Coverage check failed.');
+        throw new Error(
+          formatAiErrorMessage(res, data, usedBackupModel, 'Coverage check failed.')
+        );
+      }
+      if (usedBackupModel) {
+        setBackupNotice('Primary AI request hit temporary capacity — backup AI model completed coverage audit.');
       }
       updateCurriculum({
         coverageChecks: data.coverageChecks || [],
@@ -121,32 +147,41 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
     } catch (err: any) {
       setErrorMsg(err?.message || 'Coverage check failed.');
     } finally {
+      auditInFlightRef.current = false;
       setIsAuditing(false);
     }
   };
 
-  const addModule = () => {
-    const order = curriculum.modules.length + 1;
-    const mod: CurriculumModulePlan = {
-      id: `mod-${Date.now()}`,
-      order,
-      title: `Module ${order}: New Module`,
-      qctoModuleType: project.brief.saCompliance.qctoModulePattern ? 'Knowledge Module' : 'Standard Module',
-      purpose: '',
-      objectives: [''],
-      competencies: [''],
-      topics: [{ id: `top-${Date.now()}`, title: 'Core Topic', subtopics: [] }],
-      lessons: [
-        {
-          id: `les-${Date.now()}`,
-          title: 'Lesson 1',
-          durationMinutes: 35,
-          purpose: '',
-          keyTerms: [],
-        },
-      ],
-    };
-    updateCurriculum({ modules: [...curriculum.modules, mod] });
+  const createEmptyModule = (order: number): CurriculumModulePlan => ({
+    id: generateUniqueId('mod'),
+    order,
+    title: `Module ${order}: New Module`,
+    qctoModuleType: project.brief.saCompliance.qctoModulePattern
+      ? 'Knowledge Module'
+      : 'Standard Module',
+    purpose: '',
+    objectives: [''],
+    competencies: [''],
+    topics: [{ id: generateUniqueId('top'), title: 'Core Topic', subtopics: [] }],
+    lessons: [
+      {
+        id: generateUniqueId('les'),
+        title: 'Lesson 1',
+        durationMinutes: 35,
+        purpose: '',
+        keyTerms: [],
+      },
+    ],
+  });
+
+  const insertModuleAt = (insertIndex: number) => {
+    const safeIdx = Math.max(0, Math.min(insertIndex, curriculum.modules.length));
+    const newMod = createEmptyModule(safeIdx + 1);
+    const next = [...curriculum.modules];
+    next.splice(safeIdx, 0, newMod);
+    updateCurriculum({
+      modules: next.map((m, i) => ({ ...m, order: i + 1 })),
+    });
   };
 
   const updateModule = (idx: number, patch: Partial<CurriculumModulePlan>) => {
@@ -233,6 +268,13 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
         </div>
       )}
 
+      {backupNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
+          <span>{backupNotice}</span>
+        </div>
+      )}
+
       {errorMsg && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -248,7 +290,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
           </h3>
           <button
             type="button"
-            onClick={addModule}
+            onClick={() => insertModuleAt(curriculum.modules.length)}
             className="px-3 py-1.5 text-xs font-bold bg-accent-tint hover:bg-accent-soft border border-accent-border text-primary rounded-lg flex items-center gap-1 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 text-accent-ink" />
@@ -357,9 +399,9 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                         type="button"
                         onClick={() =>
                           updateModule(mIdx, {
-                            topics: [
+                              topics: [
                               ...mod.topics,
-                              { id: `top-${Date.now()}`, title: 'New Topic', subtopics: [] },
+                              { id: generateUniqueId('top'), title: 'New Topic', subtopics: [] },
                             ],
                           })
                         }
@@ -430,7 +472,7 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                             lessons: [
                               ...mod.lessons,
                               {
-                                id: `les-${Date.now()}`,
+                                id: generateUniqueId('les'),
                                 title: `Lesson ${mod.lessons.length + 1}`,
                                 durationMinutes: 30,
                                 purpose: '',
@@ -444,59 +486,108 @@ export const Stage2Curriculum: React.FC<Stage2CurriculumProps> = ({
                         + Add Lesson
                       </button>
                     </div>
-                    {mod.lessons.map((les, lIdx) => (
-                      <div key={les.id} className="bg-surface p-2.5 rounded border border-slate-200 space-y-1.5">
-                        <div className="flex items-center gap-2">
+                    {mod.lessons.map((les, lIdx) => {
+                      const durationOutOfRange =
+                        !Number.isFinite(les.durationMinutes) ||
+                        les.durationMinutes < 5 ||
+                        les.durationMinutes > 480;
+                      return (
+                        <div key={les.id} className="bg-surface p-2.5 rounded border border-slate-200 space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="text"
+                              value={les.title}
+                              onChange={e => {
+                                const nextLessons = mod.lessons.map((l, i) =>
+                                  i === lIdx ? { ...l, title: e.target.value } : l
+                                );
+                                updateModule(mIdx, { lessons: nextLessons });
+                              }}
+                              className="flex-1 min-w-[140px] px-2 py-1 text-xs font-semibold bg-white border border-slate-200 rounded"
+                            />
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <label
+                                htmlFor={`stage2-duration-${les.id}`}
+                                className="text-[11px] font-semibold text-slate-600 whitespace-nowrap"
+                              >
+                                Duration (minutes)
+                              </label>
+                              <input
+                                id={`stage2-duration-${les.id}`}
+                                type="number"
+                                min={5}
+                                max={480}
+                                value={les.durationMinutes}
+                                onChange={e => {
+                                  const raw = e.target.value === '' ? 0 : Number(e.target.value);
+                                  const nextVal = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 30;
+                                  const nextLessons = mod.lessons.map((l, i) =>
+                                    i === lIdx ? { ...l, durationMinutes: nextVal } : l
+                                  );
+                                  updateModule(mIdx, { lessons: nextLessons });
+                                }}
+                                onBlur={e => {
+                                  const parsed = Number(e.target.value);
+                                  const clamped = Number.isFinite(parsed) && parsed > 0
+                                    ? Math.min(480, Math.max(5, Math.round(parsed)))
+                                    : 30;
+                                  if (clamped !== les.durationMinutes) {
+                                    const nextLessons = mod.lessons.map((l, i) =>
+                                      i === lIdx ? { ...l, durationMinutes: clamped } : l
+                                    );
+                                    updateModule(mIdx, { lessons: nextLessons });
+                                  }
+                                }}
+                                className={`w-16 px-1.5 py-1 text-xs font-mono bg-white border rounded ${
+                                  durationOutOfRange ? 'border-amber-400 text-amber-900' : 'border-slate-200'
+                                }`}
+                              />
+                              <span className="text-xs text-slate-500">min</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateModule(mIdx, {
+                                  lessons: mod.lessons.filter((_, i) => i !== lIdx),
+                                })
+                              }
+                              className="text-slate-400 hover:text-red-600 cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                          {durationOutOfRange && (
+                            <div className="text-[10px] text-amber-700 font-medium">
+                              Lesson duration should be between 5 and 480 minutes.
+                            </div>
+                          )}
                           <input
                             type="text"
-                            value={les.title}
+                            value={les.purpose}
                             onChange={e => {
                               const nextLessons = mod.lessons.map((l, i) =>
-                                i === lIdx ? { ...l, title: e.target.value } : l
+                                i === lIdx ? { ...l, purpose: e.target.value } : l
                               );
                               updateModule(mIdx, { lessons: nextLessons });
                             }}
-                            className="flex-1 px-2 py-1 text-xs font-semibold bg-white border border-slate-200 rounded"
+                            placeholder="Lesson purpose / focus..."
+                            className="w-full px-2 py-1 text-[11px] bg-white border border-slate-200 rounded"
                           />
-                          <input
-                            type="number"
-                            value={les.durationMinutes}
-                            onChange={e => {
-                              const nextLessons = mod.lessons.map((l, i) =>
-                                i === lIdx ? { ...l, durationMinutes: Number(e.target.value) || 30 } : l
-                              );
-                              updateModule(mIdx, { lessons: nextLessons });
-                            }}
-                            className="w-16 px-1.5 py-1 text-xs font-mono bg-white border border-slate-200 rounded"
-                            title="Minutes"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateModule(mIdx, {
-                                lessons: mod.lessons.filter((_, i) => i !== lIdx),
-                              })
-                            }
-                            className="text-slate-400 hover:text-red-600 cursor-pointer"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
                         </div>
-                        <input
-                          type="text"
-                          value={les.purpose}
-                          onChange={e => {
-                            const nextLessons = mod.lessons.map((l, i) =>
-                              i === lIdx ? { ...l, purpose: e.target.value } : l
-                            );
-                            updateModule(mIdx, { lessons: nextLessons });
-                          }}
-                          placeholder="Lesson purpose / focus..."
-                          className="w-full px-2 py-1 text-[11px] bg-white border border-slate-200 rounded"
-                        />
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => insertModuleAt(mIdx + 1)}
+                    className="px-2.5 py-1 text-[11px] font-bold bg-surface hover:bg-accent-tint border border-slate-200 hover:border-accent-border text-primary rounded-lg flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3 text-accent-ink" />
+                    <span>Add Module</span>
+                  </button>
                 </div>
               </div>
             ))}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -16,7 +16,9 @@ import type {
   CourseProject,
 } from '../../types';
 import { computeFullAlignmentReport } from '../../utils/alignmentHelpers';
-import { apiFetchWithAiBackup } from '../../utils/apiClient';
+import { apiFetchWithAiBackup, formatAiErrorMessage } from '../../utils/apiClient';
+import { computeUpstreamStageSignatures } from '../../utils/courseValidation';
+import { generateUniqueId } from '../../utils/id';
 
 interface Stage4AssessmentsProps {
   project: CourseProject;
@@ -58,6 +60,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
   const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   const [showLessonLinker, setShowLessonLinker] = useState(false);
+  const inFlightRef = useRef(false);
 
   const assessments = project.assessments;
   const allOutcomes = useMemo(
@@ -70,15 +73,30 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
     [project]
   );
 
+  const upstreamSigs = useMemo(
+    () => computeUpstreamStageSignatures(project),
+    [project]
+  );
+  const hasUpstreamOutcomesChange = Boolean(
+    assessments.items.length > 0 &&
+      assessments.upstreamOutcomesSignature &&
+      assessments.upstreamOutcomesSignature !== upstreamSigs.outcomesSignature
+  );
+
   const liveFlags = alignmentReport.flags;
 
   const updateAssessments = (patch: Partial<typeof assessments>) => {
     onUpdateProject(prev => {
+      const sigs = computeUpstreamStageSignatures(prev);
       const nextProject: CourseProject = {
         ...prev,
         assessments: {
           ...prev.assessments,
           ...patch,
+          upstreamOutcomesSignature:
+            patch.upstreamOutcomesSignature ??
+            prev.assessments.upstreamOutcomesSignature ??
+            sigs.outcomesSignature,
           approval: { approved: false },
         },
       };
@@ -138,10 +156,12 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
   };
 
   const handleDesignWithAI = async (confirmed = false) => {
+    if (inFlightRef.current) return;
     if (assessments.items.length > 0 && !confirmed) {
       setConfirmOverwrite(true);
       return;
     }
+    inFlightRef.current = true;
     setConfirmOverwrite(false);
     setIsDesigning(true);
     setErrorMsg(null);
@@ -158,7 +178,14 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
         }
       );
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Assessment design failed.');
+        throw new Error(
+          formatAiErrorMessage(
+            res,
+            data,
+            usedBackupModel,
+            'Assessment design failed. Existing assessment items were preserved.'
+          )
+        );
       }
       if (usedBackupModel) {
         setBackupNotice('Primary AI request hit temporary capacity — backup AI model completed assessment regeneration.');
@@ -166,6 +193,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
       const items: AssessmentItem[] = Array.isArray(data.items) ? data.items : [];
       onUpdateProject(
         prev => {
+          const sigs = computeUpstreamStageSignatures(prev);
           const nextProj: CourseProject = {
             ...prev,
             assessments: {
@@ -173,6 +201,8 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
               passRequirementPercent: data.passRequirementPercent ?? 70,
               knowledgeWeightPercent: data.knowledgeWeightPercent ?? 50,
               practicalWeightPercent: data.practicalWeightPercent ?? 50,
+              thresholdsConfirmed: false,
+              upstreamOutcomesSignature: sigs.outcomesSignature,
               items,
               alignmentFlags: [],
               approval: { approved: false },
@@ -186,14 +216,18 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
         { trigger: 'ai_generation', summary: 'Designed Stage 4 Assessment Strategy & Items' }
       );
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Assessment design failed.');
+      setErrorMsg(
+        err?.message ||
+          'Assessment design failed. Your existing assessment items and rubrics were preserved.'
+      );
     } finally {
+      inFlightRef.current = false;
       setIsDesigning(false);
     }
   };
 
   const addAssessmentItem = () => {
-    const id = `assess-${Date.now()}`;
+    const id = generateUniqueId('assess');
     const newItem: AssessmentItem = {
       id,
       moduleId: project.curriculum.modules[0]?.id,
@@ -303,6 +337,36 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
         </div>
       )}
 
+      {hasUpstreamOutcomesChange && (
+        <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-950">
+          <div>
+            <strong>Upstream Stage 1 Brief or Stage 3 Outcomes Updated:</strong> Your existing assessments have been preserved. Review outcome mappings below or regenerate assessments to incorporate the latest changes.
+          </div>
+          {!readOnly && (
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleDesignWithAI(false)}
+                className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast font-bold cursor-pointer"
+              >
+                Regenerate Assessments
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  updateAssessments({
+                    upstreamOutcomesSignature: upstreamSigs.outcomesSignature,
+                  })
+                }
+                className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-900 font-semibold cursor-pointer"
+              >
+                Keep Current &amp; Mark Synced
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {backupNotice && (
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
@@ -319,7 +383,20 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
 
       {/* Strategy & Weightings */}
       <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-        <h3 className="text-sm font-bold text-primary">Assessment Strategy & Pass Rules</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-primary">Assessment Strategy &amp; Pass Rules</h3>
+          <span
+            className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold border ${
+              assessments.thresholdsConfirmed
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-amber-50 border-amber-200 text-amber-800'
+            }`}
+          >
+            {assessments.thresholdsConfirmed
+              ? 'Human-Confirmed Pass Mark & Weighting'
+              : 'AI-Proposed (Requires Client / SME Confirmation)'}
+          </span>
+        </div>
         <textarea
           rows={2}
           value={assessments.strategySummary}
@@ -337,7 +414,12 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
               min={0}
               max={100}
               value={assessments.passRequirementPercent}
-              onChange={e => updateAssessments({ passRequirementPercent: Number(e.target.value) })}
+              onChange={e =>
+                updateAssessments({
+                  passRequirementPercent: Number(e.target.value),
+                  thresholdsConfirmed: false,
+                })
+              }
               className="w-full px-3 py-1.5 text-sm font-mono border border-slate-200 rounded-lg"
             />
           </div>
@@ -350,7 +432,12 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
               min={0}
               max={100}
               value={assessments.knowledgeWeightPercent}
-              onChange={e => updateAssessments({ knowledgeWeightPercent: Number(e.target.value) })}
+              onChange={e =>
+                updateAssessments({
+                  knowledgeWeightPercent: Number(e.target.value),
+                  thresholdsConfirmed: false,
+                })
+              }
               className="w-full px-3 py-1.5 text-sm font-mono border border-slate-200 rounded-lg"
             />
           </div>
@@ -363,11 +450,29 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
               min={0}
               max={100}
               value={assessments.practicalWeightPercent}
-              onChange={e => updateAssessments({ practicalWeightPercent: Number(e.target.value) })}
+              onChange={e =>
+                updateAssessments({
+                  practicalWeightPercent: Number(e.target.value),
+                  thresholdsConfirmed: false,
+                })
+              }
               className="w-full px-3 py-1.5 text-sm font-mono border border-slate-200 rounded-lg"
             />
           </div>
         </div>
+        <label className="flex items-start gap-2 p-2.5 rounded-lg bg-surface border border-slate-200 text-xs text-slate-700 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={Boolean(assessments.thresholdsConfirmed)}
+            onChange={e =>
+              updateAssessments({ thresholdsConfirmed: e.target.checked })
+            }
+            className="mt-0.5"
+          />
+          <span>
+            <strong>Client / Academic Lead Confirmation:</strong> Confirm that the declared Knowledge/Practical assessment weighting ({assessments.knowledgeWeightPercent}% / {assessments.practicalWeightPercent}%) and Final Pass Mark ({assessments.passRequirementPercent}%) have been reviewed and approved for this organisation.
+          </span>
+        </label>
         {(() => {
           const actualK = assessments.items
             .filter(it => it.assessmentDomain === 'knowledge')
@@ -1099,20 +1204,24 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
           disabled={!canApprove}
           onClick={() => {
             onUpdateProject(
-              prev => ({
-                ...prev,
-                currentStage: 5,
-                assessments: {
-                  ...prev.assessments,
-                  alignmentFlags: liveFlags,
-                  alignmentScorePercent: alignmentReport.scorePercent,
-                  approval: {
-                    approved: true,
-                    approvedAt: new Date().toISOString(),
-                    approvedBy: 'Course Developer',
+              prev => {
+                const sigs = computeUpstreamStageSignatures(prev);
+                return {
+                  ...prev,
+                  currentStage: 5,
+                  assessments: {
+                    ...prev.assessments,
+                    upstreamOutcomesSignature: sigs.outcomesSignature,
+                    alignmentFlags: liveFlags,
+                    alignmentScorePercent: alignmentReport.scorePercent,
+                    approval: {
+                      approved: true,
+                      approvedAt: new Date().toISOString(),
+                      approvedBy: 'Course Developer',
+                    },
                   },
-                },
-              }),
+                };
+              },
               { trigger: 'stage_approval', summary: 'Approved Stage 4 Assessment Design & 3-Way Alignment' }
             );
             onApproveAndContinue();

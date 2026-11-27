@@ -295,6 +295,14 @@ export const AuthScreens: React.FC = () => {
           redirectTo,
           primaryColour,
           secondaryColour,
+          ...(pendingLogo
+            ? {
+                logoUpload: {
+                  fileName: pendingLogo.fileName,
+                  base64Data: pendingLogo.base64Data,
+                },
+              }
+            : {}),
         }),
       });
       const data = await parseApiJson<any>(res);
@@ -303,7 +311,9 @@ export const AuthScreens: React.FC = () => {
       }
 
       if (data.requiresEmailVerification && !session?.access_token) {
-        const logoNote = pendingLogo
+        const logoNote = data.company?.logoUrl
+          ? ' Your company logo has been saved and will appear automatically once you verify your email and sign in.'
+          : pendingLogo
           ? ' Once verified and signed in, upload your company logo in Organisation Branding & Team.'
           : '';
         setSuccessMsg(
@@ -311,6 +321,7 @@ export const AuthScreens: React.FC = () => {
             'Company workspace registered! Please check your email and click the verification link before signing in.') +
             logoNote
         );
+        setPendingLogo(null);
         setAdminPassword('');
         setAdminConfirmPassword('');
         setLoginEmail(adminEmail.trim().toLowerCase());
@@ -320,14 +331,14 @@ export const AuthScreens: React.FC = () => {
 
       const createdCompanyId = data.company?.id as string | undefined;
 
-      // Authenticate without immediately unmounting so the new Company Admin can upload the logo cleanly
+      // Authenticate without immediately unmounting so the new Company Admin completes setup cleanly
       const activeToken = session?.access_token
         ? session.access_token
         : await signInWithPassword(adminEmail.trim().toLowerCase(), adminPassword, {
             skipRefresh: true,
           });
 
-      if (pendingLogo && createdCompanyId && activeToken) {
+      if (pendingLogo && !data.company?.logoUrl && createdCompanyId && activeToken) {
         try {
           await uploadCompanyLogoToServer({
             logo: pendingLogo,
@@ -344,6 +355,7 @@ export const AuthScreens: React.FC = () => {
         }
       }
 
+      setPendingLogo(null);
       await refreshTenantContext(activeToken, createdCompanyId);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Unable to register company workspace.');

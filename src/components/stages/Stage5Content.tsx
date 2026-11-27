@@ -1,7 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  BookOpen,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Loader2,
   Plus,
   RefreshCw,
@@ -10,12 +13,20 @@ import {
 } from 'lucide-react';
 import type {
   AIProvider,
+  CourseIntroduction,
   CourseProject,
   GeneratedLessonContent,
   GeneratedModuleContent,
   SourceVerificationStatus,
 } from '../../types';
-import { apiFetchWithAiBackup, compactProjectForApi, compactSourcesForApi } from '../../utils/apiClient';
+import {
+  apiFetchWithAiBackup,
+  compactProjectForApi,
+  compactSourcesForApi,
+  formatAiErrorMessage,
+} from '../../utils/apiClient';
+import { computeUpstreamStageSignatures } from '../../utils/courseValidation';
+import { generateUniqueId } from '../../utils/id';
 
 interface Stage5ContentProps {
   project: CourseProject;
@@ -47,7 +58,13 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
   const [regenBusyKey, setRegenBusyKey] = useState<string | null>(null);
   const [regenPrompt, setRegenPrompt] = useState<string>('');
   const [regenSuccessMsg, setRegenSuccessMsg] = useState<string | null>(null);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isIntroOpen, setIsIntroOpen] = useState(true);
+  const [isDraftingIntro, setIsDraftingIntro] = useState(false);
+  const bulkInFlightRef = useRef(false);
+  const introInFlightRef = useRef(false);
+  const selectiveInFlightRef = useRef<Set<string>>(new Set());
 
   const plannedModules = project.curriculum.modules;
 
@@ -71,6 +88,123 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     [project.outcomes]
   );
 
+  const upstreamSigs = useMemo(
+    () => computeUpstreamStageSignatures(project),
+    [project]
+  );
+
+  const hasUpstreamChange = Boolean(
+    generatedModules.length > 0 &&
+      ((project.content.upstreamCurriculumSignature &&
+        project.content.upstreamCurriculumSignature !== upstreamSigs.curriculumSignature) ||
+        (project.content.upstreamOutcomesSignature &&
+          project.content.upstreamOutcomesSignature !== upstreamSigs.outcomesSignature))
+  );
+
+  const courseIntro: CourseIntroduction = project.content.courseIntroduction || {
+    whyThisMatters: '',
+    intendedLearners: '',
+    prerequisitesSummary: '',
+    outcomesOverview: '',
+    structureRoadmap: '',
+    assessmentOverview: '',
+  };
+
+  const hasCompleteIntro = Boolean(
+    courseIntro.whyThisMatters.trim() &&
+      courseIntro.intendedLearners.trim() &&
+      courseIntro.outcomesOverview.trim() &&
+      courseIntro.structureRoadmap.trim() &&
+      courseIntro.assessmentOverview.trim()
+  );
+
+  const updateCourseIntroduction = (patch: Partial<CourseIntroduction>) => {
+    onUpdateProject(prev => {
+      const sigs = computeUpstreamStageSignatures(prev);
+      const current = prev.content.courseIntroduction || {
+        whyThisMatters: '',
+        intendedLearners: '',
+        prerequisitesSummary: '',
+        outcomesOverview: '',
+        structureRoadmap: '',
+        assessmentOverview: '',
+      };
+      return {
+        ...prev,
+        content: {
+          ...prev.content,
+          upstreamCurriculumSignature: sigs.curriculumSignature,
+          upstreamOutcomesSignature: sigs.outcomesSignature,
+          courseIntroduction: {
+            ...current,
+            ...patch,
+            editStatus: 'human_edited',
+          },
+          approval: { approved: false },
+        },
+      };
+    });
+  };
+
+  const handleDraftCourseIntro = async () => {
+    if (introInFlightRef.current) return;
+    introInFlightRef.current = true;
+    setIsDraftingIntro(true);
+    setErrorMsg(null);
+    setBackupNotice(null);
+    try {
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/content/generate-course-intro',
+        {
+          brief: project.brief,
+          curriculum: project.curriculum,
+          outcomes: project.outcomes,
+          assessments: project.assessments,
+          provider: selectedProvider,
+          model: selectedModel,
+        }
+      );
+      if (!res.ok || !data.success || !data.courseIntroduction) {
+        throw new Error(
+          formatAiErrorMessage(
+            res,
+            data,
+            usedBackupModel,
+            'Could not draft Course Introduction. Existing text was preserved.'
+          )
+        );
+      }
+      if (usedBackupModel) {
+        setBackupNotice(
+          'Primary AI request hit temporary capacity — backup AI model drafted the Course Introduction.'
+        );
+      }
+      onUpdateProject(
+        prev => {
+          const sigs = computeUpstreamStageSignatures(prev);
+          return {
+            ...prev,
+            content: {
+              ...prev.content,
+              upstreamCurriculumSignature: sigs.curriculumSignature,
+              upstreamOutcomesSignature: sigs.outcomesSignature,
+              courseIntroduction: data.courseIntroduction,
+              approval: { approved: false },
+            },
+          };
+        },
+        { trigger: 'ai_generation', summary: 'Drafted 6-part Course Introduction' }
+      );
+      setIsIntroOpen(true);
+      setRegenSuccessMsg('Drafted structured 6-part Course Introduction.');
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Course Introduction generation failed.');
+    } finally {
+      introInFlightRef.current = false;
+      setIsDraftingIntro(false);
+    }
+  };
+
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const saveModuleContentState = (
@@ -80,6 +214,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
   ) => {
     onUpdateProject(
       prev => {
+        const sigs = computeUpstreamStageSignatures(prev);
         const others = prev.content.modules.filter(m => m.moduleId !== modPlan.id);
         const nextMods = [...others, modContent].sort(
           (a, b) => a.moduleNumber - b.moduleNumber
@@ -88,11 +223,13 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           ...prev,
           content: {
             ...prev.content,
+            upstreamCurriculumSignature: sigs.curriculumSignature,
+            upstreamOutcomesSignature: sigs.outcomesSignature,
             modules: nextMods,
             generationHistory: historyNote
               ? [
                   {
-                    id: `gen-${Date.now()}`,
+                    id: generateUniqueId('gen'),
                     timestamp: new Date().toISOString(),
                     target: `Module ${modPlan.order}: ${modPlan.title}`,
                     provider: selectedProvider,
@@ -128,7 +265,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       setGeneratingStatus(
         `Module ${modPlan.order}/${plannedModules.length}: Drafting overview, scenarios & knowledge checks...`
       );
-      const { res: scaffoldRes, data: scaffoldData } = await apiFetchWithAiBackup<any>(
+      const { res: scaffoldRes, data: scaffoldData, usedBackupModel } = await apiFetchWithAiBackup<any>(
         '/api/v2/content/generate-module-scaffold',
         {
           brief: project.brief,
@@ -149,7 +286,12 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       );
       if (!scaffoldRes.ok || !scaffoldData.success) {
         throw new Error(
-          scaffoldData.error || `Failed to generate overview for Module ${modPlan.order}.`
+          formatAiErrorMessage(
+            scaffoldRes,
+            scaffoldData,
+            usedBackupModel,
+            `Failed to generate overview for Module ${modPlan.order}. Existing content was preserved.`
+          )
         );
       }
       workingModule = scaffoldData.moduleContent as GeneratedModuleContent;
@@ -175,7 +317,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         `Module ${modPlan.order}/${plannedModules.length} · Writing Lesson ${lIdx + 1}/${plannedLessons.length}: ${lp.title}...`
       );
 
-      const { res: lessonRes, data: lessonData } = await apiFetchWithAiBackup<any>(
+      const { res: lessonRes, data: lessonData, usedBackupModel: usedLessonBackup } = await apiFetchWithAiBackup<any>(
         '/api/v2/content/generate-lesson',
         {
           brief: project.brief,
@@ -196,7 +338,12 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       );
       if (!lessonRes.ok || !lessonData.success) {
         throw new Error(
-          lessonData.error || `Failed to generate Lesson ${lIdx + 1} in Module ${modPlan.order}.`
+          formatAiErrorMessage(
+            lessonRes,
+            lessonData,
+            usedLessonBackup,
+            `Failed to generate Lesson ${lIdx + 1} in Module ${modPlan.order}. Existing content was preserved.`
+          )
         );
       }
 
@@ -227,9 +374,45 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
   };
 
   const handleGenerateMissingModules = async () => {
+    if (bulkInFlightRef.current) return;
+    bulkInFlightRef.current = true;
     setErrorMsg(null);
     setRegenSuccessMsg(null);
+    setBackupNotice(null);
     try {
+      if (!project.content.courseIntroduction?.whyThisMatters?.trim()) {
+        setGeneratingStatus('Drafting 6-part Course Introduction...');
+        try {
+          const { res: introRes, data: introData } = await apiFetchWithAiBackup<any>(
+            '/api/v2/content/generate-course-intro',
+            {
+              brief: project.brief,
+              curriculum: project.curriculum,
+              outcomes: project.outcomes,
+              assessments: project.assessments,
+              provider: selectedProvider,
+              model: selectedModel,
+            }
+          );
+          if (introRes.ok && introData?.success && introData.courseIntroduction) {
+            onUpdateProject(prev => {
+              const sigs = computeUpstreamStageSignatures(prev);
+              return {
+                ...prev,
+                content: {
+                  ...prev.content,
+                  upstreamCurriculumSignature: sigs.curriculumSignature,
+                  upstreamOutcomesSignature: sigs.outcomesSignature,
+                  courseIntroduction: introData.courseIntroduction,
+                },
+              };
+            });
+            await sleep(750);
+          }
+        } catch {
+          /* Allow module generation to continue even if optional auto-intro encounters a transient error */
+        }
+      }
       for (let i = 0; i < plannedModules.length; i++) {
         if (!isModuleComplete(plannedModules[i])) {
           setActiveModIdx(i);
@@ -244,16 +427,18 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         `${err?.message || 'Generation interrupted.'} Completed lessons & modules remain safely saved — click Generate Remaining to resume.`
       );
     } finally {
+      bulkInFlightRef.current = false;
       setGeneratingStatus(null);
     }
   };
 
   const handleRegenerateCurrentModule = async (confirmed = false) => {
-    if (!activePlan) return;
+    if (!activePlan || bulkInFlightRef.current) return;
     if (activeGenerated && !confirmed) {
       setConfirmModuleOverwrite(true);
       return;
     }
+    bulkInFlightRef.current = true;
     setConfirmModuleOverwrite(false);
     setErrorMsg(null);
     setRegenSuccessMsg(null);
@@ -263,8 +448,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         `Regenerated Module ${activePlan.order}: ${activePlan.title}. You can return to Stage 6 to re-run QA or continue editing.`
       );
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Module regeneration failed.');
+      setErrorMsg(err?.message || 'Module regeneration failed. Existing module content was preserved.');
     } finally {
+      bulkInFlightRef.current = false;
       setGeneratingStatus(null);
     }
   };
@@ -275,6 +461,8 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
   ) => {
     if (!activePlan || !activeGenerated) return;
     const busyKey = `${targetType}-${targetId}`;
+    if (selectiveInFlightRef.current.has(busyKey)) return;
+    selectiveInFlightRef.current.add(busyKey);
     setRegenBusyKey(busyKey);
     setErrorMsg(null);
     setRegenSuccessMsg(null);
@@ -292,50 +480,62 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         }
       );
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Selective regeneration failed.');
+        throw new Error(
+          formatAiErrorMessage(
+            res,
+            data,
+            usedBackupModel,
+            'Selective regeneration failed. Existing content was preserved.'
+          )
+        );
       }
       const updated = data.updatedItem;
       onUpdateProject(
-        prev => ({
-          ...prev,
-          content: {
-            ...prev.content,
-            modules: prev.content.modules.map(m => {
-              if (m.moduleId !== activePlan.id) return m;
-              if (targetType === 'lesson') {
+        prev => {
+          const sigs = computeUpstreamStageSignatures(prev);
+          return {
+            ...prev,
+            content: {
+              ...prev.content,
+              upstreamCurriculumSignature: sigs.curriculumSignature,
+              upstreamOutcomesSignature: sigs.outcomesSignature,
+              modules: prev.content.modules.map(m => {
+                if (m.moduleId !== activePlan.id) return m;
+                if (targetType === 'lesson') {
+                  return {
+                    ...m,
+                    lessons: m.lessons.map(l =>
+                      l.id === targetId ? { ...l, ...updated, editStatus: 'ai_draft' } : l
+                    ),
+                  };
+                }
+                if (targetType === 'scenario') {
+                  return {
+                    ...m,
+                    scenarios: m.scenarios.map(s =>
+                      s.id === targetId ? { ...s, ...updated } : s
+                    ),
+                  };
+                }
+                if (targetType === 'case_study') {
+                  return {
+                    ...m,
+                    workplaceCaseStudies: m.workplaceCaseStudies.map(c =>
+                      c.id === targetId ? { ...c, ...updated } : c
+                    ),
+                  };
+                }
                 return {
                   ...m,
-                  lessons: m.lessons.map(l =>
-                    l.id === targetId ? { ...l, ...updated, editStatus: 'ai_draft' } : l
+                  knowledgeChecks: m.knowledgeChecks.map(k =>
+                    k.id === targetId ? { ...k, ...updated } : k
                   ),
                 };
-              }
-              if (targetType === 'scenario') {
-                return {
-                  ...m,
-                  scenarios: m.scenarios.map(s =>
-                    s.id === targetId ? { ...s, ...updated } : s
-                  ),
-                };
-              }
-              if (targetType === 'case_study') {
-                return {
-                  ...m,
-                  workplaceCaseStudies: m.workplaceCaseStudies.map(c =>
-                    c.id === targetId ? { ...c, ...updated } : c
-                  ),
-                };
-              }
-              return {
-                ...m,
-                knowledgeChecks: m.knowledgeChecks.map(k =>
-                  k.id === targetId ? { ...k, ...updated } : k
-                ),
-              };
-            }),
-            approval: { approved: false },
-          },
-        }),
+              }),
+              approval: { approved: false },
+            },
+          };
+        },
         {
           trigger: 'ai_generation',
           summary: `Regenerated ${targetType} in Module ${activePlan.order}`,
@@ -348,26 +548,32 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         }. Return to Stage 6 to re-run QA or continue editing.`
       );
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Selective regeneration failed.');
+      setErrorMsg(err?.message || 'Selective regeneration failed. Existing content was preserved.');
     } finally {
+      selectiveInFlightRef.current.delete(busyKey);
       setRegenBusyKey(null);
     }
   };
 
   const updateActiveModule = (patch: Partial<GeneratedModuleContent>) => {
     if (!activePlan) return;
-    onUpdateProject(prev => ({
-      ...prev,
-      content: {
-        ...prev.content,
-        modules: prev.content.modules.map(m =>
-          m.moduleId === activePlan.id
-            ? { ...m, ...patch, editStatus: 'human_edited' }
-            : m
-        ),
-        approval: { approved: false },
-      },
-    }));
+    onUpdateProject(prev => {
+      const sigs = computeUpstreamStageSignatures(prev);
+      return {
+        ...prev,
+        content: {
+          ...prev.content,
+          upstreamCurriculumSignature: sigs.curriculumSignature,
+          upstreamOutcomesSignature: sigs.outcomesSignature,
+          modules: prev.content.modules.map(m =>
+            m.moduleId === activePlan.id
+              ? { ...m, ...patch, editStatus: 'human_edited' }
+              : m
+          ),
+          approval: { approved: false },
+        },
+      };
+    });
   };
 
   const updateLesson = (lessonId: string, patch: Partial<GeneratedLessonContent>) => {
@@ -424,6 +630,51 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         </div>
       )}
 
+      {hasUpstreamChange && (
+        <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-950">
+          <div>
+            <strong>Upstream Brief, Curriculum, or Outcomes Changed:</strong> Existing Stage 5 modules and edits remain safely intact. Review affected modules below or regenerate selectively where needed.
+          </div>
+          {!readOnly && (
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {activePlan && (
+                <button
+                  type="button"
+                  disabled={Boolean(generatingStatus)}
+                  onClick={() => handleRegenerateCurrentModule(false)}
+                  className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast font-bold cursor-pointer"
+                >
+                  Regenerate M{activePlan.order}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateProject(prev => ({
+                    ...prev,
+                    content: {
+                      ...prev.content,
+                      upstreamCurriculumSignature: upstreamSigs.curriculumSignature,
+                      upstreamOutcomesSignature: upstreamSigs.outcomesSignature,
+                    },
+                  }))
+                }
+                className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-amber-900 font-semibold cursor-pointer"
+              >
+                Keep Existing Content &amp; Mark Synced
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {backupNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
+          <span>{backupNotice}</span>
+        </div>
+      )}
+
       {regenSuccessMsg && (
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
@@ -437,6 +688,134 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           <span>{errorMsg}</span>
         </div>
       )}
+
+      {/* Structured 6-Part Course Introduction Panel */}
+      <section className="bg-white border border-slate-200 border-t-[3px] border-t-primary rounded-xl overflow-hidden">
+        <div className="px-5 py-3.5 bg-surface border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setIsIntroOpen(!isIntroOpen)}
+            className="flex items-center gap-2 text-left cursor-pointer"
+          >
+            <BookOpen className="w-4 h-4 text-primary shrink-0" />
+            <div>
+              <h3 className="text-sm font-bold text-primary flex items-center gap-2">
+                <span>Course Introduction (6-Part Learning Journey)</span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                    hasCompleteIntro
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-amber-50 border-amber-200 text-amber-800'
+                  }`}
+                >
+                  {hasCompleteIntro ? 'Complete' : 'Incomplete'}
+                </span>
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Included in Full Course, Learner Manual, Facilitator Guide &amp; SCORM overview (distinct from brief summary).
+              </p>
+            </div>
+            {isIntroOpen ? (
+              <ChevronUp className="w-4 h-4 text-slate-500 ml-1" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-slate-500 ml-1" />
+            )}
+          </button>
+
+          {!readOnly && (
+            <button
+              type="button"
+              disabled={isDraftingIntro || Boolean(generatingStatus)}
+              onClick={() => void handleDraftCourseIntro()}
+              className="px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-dark disabled:opacity-60 text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              {isDraftingIntro ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5 text-accent" />
+              )}
+              <span>{isDraftingIntro ? 'Drafting Intro...' : 'Draft Course Introduction with AI'}</span>
+            </button>
+          )}
+        </div>
+
+        {isIntroOpen && (
+          <fieldset disabled={readOnly} className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                1. Why This Matters &amp; Workplace Relevance
+              </label>
+              <textarea
+                rows={3}
+                value={courseIntro.whyThisMatters}
+                onChange={e => updateCourseIntroduction({ whyThisMatters: e.target.value })}
+                placeholder="Explain the operational risk, opportunity, or real workplace stakes..."
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                2. Intended Learners &amp; Roles
+              </label>
+              <textarea
+                rows={3}
+                value={courseIntro.intendedLearners}
+                onChange={e => updateCourseIntroduction({ intendedLearners: e.target.value })}
+                placeholder="Clarify who benefits most and the job decisions they make..."
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                3. Prerequisites &amp; Entry Baseline
+              </label>
+              <textarea
+                rows={2}
+                value={courseIntro.prerequisitesSummary}
+                onChange={e => updateCourseIntroduction({ prerequisitesSummary: e.target.value })}
+                placeholder="State prior skills, tools, or induction baseline expected..."
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                4. Learning Outcomes Overview
+              </label>
+              <textarea
+                rows={2}
+                value={courseIntro.outcomesOverview}
+                onChange={e => updateCourseIntroduction({ outcomesOverview: e.target.value })}
+                placeholder="Summarise measurable workplace capabilities learners gain..."
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                5. Course Structure &amp; Module Roadmap
+              </label>
+              <textarea
+                rows={2}
+                value={courseIntro.structureRoadmap}
+                onChange={e => updateCourseIntroduction({ structureRoadmap: e.target.value })}
+                placeholder="Explain how modules progress logically from foundations to mastery..."
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                6. Assessment &amp; Completion Expectations
+              </label>
+              <textarea
+                rows={2}
+                value={courseIntro.assessmentOverview}
+                onChange={e => updateCourseIntroduction({ assessmentOverview: e.target.value })}
+                placeholder="Explain knowledge checks, practical tasks, and how competence is demonstrated..."
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-accent"
+              />
+            </div>
+          </fieldset>
+        )}
+      </section>
 
       {/* Module Selector Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -619,19 +998,38 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                       onChange={e => updateLesson(lesson.id, { title: e.target.value })}
                       className="flex-1 min-w-[200px] px-2.5 py-1 text-sm font-bold text-primary border border-slate-200 rounded focus:outline-none focus:border-accent"
                     />
-                    <input
-                      type="number"
-                      min={5}
-                      value={lesson.durationMinutes}
-                      onChange={e =>
-                        updateLesson(lesson.id, {
-                          durationMinutes: Number(e.target.value) || 30,
-                        })
-                      }
-                      className="w-16 px-2 py-1 text-xs font-mono border border-slate-200 rounded"
-                      title="Duration (minutes)"
-                    />
-                    <span className="text-xs text-slate-500">min</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <label
+                        htmlFor={`stage5-duration-${lesson.id}`}
+                        className="text-[11px] font-semibold text-slate-600 whitespace-nowrap"
+                      >
+                        Duration (minutes)
+                      </label>
+                      <input
+                        id={`stage5-duration-${lesson.id}`}
+                        type="number"
+                        min={5}
+                        max={480}
+                        value={lesson.durationMinutes}
+                        onChange={e => {
+                          const raw = e.target.value === '' ? 0 : Number(e.target.value);
+                          updateLesson(lesson.id, {
+                            durationMinutes: Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : 30,
+                          });
+                        }}
+                        onBlur={e => {
+                          const parsed = Number(e.target.value);
+                          const clamped = Number.isFinite(parsed) && parsed > 0
+                            ? Math.min(480, Math.max(5, Math.round(parsed)))
+                            : 30;
+                          if (clamped !== lesson.durationMinutes) {
+                            updateLesson(lesson.id, { durationMinutes: clamped });
+                          }
+                        }}
+                        className="w-16 px-2 py-1 text-xs font-mono border border-slate-200 rounded"
+                      />
+                      <span className="text-xs text-slate-500">min</span>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -841,7 +1239,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                             sourceClaims: [
                               ...(lesson.sourceClaims || []),
                               {
-                                id: `clm-${Date.now()}`,
+                                id: generateUniqueId('clm'),
                                 claim: '',
                                 sourceTitle: '',
                                 status: 'NEEDS REVIEW',
@@ -940,7 +1338,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                     workplaceCaseStudies: [
                       ...activeGenerated.workplaceCaseStudies,
                       {
-                        id: `cs-${Date.now()}`,
+                        id: generateUniqueId('cs'),
                         title: 'New Workplace Case Study',
                         background: '',
                         analysisQuestions: [''],
@@ -1203,7 +1601,7 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
                     knowledgeChecks: [
                       ...activeGenerated.knowledgeChecks,
                       {
-                        id: `kc-${Date.now()}`,
+                        id: generateUniqueId('kc'),
                         question: '',
                         options: ['Option A', 'Option B', 'Option C', 'Option D'],
                         correctIndex: 0,
@@ -1373,19 +1771,24 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           disabled={!allModulesGenerated}
           onClick={() => {
             onUpdateProject(
-              prev => ({
-                ...prev,
-                currentStage: 6,
-                lifecycleStatus: 'awaiting_review',
-                content: {
-                  ...prev.content,
-                  approval: {
-                    approved: true,
-                    approvedAt: new Date().toISOString(),
-                    approvedBy: 'Course Developer',
+              prev => {
+                const sigs = computeUpstreamStageSignatures(prev);
+                return {
+                  ...prev,
+                  currentStage: 6,
+                  lifecycleStatus: 'awaiting_review',
+                  content: {
+                    ...prev.content,
+                    upstreamCurriculumSignature: sigs.curriculumSignature,
+                    upstreamOutcomesSignature: sigs.outcomesSignature,
+                    approval: {
+                      approved: true,
+                      approvedAt: new Date().toISOString(),
+                      approvedBy: 'Course Developer',
+                    },
                   },
-                },
-              }),
+                };
+              },
               { trigger: 'stage_approval', summary: 'Approved Stage 5 Learning Content for QA' }
             );
             onApproveAndContinue();

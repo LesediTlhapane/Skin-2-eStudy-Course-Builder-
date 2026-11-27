@@ -41,6 +41,7 @@ import { getRolePermissions } from '../utils/rbac';
 
 interface CourseWorkspaceProps {
   project: CourseProject;
+  companyName?: string;
   template: CourseTemplate | undefined;
   activeRole?: CompanyRole | null;
   activeGovernanceRoles?: GovernanceRole[];
@@ -49,10 +50,11 @@ interface CourseWorkspaceProps {
   saveState: 'saved' | 'saving';
   lastSavedAt?: string | null;
   saveError?: string | null;
+  hasUnsavedChanges?: boolean;
   selectedProvider: AIProvider;
   selectedModel: string;
   onBackToDashboard: () => void;
-  onFlushSaveNow?: () => Promise<void>;
+  onFlushSaveNow?: () => Promise<boolean | void>;
   onLoadVersions?: (projectId: string) => Promise<CourseVersionSnapshot[] | void>;
   onSyncServerProject?: (project: CourseProject) => void;
   onUpdateProject: (
@@ -77,6 +79,7 @@ const STAGES: Array<{ num: WorkflowStage; label: string; desc: string }> = [
 
 export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   project,
+  companyName,
   template,
   activeRole,
   activeGovernanceRoles,
@@ -85,6 +88,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   saveState,
   lastSavedAt,
   saveError,
+  hasUnsavedChanges = false,
   selectedProvider,
   selectedModel,
   onBackToDashboard,
@@ -98,6 +102,8 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   const isReadOnly = perms.isReadOnly;
   const [viewerStage, setViewerStage] = useState<WorkflowStage>(project.currentStage);
   const effectiveStage = isReadOnly ? viewerStage : project.currentStage;
+  const [confirmExitPending, setConfirmExitPending] = useState(false);
+  const [isFlushingExit, setIsFlushingExit] = useState(false);
 
   const [isSourcesOpen, setIsSourcesOpen] = useState(false);
   const [isVersionsOpen, setIsVersionsOpen] = useState(false);
@@ -358,37 +364,103 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
         <div className="p-4 space-y-5">
           <button
             type="button"
-            onClick={onBackToDashboard}
+            onClick={() => {
+              if (!isReadOnly && (hasUnsavedChanges || saveState === 'saving' || Boolean(saveError))) {
+                setConfirmExitPending(true);
+                return;
+              }
+              onBackToDashboard();
+            }}
             className="text-xs font-semibold opacity-80 hover:opacity-100 flex items-center gap-1.5 cursor-pointer"
           >
             <ArrowLeft className="w-3.5 h-3.5 text-accent" />
             <span>Back to Dashboard</span>
           </button>
 
+          {confirmExitPending && (
+            <div className="p-2.5 rounded-lg bg-amber-950/90 border border-amber-400/60 text-[11px] text-amber-100 space-y-2">
+              <div className="font-bold">
+                {saveError
+                  ? 'Changes have not synced to the cloud yet.'
+                  : 'Unsaved edits are currently syncing.'}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {onFlushSaveNow && (
+                  <button
+                    type="button"
+                    disabled={isFlushingExit}
+                    onClick={() => {
+                      void (async () => {
+                        setIsFlushingExit(true);
+                        try {
+                          const ok = await onFlushSaveNow();
+                          if (ok !== false) {
+                            setConfirmExitPending(false);
+                            onBackToDashboard();
+                          }
+                        } finally {
+                          setIsFlushingExit(false);
+                        }
+                      })();
+                    }}
+                    className="px-2 py-1 rounded bg-accent text-accent-contrast font-bold cursor-pointer disabled:opacity-60"
+                  >
+                    {isFlushingExit ? 'Saving...' : 'Save & Exit'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmExitPending(false);
+                    onBackToDashboard();
+                  }}
+                  className="px-2 py-1 rounded bg-white/15 hover:bg-white/25 text-white font-semibold cursor-pointer"
+                >
+                  Leave (Keep Local Backup)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmExitPending(false)}
+                  className="px-2 py-1 rounded text-amber-200 hover:text-white cursor-pointer"
+                >
+                  Stay
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-1.5 pb-3 border-b border-white/15">
             <div className="text-sm font-bold truncate">
               {project.brief.title || 'Untitled Course'}
             </div>
-            <div className="flex items-center justify-between gap-2 text-[11px] opacity-80">
+            <div className="flex items-center justify-between gap-2 text-[11px] opacity-90">
               <span className="truncate">
                 {project.brief.code || 'Code TBC'} ·{' '}
-                {saveState === 'saving'
-                  ? 'Saving...'
-                  : saveError
-                  ? 'Local backup (unsynced)'
-                  : formattedSavedTime
-                  ? `Saved ${formattedSavedTime}`
-                  : 'Saved'}
+                {saveState === 'saving' ? (
+                  <span className="text-amber-200 font-semibold">Saving...</span>
+                ) : saveError ? (
+                  <span className="text-red-200 font-bold">Save Error</span>
+                ) : hasUnsavedChanges ? (
+                  <span className="text-amber-200 font-semibold">Unsaved changes</span>
+                ) : formattedSavedTime ? (
+                  `Saved ${formattedSavedTime}`
+                ) : (
+                  'Saved'
+                )}
               </span>
               {onFlushSaveNow && !isReadOnly && (
                 <button
                   type="button"
                   onClick={() => void onFlushSaveNow()}
-                  title="Flush workspace to cloud storage immediately"
-                  className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
+                  title={saveError ? 'Retry saving changes to cloud' : 'Flush workspace to cloud storage immediately'}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer ${
+                    saveError
+                      ? 'bg-red-500/80 hover:bg-red-500 text-white'
+                      : 'bg-white/10 hover:bg-white/20'
+                  }`}
                 >
                   <Save className="w-2.5 h-2.5 text-accent" />
-                  <span>Save</span>
+                  <span>{saveError ? 'Retry Save' : 'Save'}</span>
                 </button>
               )}
             </div>
@@ -617,6 +689,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
           {effectiveStage === 7 && (
             <Stage7Publish
               project={project}
+              companyName={companyName}
               activeRole={activeRole}
               activeGovernanceRoles={activeGovernanceRoles}
               onSyncServerProject={onSyncServerProject}

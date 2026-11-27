@@ -18,6 +18,7 @@ import type {
   CourseProject,
   CourseTemplate,
 } from '../types';
+import { BrandLogo } from './BrandLogo';
 import { getRolePermissions } from '../utils/rbac';
 
 interface DashboardProps {
@@ -124,10 +125,26 @@ export const Dashboard: React.FC<DashboardProps> = ({
     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Hero Workspace Banner */}
       <section className="rounded-xl p-6 sm:p-8 bg-brand-gradient text-primary-contrast border border-slate-900/15 border-b-[3px] border-b-accent flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 shadow-xs">
-        <div className="max-w-2xl space-y-2.5">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider opacity-95">
-            <span className="w-2.5 h-2.5 rounded-sm bg-accent shrink-0" />
-            <span>{brandTitle} · Instructional Design Platform V2</span>
+        <div className="max-w-2xl space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {activeCompany ? (
+              <BrandLogo
+                size="sm"
+                surface="dark"
+                companyName={activeCompany.companyName}
+                logoUrl={activeCompany.logoUrl}
+                primaryColour={activeCompany.primaryColour}
+                secondaryColour={activeCompany.secondaryColour}
+              />
+            ) : (
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider opacity-95">
+                <span className="w-2.5 h-2.5 rounded-sm bg-accent shrink-0" />
+                <span>{brandTitle}</span>
+              </div>
+            )}
+            <span className="text-[11px] font-semibold uppercase tracking-wider opacity-85 border-l border-white/25 pl-3">
+              Instructional Design Platform V2
+            </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
             Course Development Workspace

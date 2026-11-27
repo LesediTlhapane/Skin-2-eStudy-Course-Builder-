@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   BarChart3,
@@ -81,17 +81,30 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
   const [inviteGovernanceRoles, setInviteGovernanceRoles] = useState<GovernanceRole[]>([]);
   const [inviteTempPassword, setInviteTempPassword] = useState('');
 
+  const wasOpenRef = useRef(false);
+  const syncedCompanyIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!isOpen || !activeCompany) return;
-    setCompanyName(activeCompany.companyName);
-    setLogoUrl(activeCompany.logoUrl || '');
-    setPendingLogoFile(null);
-    setPendingRemoveLogo(false);
-    setPrimaryColour(activeCompany.primaryColour || '#052B66');
-    setSecondaryColour(activeCompany.secondaryColour || '#45CC42');
-    setDraftSurfaceMode(surfaceMode);
-    setNotice(null);
-    setErrorMsg(null);
+    if (!isOpen || !activeCompany) {
+      wasOpenRef.current = false;
+      return;
+    }
+    const justOpened = !wasOpenRef.current;
+    const switchedCompany = syncedCompanyIdRef.current !== activeCompany.id;
+    wasOpenRef.current = true;
+    syncedCompanyIdRef.current = activeCompany.id;
+
+    if (justOpened || switchedCompany) {
+      setCompanyName(activeCompany.companyName);
+      setLogoUrl(activeCompany.logoUrl || '');
+      setPendingLogoFile(null);
+      setPendingRemoveLogo(false);
+      setPrimaryColour(activeCompany.primaryColour || '#052B66');
+      setSecondaryColour(activeCompany.secondaryColour || '#45CC42');
+      setDraftSurfaceMode(surfaceMode);
+      setNotice(null);
+      setErrorMsg(null);
+    }
   }, [isOpen, activeCompany, surfaceMode]);
 
   // Live preview adjustments across the workspace while editing in the modal

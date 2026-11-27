@@ -165,10 +165,19 @@ const SCORM_API_JS = `/* Lightweight SCORM 1.2 Runtime Wrapper (eStudy Course Bu
 })(window);
 `;
 
-export function buildScorm12ZipEntries(project: CourseProject): ZipEntryInput[] {
+export interface ExportBrandOptions {
+  companyName?: string;
+}
+
+export function buildScorm12ZipEntries(
+  project: CourseProject,
+  brand?: ExportBrandOptions
+): ZipEntryInput[] {
   const safeId = (project.brief.code || project.id || 'ESTUDY-COURSE').replace(/[^A-Za-z0-9_-]/g, '_');
   const title = project.brief.title || 'eStudy Course';
   const modules = project.content.modules || [];
+  const cleanCompany = (brand?.companyName || '').trim();
+  const brandHeader = cleanCompany ? `${cleanCompany} · eSTUDY SOUTH AFRICA` : 'eSTUDY SOUTH AFRICA';
 
   const orgItems = [
     `      <item identifier="ITEM-OVERVIEW" identifierref="RES-OVERVIEW">
@@ -241,7 +250,7 @@ ${resourceItems}
 </head>
 <body>
   <header>
-    <div class="brand">eSTUDY SOUTH AFRICA · ${escapeHtml(project.brief.code || 'COURSE')}</div>
+    <div class="brand">${escapeHtml(brandHeader)} · ${escapeHtml(project.brief.code || 'COURSE')}</div>
     <h1>${escapeHtml(pageTitle)}</h1>
   </header>
   ${body}
@@ -251,12 +260,25 @@ ${resourceItems}
 </body>
 </html>`;
 
+  const intro = project.content?.courseIntroduction;
+  const courseIntroHtml = intro
+    ? `<div class="card">
+        <h2>Course Introduction &amp; Learning Journey</h2>
+        ${intro.whyThisMatters ? `<p><strong>Why This Matters:</strong> ${escapeHtml(intro.whyThisMatters)}</p>` : ''}
+        ${intro.intendedLearners ? `<p><strong>Intended Learners:</strong> ${escapeHtml(intro.intendedLearners)}</p>` : ''}
+        ${intro.prerequisitesSummary ? `<p><strong>Prerequisites:</strong> ${escapeHtml(intro.prerequisitesSummary)}</p>` : ''}
+        ${intro.outcomesOverview ? `<p><strong>Outcomes Overview:</strong> ${escapeHtml(intro.outcomesOverview)}</p>` : ''}
+        ${intro.structureRoadmap ? `<p><strong>Course Structure &amp; Roadmap:</strong> ${escapeHtml(intro.structureRoadmap)}</p>` : ''}
+        ${intro.assessmentOverview ? `<p><strong>Assessment Overview:</strong> ${escapeHtml(intro.assessmentOverview)}</p>` : ''}
+      </div>`
+    : `<div class="card"><h3>Purpose</h3><p>${escapeHtml(project.brief.purpose)}</p></div>`;
+
   const overviewBody = `
     <p><strong>Course:</strong> ${escapeHtml(title)} (${escapeHtml(project.brief.code)})</p>
     <p><strong>Industry / Domain:</strong> ${escapeHtml(project.brief.industryDomain)}</p>
     <p><strong>Target Audience:</strong> ${escapeHtml(project.brief.targetAudience)}</p>
     <p><strong>Estimated Duration:</strong> ${escapeHtml(project.brief.estimatedDuration)}</p>
-    <div class="card"><h3>Purpose</h3><p>${escapeHtml(project.brief.purpose)}</p></div>
+    ${courseIntroHtml}
     <h2>Course Learning Outcomes</h2>
     <ul>
       ${project.outcomes.courseOutcomes
@@ -340,6 +362,9 @@ ${resourceItems}
   ];
 }
 
-export function buildScorm12ZipBytes(project: CourseProject): Uint8Array {
-  return buildZipArchive(buildScorm12ZipEntries(project));
+export function buildScorm12ZipBytes(
+  project: CourseProject,
+  brand?: ExportBrandOptions
+): Uint8Array {
+  return buildZipArchive(buildScorm12ZipEntries(project, brand));
 }

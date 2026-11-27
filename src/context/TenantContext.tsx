@@ -76,6 +76,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const tokenRef = useRef<string | null>(null);
   const companyIdRef = useRef<string | null>(null);
+  const refreshSeqRef = useRef<number>(0);
 
   useEffect(() => {
     tokenRef.current = session?.access_token || null;
@@ -146,6 +147,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const refreshTenantContext = useCallback(
     async (overrideToken?: string, preferredCompanyId?: string) => {
+      const seq = ++refreshSeqRef.current;
       const token = overrideToken || tokenRef.current;
       if (!token) {
         setProfile(null);
@@ -159,6 +161,7 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setAuthError(null);
       const savedCompanyId =
         preferredCompanyId ||
+        companyIdRef.current ||
         (() => {
           try {
             return localStorage.getItem(ACTIVE_COMPANY_STORAGE_KEY) || undefined;
@@ -175,6 +178,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
 
       let res = await fetch('/api/v2/tenant/me', { headers });
+      if (seq !== refreshSeqRef.current) return;
+
       if (res.status === 403 && savedCompanyId) {
         // Stored company may belong to another previous user; clear and retry cleanly
         try {
@@ -185,9 +190,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         res = await fetch('/api/v2/tenant/me', {
           headers: { Authorization: `Bearer ${token}` },
         });
+        if (seq !== refreshSeqRef.current) return;
       }
 
       const data = await parseApiJson<any>(res);
+      if (seq !== refreshSeqRef.current) return;
+
       if (res.status === 403 && data?.code === 'EMAIL_NOT_VERIFIED') {
         const msg =
           data.error ||
@@ -302,10 +310,14 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setSession(nextSession);
       tokenRef.current = nextSession?.access_token || null;
       if (nextSession?.access_token) {
-        void refreshTenantContext(nextSession.access_token).catch(err => {
+        void refreshTenantContext(
+          nextSession.access_token,
+          companyIdRef.current || undefined
+        ).catch(err => {
           setAuthError(err?.message || 'Unable to load workspace profile.');
         });
       } else {
+        refreshSeqRef.current++;
         setProfile(null);
         setMemberships([]);
         setActiveCompany(null);

@@ -250,6 +250,7 @@ export function buildSampleCourseProject(overrides?: Partial<CourseProject>): Co
       passRequirementPercent: 70,
       knowledgeWeightPercent: 50,
       practicalWeightPercent: 50,
+      thresholdsConfirmed: true,
       items: [
         {
           id: 'ass-1',
@@ -975,22 +976,34 @@ export function createInMemoryTenantEnv() {
       return coursesByCompany.get(companyId)?.get(courseIdParam) || null;
     },
 
-    async saveCourse(companyId, _userId, project, courseIdParam) {
+    async saveCourse(companyId, _userId, project, courseIdParam, options) {
       const store = coursesByCompany.get(companyId) || new Map<string, CourseProject>();
       coursesByCompany.set(companyId, store);
       if (courseIdParam && !store.has(courseIdParam)) {
         return { project, notFound: true };
       }
       const existing = courseIdParam ? store.get(courseIdParam) : undefined;
+      if (
+        existing &&
+        options?.expectedUpdatedAt &&
+        existing.updatedAt &&
+        options.expectedUpdatedAt !== existing.updatedAt
+      ) {
+        return { project: existing, conflict: true };
+      }
       const id = courseIdParam || project.id || `course-${crypto.randomUUID()}`;
       const approvals = approvalsByCourse.get(`${companyId}:${id}`) || [];
       const authoritativeSignOff = buildAuthoritativeHumanSignOff(companyId, id, approvals);
+      let nextUpdatedAt = new Date().toISOString();
+      if (existing?.updatedAt && nextUpdatedAt <= existing.updatedAt) {
+        nextUpdatedAt = new Date(Date.parse(existing.updatedAt) + 1).toISOString();
+      }
 
       const saved: CourseProject = {
         ...project,
         id,
         companyId,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nextUpdatedAt,
         ...(existing?.lifecycleStatus === 'completed'
           ? { lifecycleStatus: 'completed' }
           : {}),
