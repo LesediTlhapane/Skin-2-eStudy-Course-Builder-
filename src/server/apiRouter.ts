@@ -386,7 +386,9 @@ export function createRateLimiter(options?: {
   store?: RateLimitStore;
 }) {
   validateRateLimitConfiguration({ injectedStore: options?.store });
-  const envMax = Number(process.env.RATE_LIMIT_MAX_PER_MIN);
+  const envMax = Number(
+    process.env.RATE_LIMIT_MAX_PER_MIN || process.env.RATE_LIMIT_MAX_PER_LIMIT
+  );
   const maxRequests =
     options?.maxRequests ||
     Math.max(5, Number.isFinite(envMax) && envMax > 0 ? Math.round(envMax) : 60);
