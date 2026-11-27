@@ -22,6 +22,7 @@ import type {
 } from '../types';
 import { BENCHMARK_PRESETS, createEmptyCourseProject } from '../data/benchmarks';
 import { apiFetch, parseApiJson } from '../utils/apiClient';
+import { toExportBrandOptions } from '../utils/exportBranding';
 import {
   exportTemplateAsDocx,
   uploadAndParseFilledTemplateFile,
@@ -30,6 +31,7 @@ import {
 interface CreateCourseModalProps {
   isOpen: boolean;
   templates: CourseTemplate[];
+  activeCompany?: import('../types').CompanyWorkspace | null;
   selectedProvider: AIProvider;
   selectedModel: string;
   initialTemplateId?: string;
@@ -53,6 +55,7 @@ const QUICK_PROMPTS = [
 export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
   isOpen,
   templates,
+  activeCompany,
   selectedProvider,
   selectedModel,
   initialTemplateId,
@@ -377,7 +380,7 @@ export const CreateCourseModal: React.FC<CreateCourseModalProps> = ({
     setIsDownloadingDocx(true);
     setErrorMsg(null);
     try {
-      await exportTemplateAsDocx(selectedTemplate);
+      await exportTemplateAsDocx(selectedTemplate, undefined, toExportBrandOptions(activeCompany));
     } catch (err: any) {
       setErrorMsg(err?.message || 'Could not generate Word template.');
     } finally {

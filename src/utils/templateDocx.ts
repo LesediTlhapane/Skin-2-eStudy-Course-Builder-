@@ -3,6 +3,7 @@ import {
   BorderStyle,
   Document,
   Footer,
+  ImageRun,
   Packer,
   Paragraph,
   ShadingType,
@@ -21,6 +22,13 @@ import type {
 } from '../types';
 import { createEmptyCourseProject } from '../data/benchmarks';
 import { apiFetch, parseApiJson } from './apiClient';
+import {
+  computeLogoFitDimensions,
+  ensureContrastHex,
+  parseDataUriLogoAsset,
+  resolveExportBrand,
+  type ExportBrandOptions,
+} from './exportBranding';
 import {
   V9_THEME,
   buildMasterV9TemplateDocxDocument,
@@ -240,12 +248,21 @@ function v9Bullet(text: string): Paragraph {
 
 export function buildTemplateDocxDocument(
   template: CourseTemplate,
-  prefillProject?: CourseProject
+  prefillProject?: CourseProject,
+  brand?: ExportBrandOptions
 ): Document {
   if (isMasterV9Template(template)) {
-    return buildMasterV9TemplateDocxDocument(template, prefillProject);
+    return buildMasterV9TemplateDocxDocument(template, prefillProject, brand);
   }
   const b = prefillProject?.brief;
+  const cleanCompany = (brand?.companyName || '').trim();
+  const brandTitle = cleanCompany || 'eStudy South Africa';
+  const primaryHex = ensureContrastHex(brand?.primaryColour || V9_THEME.NAVY, V9_THEME.NAVY);
+  const logoAsset =
+    brand?.logoAsset ||
+    (brand?.logoUrl && brand.logoUrl.trim().startsWith('data:image/')
+      ? parseDataUriLogoAsset(brand.logoUrl)
+      : null);
 
   const valOrPlaceholder = (val: string | undefined, placeholder: string) => {
     const trimmed = (val || '').trim();
@@ -256,17 +273,38 @@ export function buildTemplateDocxDocument(
 
   const children: Array<Paragraph | Table> = [];
 
-  // Executive eStudy South Africa Cover Header (matches Master v9.0 Theme)
+  // Executive Brand Cover Header (matches Master v9.0 Theme)
+  if (logoAsset?.docxBytes && logoAsset.docxType) {
+    children.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 60, after: 80 },
+        children: [
+          new ImageRun({
+            type: logoAsset.docxType,
+            data: logoAsset.docxBytes,
+            transformation: computeLogoFitDimensions(logoAsset, 200, 62),
+            altText: {
+              name: 'CompanyLogo',
+              title: brandTitle,
+              description: `${brandTitle} official branding logo`,
+            },
+          }),
+        ],
+      })
+    );
+  }
+
   children.push(
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { before: 100, after: 40 },
+      spacing: { before: logoAsset?.docxBytes ? 40 : 100, after: 40 },
       children: [
         new TextRun({
-          text: 'eStudy South Africa',
+          text: brandTitle,
           bold: true,
           size: 44,
-          color: V9_THEME.NAVY,
+          color: primaryHex,
           font: 'Calibri',
         }),
       ],
@@ -811,7 +849,7 @@ export function buildTemplateDocxDocument(
                 alignment: AlignmentType.CENTER,
                 children: [
                   new TextRun({
-                    text: `eStudy South Africa · ${template.name} (${template.version})`,
+                    text: `${brandTitle} · ${template.name} (${template.version})`,
                     size: 16,
                     color: '94A3B8',
                     font: 'Calibri',
@@ -829,9 +867,11 @@ export function buildTemplateDocxDocument(
 
 export async function exportTemplateAsDocx(
   template: CourseTemplate,
-  prefillProject?: CourseProject
+  prefillProject?: CourseProject,
+  brand?: ExportBrandOptions
 ): Promise<void> {
-  const doc = buildTemplateDocxDocument(template, prefillProject);
+  const resolvedBrand = await resolveExportBrand(brand);
+  const doc = buildTemplateDocxDocument(template, prefillProject, resolvedBrand);
   const blob = await Packer.toBlob(doc);
   const baseName = prefillProject?.brief?.title
     ? `${slugify(prefillProject.brief.title)}-course-form`

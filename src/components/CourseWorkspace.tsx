@@ -37,10 +37,12 @@ import {
   type ApplyProposalResult,
 } from '../utils/copilotApply';
 import { computeCourseDataSignature } from '../utils/courseValidation';
+import { toExportBrandOptions } from '../utils/exportBranding';
 import { getRolePermissions } from '../utils/rbac';
 
 interface CourseWorkspaceProps {
   project: CourseProject;
+  activeCompany?: import('../types').CompanyWorkspace | null;
   companyName?: string;
   template: CourseTemplate | undefined;
   activeRole?: CompanyRole | null;
@@ -79,6 +81,7 @@ const STAGES: Array<{ num: WorkflowStage; label: string; desc: string }> = [
 
 export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   project,
+  activeCompany,
   companyName,
   template,
   activeRole,
@@ -98,6 +101,8 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
   onUpdateProject,
   onRestoreVersion,
 }) => {
+  const exportBrand =
+    toExportBrandOptions(activeCompany) || (companyName ? { companyName } : undefined);
   const perms = getRolePermissions(activeRole, activeGovernanceRoles);
   const isReadOnly = perms.isReadOnly;
   const [viewerStage, setViewerStage] = useState<WorkflowStage>(project.currentStage);
@@ -617,6 +622,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
             <Stage1Brief
               project={project}
               template={template}
+              exportBrand={exportBrand}
               readOnly={isReadOnly}
               selectedProvider={selectedProvider}
               selectedModel={selectedModel}
@@ -689,6 +695,7 @@ export const CourseWorkspace: React.FC<CourseWorkspaceProps> = ({
           {effectiveStage === 7 && (
             <Stage7Publish
               project={project}
+              exportBrand={exportBrand}
               companyName={companyName}
               activeRole={activeRole}
               activeGovernanceRoles={activeGovernanceRoles}

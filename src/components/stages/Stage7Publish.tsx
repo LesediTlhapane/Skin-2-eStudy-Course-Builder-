@@ -20,6 +20,7 @@ import type {
 } from '../../types';
 import {
   type DeliverableType,
+  type ExportBrandOptions,
   exportDeliverableDocx,
   exportDeliverableHtmlOrPrint,
   exportLmsPackageJson,
@@ -38,6 +39,7 @@ import {
 
 interface Stage7PublishProps {
   project: CourseProject;
+  exportBrand?: ExportBrandOptions;
   companyName?: string;
   activeRole?: CompanyRole | null;
   activeGovernanceRoles?: GovernanceRole[];
@@ -99,6 +101,7 @@ const DELIVERABLES: Array<{
 
 export const Stage7Publish: React.FC<Stage7PublishProps> = ({
   project,
+  exportBrand: exportBrandProp,
   companyName,
   activeRole,
   activeGovernanceRoles,
@@ -117,8 +120,8 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
   const structuralAudit = useMemo(() => runStructuralAndConsistencyAudit(project), [project]);
   const preExportReport = useMemo(() => runPreExportCompletenessCheck(project), [project]);
   const exportBrand = useMemo(
-    () => (companyName ? { companyName } : undefined),
-    [companyName]
+    () => exportBrandProp || (companyName ? { companyName } : undefined),
+    [exportBrandProp, companyName]
   );
   const qa = project.latestQA;
   const isQaStale = Boolean(
@@ -157,20 +160,50 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
     setExportNotice(null);
     try {
       await exportDeliverableDocx(project, type, exportBrand);
-      setExportNotice(`Generated ${type.replace(/_/g, ' ')} Word (.docx) from latest saved project state.`);
+      setExportNotice(`Generated ${type.replace(/_/g, ' ')} Word (.docx) with company branding from latest saved project state.`);
     } finally {
       setBusyType(null);
     }
   };
 
-  const handleScormZip = () => {
-    exportScorm12PackageZip(project, exportBrand);
-    setExportNotice('Downloaded SCORM 1.2 (.zip) package containing imsmanifest.xml and module SCO pages.');
+  const handleHtmlOrPrint = async (
+    type: DeliverableType,
+    mode: 'print' | 'download_html',
+    label?: string
+  ) => {
+    const key = `${type}:${mode}`;
+    setBusyType(key);
+    setExportNotice(null);
+    try {
+      await exportDeliverableHtmlOrPrint(project, type, mode, exportBrand);
+      if (mode === 'download_html') {
+        setExportNotice(`Downloaded ${label || type.replace(/_/g, ' ')} standalone HTML file.`);
+      }
+    } finally {
+      setBusyType(null);
+    }
   };
 
-  const handleLmsJson = () => {
-    exportLmsPackageJson(project, exportBrand);
-    setExportNotice('Downloaded LMS-compatible structured data (.json).');
+  const handleScormZip = async () => {
+    setBusyType('scorm_zip');
+    setExportNotice(null);
+    try {
+      await exportScorm12PackageZip(project, exportBrand);
+      setExportNotice('Downloaded SCORM 1.2 (.zip) package containing imsmanifest.xml, company branding assets, and module SCO pages.');
+    } finally {
+      setBusyType(null);
+    }
+  };
+
+  const handleLmsJson = async () => {
+    setBusyType('lms_json');
+    setExportNotice(null);
+    try {
+      await exportLmsPackageJson(project, exportBrand);
+      setExportNotice('Downloaded LMS-compatible structured data (.json).');
+    } finally {
+      setBusyType(null);
+    }
   };
 
   const signOffRoles = qa?.humanSignOff?.roles;
@@ -502,8 +535,9 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => exportDeliverableHtmlOrPrint(project, 'complete_course', 'print', exportBrand)}
-            className="py-2.5 px-3.5 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+            disabled={busyType === 'complete_course:print'}
+            onClick={() => void handleHtmlOrPrint('complete_course', 'print', 'Complete Course Document')}
+            className="py-2.5 px-3.5 rounded-lg border border-slate-200 hover:border-accent disabled:opacity-60 text-primary text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
             title="Print or Save Complete Course as PDF"
           >
             <Printer className="w-3.5 h-3.5" />
@@ -511,11 +545,9 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => {
-              exportDeliverableHtmlOrPrint(project, 'complete_course', 'download_html', exportBrand);
-              setExportNotice('Downloaded Complete Course Document HTML file.');
-            }}
-            className="py-2.5 px-3.5 rounded-lg border border-slate-200 hover:border-accent text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+            disabled={busyType === 'complete_course:download_html'}
+            onClick={() => void handleHtmlOrPrint('complete_course', 'download_html', 'Complete Course Document')}
+            className="py-2.5 px-3.5 rounded-lg border border-slate-200 hover:border-accent disabled:opacity-60 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer transition-colors"
             title="Download standalone Complete Course HTML"
           >
             <FileText className="w-3.5 h-3.5" />
@@ -539,19 +571,21 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
               <div className="space-y-2">
                 <button
                   type="button"
-                  onClick={handleScormZip}
-                  className="w-full py-2 px-3 rounded-lg bg-accent hover:bg-accent-dark text-accent-contrast text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  disabled={busyType === 'scorm_zip'}
+                  onClick={() => void handleScormZip()}
+                  className="w-full py-2 px-3 rounded-lg bg-accent hover:bg-accent-dark disabled:opacity-60 text-accent-contrast text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Archive className="w-3.5 h-3.5" />
-                  <span>SCORM 1.2 Package (.zip)</span>
+                  <span>{busyType === 'scorm_zip' ? 'Packaging...' : 'SCORM 1.2 Package (.zip)'}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={handleLmsJson}
-                  className="w-full py-2 px-3 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  disabled={busyType === 'lms_json'}
+                  onClick={() => void handleLmsJson()}
+                  className="w-full py-2 px-3 rounded-lg border border-slate-200 hover:border-accent disabled:opacity-60 text-primary text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <FileCode className="w-3.5 h-3.5 text-accent-ink" />
-                  <span>LMS Data Export (.json)</span>
+                  <span>{busyType === 'lms_json' ? 'Exporting...' : 'LMS Data Export (.json)'}</span>
                 </button>
               </div>
             ) : (
@@ -559,7 +593,7 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
                 <button
                   type="button"
                   disabled={busyType === item.type}
-                  onClick={() => handleDocx(item.type)}
+                  onClick={() => void handleDocx(item.type)}
                   className="flex-1 py-2 px-3 rounded-lg bg-primary hover:bg-primary-dark text-primary-contrast border-b-2 border-accent text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-accent" />
@@ -567,8 +601,9 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => exportDeliverableHtmlOrPrint(project, item.type, 'print', exportBrand)}
-                  className="py-2 px-3 rounded-lg border border-slate-200 hover:border-accent text-primary text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
+                  disabled={busyType === `${item.type}:print`}
+                  onClick={() => void handleHtmlOrPrint(item.type, 'print', item.title)}
+                  className="py-2 px-3 rounded-lg border border-slate-200 hover:border-accent disabled:opacity-60 text-primary text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
                   title="Print or Save as PDF"
                 >
                   <Printer className="w-3.5 h-3.5" />
@@ -576,11 +611,9 @@ export const Stage7Publish: React.FC<Stage7PublishProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    exportDeliverableHtmlOrPrint(project, item.type, 'download_html', exportBrand);
-                    setExportNotice(`Downloaded ${item.title} HTML file.`);
-                  }}
-                  className="py-2 px-2.5 rounded-lg border border-slate-200 hover:border-accent text-slate-700 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
+                  disabled={busyType === `${item.type}:download_html`}
+                  onClick={() => void handleHtmlOrPrint(item.type, 'download_html', item.title)}
+                  className="py-2 px-2.5 rounded-lg border border-slate-200 hover:border-accent disabled:opacity-60 text-slate-700 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
                   title="Download standalone HTML"
                 >
                   <FileText className="w-3.5 h-3.5" />

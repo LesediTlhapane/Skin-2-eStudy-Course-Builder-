@@ -16,12 +16,14 @@ import {
 import type {
   AIProvider,
   CompanyRole,
+  CompanyWorkspace,
   CourseProject,
   CourseTemplate,
   TemplateField,
   TemplateSection,
 } from '../types';
 import { apiFetch, parseApiJson } from '../utils/apiClient';
+import { toExportBrandOptions } from '../utils/exportBranding';
 import {
   exportTemplateAsDocx,
   uploadAndParseFilledTemplateFile,
@@ -31,6 +33,7 @@ import { getRolePermissions } from '../utils/rbac';
 
 interface TemplateStudioProps {
   templates: CourseTemplate[];
+  activeCompany?: CompanyWorkspace | null;
   activeRole?: CompanyRole | null;
   selectedProvider: AIProvider;
   selectedModel: string;
@@ -43,6 +46,7 @@ interface TemplateStudioProps {
 
 export const TemplateStudio: React.FC<TemplateStudioProps> = ({
   templates,
+  activeCompany,
   activeRole,
   selectedProvider,
   selectedModel,
@@ -193,7 +197,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({
     setDownloadingId(tpl.id);
     setUploadError(null);
     try {
-      await exportTemplateAsDocx(tpl);
+      await exportTemplateAsDocx(tpl, undefined, toExportBrandOptions(activeCompany));
       setSaveNotice(
         `Downloaded "${tpl.name}" as a fillable Word (.docx) document. Fill in the right-hand cells and upload it back to create your course.`
       );

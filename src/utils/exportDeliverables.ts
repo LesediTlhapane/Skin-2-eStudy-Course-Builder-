@@ -1,20 +1,35 @@
 import {
   AlignmentType,
+  BorderStyle,
   Document,
+  Footer,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
+  ShadingType,
   Table,
   TableCell,
   TableRow,
   TextRun,
+  VerticalAlign,
   WidthType,
 } from 'docx';
 import type { CourseProject } from '../types';
 import { computeFullAlignmentReport } from './alignmentHelpers';
-import { buildScorm12ZipBytes, type ExportBrandOptions } from './scormExport';
+import {
+  buildCompanyMonogram,
+  computeLogoFitDimensions,
+  ensureContrastHex,
+  parseDataUriLogoAsset,
+  resolveExportBrand,
+  sanitizeBrandHex,
+  type ExportBrandOptions,
+  type ResolvedLogoAsset,
+} from './exportBranding';
+import { buildScorm12ZipBytes } from './scormExport';
 
-export type { ExportBrandOptions };
+export type { ExportBrandOptions, ResolvedLogoAsset };
 
 export type DeliverableType =
   | 'complete_course'
@@ -160,9 +175,114 @@ function buildCourseIntroductionHtml(project: CourseProject): string {
   return `<div class="box"><h2>Course Introduction &amp; Learning Journey</h2>${rows.join('')}</div>`;
 }
 
+function resolveSyncLogoAsset(brand?: ExportBrandOptions): ResolvedLogoAsset | null {
+  if (brand?.logoAsset) return brand.logoAsset;
+  const url = brand?.logoUrl?.trim();
+  if (url && url.startsWith('data:image/')) {
+    return parseDataUriLogoAsset(url);
+  }
+  return null;
+}
+
 function formatBrandPrefix(brand?: ExportBrandOptions): string {
   const cleanCompany = (brand?.companyName || '').trim();
   return cleanCompany ? `${cleanCompany} · eSTUDY SOUTH AFRICA` : 'eSTUDY SOUTH AFRICA';
+}
+
+function buildDocxBrandCoverHeader(
+  project: CourseProject,
+  type: DeliverableType,
+  brand?: ExportBrandOptions
+): Table {
+  const title = project.brief.title || 'Untitled Course';
+  const code = project.brief.code || 'TBC';
+  const cleanCompany = (brand?.companyName || '').trim();
+  const brandPrefix = formatBrandPrefix(brand);
+  const primaryHex = ensureContrastHex(brand?.primaryColour || '052B66', '052B66');
+  const secondaryHex = sanitizeBrandHex(brand?.secondaryColour, '45CC42');
+  const asset = resolveSyncLogoAsset(brand);
+
+  const noSideBorders = {
+    top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+    left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+    right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+    bottom: { style: BorderStyle.SINGLE, size: 18, color: secondaryHex },
+  };
+
+  let logoParagraph: Paragraph;
+  if (asset?.docxBytes && asset.docxType) {
+    const dims = computeLogoFitDimensions(asset, 160, 52);
+    logoParagraph = new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 40, after: 40 },
+      children: [
+        new ImageRun({
+          type: asset.docxType,
+          data: asset.docxBytes,
+          transformation: { width: dims.width, height: dims.height },
+          altText: {
+            name: 'CompanyLogo',
+            title: cleanCompany || 'Company Logo',
+            description: `${cleanCompany || 'Company'} official branding logo`,
+          },
+        }),
+      ],
+    });
+  } else {
+    const monogram = buildCompanyMonogram(cleanCompany || 'eStudy');
+    logoParagraph = new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 60, after: 60 },
+      children: [
+        new TextRun({
+          text: monogram,
+          bold: true,
+          size: 34,
+          color: primaryHex,
+        }),
+      ],
+    });
+  }
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            width: { size: 28, type: WidthType.PERCENTAGE },
+            verticalAlign: VerticalAlign.CENTER,
+            shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'F8FAFC' },
+            borders: noSideBorders,
+            margins: { top: 100, bottom: 120, left: 100, right: 140 },
+            children: [logoParagraph],
+          }),
+          new TableCell({
+            width: { size: 72, type: WidthType.PERCENTAGE },
+            verticalAlign: VerticalAlign.CENTER,
+            shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'FFFFFF' },
+            borders: noSideBorders,
+            margins: { top: 100, bottom: 120, left: 160, right: 80 },
+            children: [
+              new Paragraph({
+                spacing: { after: 50 },
+                children: [
+                  new TextRun({ text: `${brandPrefix} · `, bold: true, size: 19, color: ensureContrastHex(secondaryHex, primaryHex) }),
+                  new TextRun({ text: type.replace(/_/g, ' ').toUpperCase(), bold: true, size: 19, color: primaryHex }),
+                ],
+              }),
+              new Paragraph({
+                spacing: { after: 40 },
+                children: [
+                  new TextRun({ text: `${title} (${code})`, bold: true, size: 34, color: primaryHex }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
 }
 
 function buildDocxChildren(
@@ -170,22 +290,9 @@ function buildDocxChildren(
   type: DeliverableType,
   brand?: ExportBrandOptions
 ): Array<Paragraph | Table> {
-  const title = project.brief.title || 'Untitled Course';
-  const code = project.brief.code || 'TBC';
-  const brandPrefix = formatBrandPrefix(brand);
   const children: Array<Paragraph | Table> = [
-    new Paragraph({
-      alignment: AlignmentType.LEFT,
-      spacing: { after: 80 },
-      children: [
-        new TextRun({ text: `${brandPrefix} · `, bold: true, size: 20, color: '45CC42' }),
-        new TextRun({ text: type.replace(/_/g, ' ').toUpperCase(), bold: true, size: 20, color: '052B66' }),
-      ],
-    }),
-    new Paragraph({
-      spacing: { after: 140 },
-      children: [new TextRun({ text: `${title} (${code})`, bold: true, size: 38, color: '052B66' })],
-    }),
+    buildDocxBrandCoverHeader(project, type, brand),
+    new Paragraph({ spacing: { after: 140 }, children: [] }),
     para(project.brief.industryDomain, 'Industry / Domain'),
     para(project.brief.targetAudience, 'Target Audience'),
     para(project.brief.estimatedDuration, 'Estimated Duration'),
@@ -744,10 +851,30 @@ export function buildDeliverableDocxDocument(
   type: Exclude<DeliverableType, 'lms_package'>,
   brand?: ExportBrandOptions
 ): Document {
+  const cleanCompany = (brand?.companyName || '').trim() || 'eStudy South Africa';
+  const title = project.brief.title || 'Untitled Course';
+  const code = project.brief.code || 'TBC';
+
   return new Document({
     sections: [
       {
         properties: {},
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new TextRun({
+                    text: `${cleanCompany} · ${title} (${code})`,
+                    size: 16,
+                    color: '64748B',
+                  }),
+                ],
+              }),
+            ],
+          }),
+        },
         children: buildDocxChildren(project, type, brand),
       },
     ],
@@ -760,28 +887,33 @@ export async function exportDeliverableDocx(
   brand?: ExportBrandOptions
 ): Promise<void> {
   if (type === 'lms_package') {
-    exportLmsPackageJson(project, brand);
+    await exportLmsPackageJson(project, brand);
     return;
   }
-  const doc = buildDeliverableDocxDocument(project, type, brand);
+  const resolvedBrand = await resolveExportBrand(brand);
+  const doc = buildDeliverableDocxDocument(project, type, resolvedBrand);
   const blob = await Packer.toBlob(doc);
   downloadBlob(blob, `${slugify(project.brief.title)}-${type}.docx`);
 }
 
-export function exportDeliverableHtmlOrPrint(
+export function buildDeliverableHtmlDocument(
   project: CourseProject,
-  type: DeliverableType,
-  mode: 'print' | 'download_html',
+  type: Exclude<DeliverableType, 'lms_package'>,
   brand?: ExportBrandOptions
-): void {
-  if (type === 'lms_package') {
-    exportLmsPackageJson(project, brand);
-    return;
-  }
+): string {
   const title = project.brief.title || 'Untitled Course';
   const code = project.brief.code || 'TBC';
   const label = type.replace(/_/g, ' ').toUpperCase();
   const brandPrefix = formatBrandPrefix(brand);
+  const cleanCompany = (brand?.companyName || '').trim();
+  const primaryHex = ensureContrastHex(brand?.primaryColour || '052B66', '052B66');
+  const secondaryHex = sanitizeBrandHex(brand?.secondaryColour, '45CC42');
+  const asset = resolveSyncLogoAsset(brand);
+  const monogram = escapeHtml(buildCompanyMonogram(cleanCompany || 'eStudy'));
+  const logoAlt = escapeHtml(cleanCompany ? `${cleanCompany} logo` : 'Company logo');
+  const logoMarkup = asset?.dataUri
+    ? `<div class="logo-box"><img src="${asset.dataUri}" alt="${logoAlt}" class="company-logo" /></div>`
+    : `<div class="logo-box logo-monogram" aria-hidden="true">${monogram}</div>`;
 
   let bodyHtml = '';
   if (type === 'complete_course') {
@@ -968,35 +1100,81 @@ export function exportDeliverableHtmlOrPrint(
       .join('')}`;
   }
 
-  const fullHtml = `<!doctype html>
+  return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
 <title>${escapeHtml(title)} - ${escapeHtml(label)}</title>
 <style>
   body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; margin: 36px; line-height: 1.55; }
-  header { border-bottom: 3px solid #052B66; padding-bottom: 12px; margin-bottom: 24px; }
-  .brand { color: #45CC42; font-weight: 800; font-size: 12px; letter-spacing: 0.08em; }
-  h1 { color: #052B66; margin: 6px 0; font-size: 24px; }
-  h2 { color: #052B66; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-top: 24px; }
-  h3 { color: #042150; margin-top: 16px; }
+  header.doc-header { border-top: 4px solid #${secondaryHex}; border-bottom: 3px solid #${primaryHex}; padding: 14px 0 12px; margin-bottom: 24px; }
+  .header-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .header-meta { min-width: 0; flex: 1 1 280px; }
+  .logo-box { flex-shrink: 0; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 10px; display: inline-flex; align-items: center; justify-content: center; }
+  .logo-monogram { width: 46px; height: 46px; background: #${primaryHex}; color: #ffffff; font-weight: 800; font-size: 16px; border-color: #${primaryHex}; }
+  .company-logo { max-width: 170px; max-height: 54px; width: auto; height: auto; object-fit: contain; display: block; }
+  .brand { color: #${primaryHex}; font-weight: 800; font-size: 12px; letter-spacing: 0.08em; }
+  h1 { color: #${primaryHex}; margin: 4px 0 6px; font-size: 24px; line-height: 1.25; }
+  h2 { color: #${primaryHex}; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-top: 24px; }
+  h3 { color: #${primaryHex}; margin-top: 16px; }
   .meta { font-size: 12px; color: #475569; }
   .box { border: 1px solid #cbd5e1; padding: 12px 16px; margin: 12px 0; border-radius: 6px; background: #f8fafc; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
   th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }
-  th { background: #052B66; color: #ffffff; }
+  th { background: #${primaryHex}; color: #ffffff; }
   .page-break { page-break-before: always; }
+  @media print { * { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
 </style>
 </head>
 <body>
-  <header>
-    <div class="brand">${escapeHtml(brandPrefix)} · ${escapeHtml(label)}</div>
-    <h1>${escapeHtml(title)} (${escapeHtml(code)})</h1>
-    <div class="meta">${escapeHtml(project.brief.industryDomain)} · ${escapeHtml(project.brief.targetAudience)} · ${escapeHtml(project.brief.estimatedDuration)}</div>
+  <header class="doc-header">
+    <div class="header-row">
+      ${logoMarkup}
+      <div class="header-meta">
+        <div class="brand">${escapeHtml(brandPrefix)} · ${escapeHtml(label)}</div>
+        <h1>${escapeHtml(title)} (${escapeHtml(code)})</h1>
+        <div class="meta">${escapeHtml(project.brief.industryDomain)} · ${escapeHtml(project.brief.targetAudience)} · ${escapeHtml(project.brief.estimatedDuration)}</div>
+      </div>
+    </div>
   </header>
   ${bodyHtml}
 </body>
 </html>`;
+}
+
+async function waitForDocumentImagesReady(doc: globalThis.Document): Promise<void> {
+  const imgs = Array.from(doc.querySelectorAll('img'));
+  if (imgs.length === 0) return;
+  await Promise.all(
+    imgs.map(
+      img =>
+        new Promise<void>(resolve => {
+          if (img.complete) {
+            resolve();
+            return;
+          }
+          const done = () => resolve();
+          img.addEventListener('load', done, { once: true });
+          img.addEventListener('error', done, { once: true });
+          setTimeout(done, 1500);
+        })
+    )
+  );
+}
+
+export async function exportDeliverableHtmlOrPrint(
+  project: CourseProject,
+  type: DeliverableType,
+  mode: 'print' | 'download_html',
+  brand?: ExportBrandOptions
+): Promise<void> {
+  if (type === 'lms_package') {
+    await exportLmsPackageJson(project, brand);
+    return;
+  }
+  const title = project.brief.title || 'Untitled Course';
+  const resolvedBrand = await resolveExportBrand(brand);
+  const fullHtml = buildDeliverableHtmlDocument(project, type, resolvedBrand);
 
   if (mode === 'download_html') {
     const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
@@ -1019,33 +1197,45 @@ export function exportDeliverableHtmlOrPrint(
     doc.open();
     doc.write(fullHtml);
     doc.close();
+    await waitForDocumentImagesReady(doc);
     setTimeout(() => {
       iframe?.contentWindow?.focus();
       iframe?.contentWindow?.print();
-    }, 300);
+    }, 150);
   }
 }
 
-export function exportScorm12PackageZip(
+export async function exportScorm12PackageZip(
   project: CourseProject,
   brand?: ExportBrandOptions
-): void {
-  const bytes = buildScorm12ZipBytes(project, brand);
+): Promise<void> {
+  const resolvedBrand = await resolveExportBrand(brand);
+  const bytes = buildScorm12ZipBytes(project, resolvedBrand);
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   const blob = new Blob([copy.buffer], { type: 'application/zip' });
   downloadBlob(blob, `${slugify(project.brief.title)}-scorm-1.2.zip`);
 }
 
-export function exportLmsPackageJson(
+export function buildLmsPackageData(
   project: CourseProject,
   brand?: ExportBrandOptions
-): void {
-  const structuredManifest = {
+) {
+  const asset = resolveSyncLogoAsset(brand);
+  return {
     schema: 'eStudy-LMS-Structured-Data-v2',
     note: 'Structured JSON data export for custom LMS/CMS API ingestion (not a SCORM ZIP package).',
     exportedAt: new Date().toISOString(),
+    companyId: brand?.companyId || undefined,
     companyName: (brand?.companyName || '').trim() || undefined,
+    branding: {
+      companyId: brand?.companyId || undefined,
+      companyName: (brand?.companyName || '').trim() || undefined,
+      logoUrl: brand?.logoUrl || undefined,
+      embeddedLogoDataUri: asset?.dataUri || undefined,
+      primaryColour: brand?.primaryColour || '#052B66',
+      secondaryColour: brand?.secondaryColour || '#45CC42',
+    },
     metadata: {
       title: project.brief.title,
       code: project.brief.code,
@@ -1069,6 +1259,14 @@ export function exportLmsPackageJson(
       verifiedAt: s.verifiedAt,
     })),
   };
+}
+
+export async function exportLmsPackageJson(
+  project: CourseProject,
+  brand?: ExportBrandOptions
+): Promise<void> {
+  const resolvedBrand = await resolveExportBrand(brand);
+  const structuredManifest = buildLmsPackageData(project, resolvedBrand);
   const blob = new Blob([JSON.stringify(structuredManifest, null, 2)], { type: 'application/json' });
   downloadBlob(blob, `${slugify(project.brief.title)}-lms-data.json`);
 }

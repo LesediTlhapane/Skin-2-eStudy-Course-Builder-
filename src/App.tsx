@@ -298,7 +298,7 @@ export default function App() {
           onDuplicateProject={store.duplicateProject}
           onDeleteProject={store.deleteProject}
           onOpenTemplates={() => store.setRoute('templates')}
-          onExportWorkspace={store.exportWorkspaceJson}
+          onExportWorkspace={() => store.exportWorkspaceJson(activeCompany)}
           onImportWorkspace={store.importWorkspaceJson}
         />
       )}
@@ -306,6 +306,7 @@ export default function App() {
       {store.route === 'templates' && (
         <TemplateStudio
           templates={store.allTemplates}
+          activeCompany={activeCompany}
           activeRole={activeRole}
           selectedProvider={store.selectedProvider}
           selectedModel={store.selectedModel}
@@ -326,6 +327,7 @@ export default function App() {
       {store.route === 'workspace' && store.activeProject && (
         <CourseWorkspace
           project={store.activeProject}
+          activeCompany={activeCompany}
           companyName={activeCompany.companyName}
           template={activeTemplate}
           activeRole={activeRole}
@@ -357,6 +359,7 @@ export default function App() {
         <CreateCourseModal
           isOpen={isNewCourseModalOpen}
           templates={store.allTemplates}
+          activeCompany={activeCompany}
           selectedProvider={store.selectedProvider}
           selectedModel={store.selectedModel}
           initialTemplateId={preselectedTemplateId}

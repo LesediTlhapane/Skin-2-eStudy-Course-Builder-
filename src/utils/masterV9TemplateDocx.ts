@@ -3,6 +3,7 @@ import {
   BorderStyle,
   Document,
   Footer,
+  ImageRun,
   Paragraph,
   ShadingType,
   Table,
@@ -12,6 +13,12 @@ import {
   WidthType,
 } from 'docx';
 import type { CourseProject, CourseTemplate } from '../types';
+import {
+  computeLogoFitDimensions,
+  ensureContrastHex,
+  parseDataUriLogoAsset,
+  type ExportBrandOptions,
+} from './exportBranding';
 
 export const V9_THEME = {
   NAVY: '1B365D',
@@ -440,9 +447,18 @@ export function isMasterV9Template(template: CourseTemplate): boolean {
 
 export function buildMasterV9TemplateDocxDocument(
   _template: CourseTemplate,
-  prefillProject?: CourseProject
+  prefillProject?: CourseProject,
+  brand?: ExportBrandOptions
 ): Document {
   const b = prefillProject?.brief;
+  const cleanCompany = (brand?.companyName || '').trim();
+  const brandTitle = cleanCompany || 'eStudy South Africa';
+  const primaryHex = ensureContrastHex(brand?.primaryColour || NAVY, NAVY);
+  const logoAsset =
+    brand?.logoAsset ||
+    (brand?.logoUrl && brand.logoUrl.trim().startsWith('data:image/')
+      ? parseDataUriLogoAsset(brand.logoUrl)
+      : null);
 
   const titleVal = resolveBriefField(b?.title, '[INSERT: COURSE TITLE]');
   const codeVal = resolveBriefField(b?.code, '[INSERT: COURSE CODE]');
@@ -587,15 +603,35 @@ export function buildMasterV9TemplateDocxDocument(
 
   const children: Array<Paragraph | Table> = [
     // ==================== PAGE 1: COVER & HOW TO USE ====================
+    ...(logoAsset?.docxBytes && logoAsset.docxType
+      ? [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 80, after: 80 },
+            children: [
+              new ImageRun({
+                type: logoAsset.docxType,
+                data: logoAsset.docxBytes,
+                transformation: computeLogoFitDimensions(logoAsset, 200, 62),
+                altText: {
+                  name: 'CompanyLogo',
+                  title: brandTitle,
+                  description: `${brandTitle} official branding logo`,
+                },
+              }),
+            ],
+          }),
+        ]
+      : []),
     new Paragraph({
       alignment: AlignmentType.CENTER,
-      spacing: { before: 120, after: 40 },
+      spacing: { before: logoAsset?.docxBytes ? 40 : 120, after: 40 },
       children: [
         new TextRun({
-          text: 'eStudy South Africa',
+          text: brandTitle,
           bold: true,
           size: 44,
-          color: NAVY,
+          color: primaryHex,
           font: 'Calibri',
         }),
       ],
@@ -1469,7 +1505,7 @@ export function buildMasterV9TemplateDocxDocument(
                 alignment: AlignmentType.CENTER,
                 children: [
                   new TextRun({
-                    text: 'eStudy South Africa · Master Course Generation Prompt Template v9.0',
+                    text: `${brandTitle} · Master Course Generation Prompt Template v9.0`,
                     size: 16,
                     color: '94A3B8',
                     font: 'Calibri',

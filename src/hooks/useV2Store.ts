@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AIModelMeta,
   AIProvider,
+  CompanyWorkspace,
   CourseProject,
   CourseTemplate,
   CourseVersionSnapshot,
@@ -1397,23 +1398,37 @@ export function useV2Store(options?: UseV2StoreOptions) {
     [customTemplates, isCloudMode]
   );
 
-  const exportWorkspaceJson = useCallback(() => {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      platform: 'eStudy Master Course Builder V2',
-      projects,
-      customTemplates,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `estudy-v2-workspace-${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }, [projects, customTemplates]);
+  const exportWorkspaceJson = useCallback(
+    (company?: CompanyWorkspace | null) => {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        platform: 'eStudy Master Course Builder V2',
+        ...(company
+          ? {
+              company: {
+                id: company.id,
+                companyName: company.companyName,
+                logoUrl: company.logoUrl ?? null,
+                primaryColour: company.primaryColour,
+                secondaryColour: company.secondaryColour,
+              },
+            }
+          : {}),
+        projects,
+        customTemplates,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `estudy-v2-workspace-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    [projects, customTemplates]
+  );
 
   const importWorkspaceJson = useCallback(
     (rawJson: string) => {

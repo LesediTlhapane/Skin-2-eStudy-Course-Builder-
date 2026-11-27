@@ -30,9 +30,12 @@ import {
   uploadAndParseFilledTemplateFile,
 } from '../../utils/templateDocx';
 
+import type { ExportBrandOptions } from '../../utils/exportBranding';
+
 interface Stage1BriefProps {
   project: CourseProject;
   template: CourseTemplate | undefined;
+  exportBrand?: ExportBrandOptions;
   readOnly?: boolean;
   selectedProvider: AIProvider;
   selectedModel: string;
@@ -56,6 +59,7 @@ const PROTECTED_KEYS = [
 export const Stage1Brief: React.FC<Stage1BriefProps> = ({
   project,
   template,
+  exportBrand,
   readOnly = false,
   selectedProvider,
   selectedModel,
@@ -81,7 +85,7 @@ export const Stage1Brief: React.FC<Stage1BriefProps> = ({
     setIsDocxDownloading(true);
     setErrorMsg(null);
     try {
-      await exportTemplateAsDocx(template, project);
+      await exportTemplateAsDocx(template, project, exportBrand);
       setCopilotNotice(
         `Downloaded "${template.name}" pre-filled with your current Stage 1 entries. Edit offline in Word and re-upload anytime.`
       );

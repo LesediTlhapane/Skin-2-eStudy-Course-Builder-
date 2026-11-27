@@ -251,6 +251,12 @@ export interface TenantServiceAdapter {
 
   removeCompanyLogo(companyId: string, userId: string): Promise<CompanyWorkspace>;
 
+  getCompanyLogoAsset?(companyId: string): Promise<{
+    buffer: Buffer;
+    mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+    ext: 'png' | 'jpg' | 'webp';
+  } | null>;
+
   listMembers(companyId: string): Promise<CompanyMembership[]>;
 
   inviteMember(params: {
@@ -1021,6 +1027,85 @@ class SupabaseTenantService implements TenantServiceAdapter {
     });
 
     return mapCompany(updatedRow);
+  }
+
+  async getCompanyLogoAsset(companyId: string): Promise<{
+    buffer: Buffer;
+    mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+    ext: 'png' | 'jpg' | 'webp';
+  } | null> {
+    const admin = getSupabaseAdminClient();
+    const { data: row } = await admin
+      .from('companies')
+      .select('logo_url')
+      .eq('id', companyId)
+      .maybeSingle();
+
+    const logoUrl = sanitizeHttpUrl(row?.logo_url);
+    if (!logoUrl) return null;
+
+    let rawBuffer: Buffer | null = null;
+    const storagePath = extractCompanyLogoStoragePath(logoUrl, companyId);
+    if (storagePath) {
+      const { data: blob, error } = await admin.storage
+        .from('company-logos')
+        .download(storagePath);
+      if (!error && blob) {
+        const arrBuf = await blob.arrayBuffer();
+        rawBuffer = Buffer.from(arrBuf);
+      }
+    }
+
+    if (!rawBuffer) {
+      let parsedUrl: URL | null;
+      try {
+        parsedUrl = new URL(logoUrl);
+      } catch {
+        parsedUrl = null;
+      }
+      if (!parsedUrl || (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:')) {
+        return null;
+      }
+      const host = parsedUrl.hostname.toLowerCase();
+      if (
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '::1' ||
+        host.startsWith('10.') ||
+        host.startsWith('192.168.') ||
+        host.startsWith('169.254.') ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+      ) {
+        return null;
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      try {
+        const resp = await fetch(parsedUrl.toString(), { signal: controller.signal });
+        if (!resp.ok) return null;
+        const arrBuf = await resp.arrayBuffer();
+        if (arrBuf.byteLength > MAX_COMPANY_LOGO_BYTES) return null;
+        rawBuffer = Buffer.from(arrBuf);
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (!rawBuffer || rawBuffer.byteLength === 0 || rawBuffer.byteLength > MAX_COMPANY_LOGO_BYTES) {
+      return null;
+    }
+
+    const validation = validateLogoImageBuffer(rawBuffer);
+    if (!validation.valid) return null;
+
+    return {
+      buffer: rawBuffer,
+      mimeType: validation.mimeType,
+      ext: validation.ext,
+    };
   }
 
   async listMembers(companyId: string): Promise<CompanyMembership[]> {
@@ -2771,6 +2856,38 @@ export function attachTenantRoutes(
         return res.status(400).json({
           success: false,
           error: String(err?.message || 'Failed to remove company logo.'),
+        });
+      }
+    }
+  );
+
+  // Authenticated Company Logo Asset Download (tenant-isolated; serves verified image bytes for offline exports)
+  router.get(
+    '/v2/tenant/company/logo/asset',
+    requireTenantAuth,
+    async (req: AuthenticatedRequest, res: express.Response) => {
+      try {
+        if (!service.getCompanyLogoAsset) {
+          return res.status(404).json({
+            success: false,
+            error: 'Company logo asset retrieval not configured.',
+          });
+        }
+        const asset = await service.getCompanyLogoAsset(req.tenantAuth!.companyId);
+        if (!asset) {
+          return res.status(404).json({
+            success: false,
+            error: 'No company logo uploaded or asset unavailable.',
+          });
+        }
+        res.setHeader('Content-Type', asset.mimeType);
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(200).send(asset.buffer);
+      } catch {
+        return res.status(404).json({
+          success: false,
+          error: 'Could not retrieve company logo asset.',
         });
       }
     }

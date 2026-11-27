@@ -660,6 +660,10 @@ export function createInMemoryTenantEnv() {
     [COMPANY_B_ID, new Map()],
   ]);
   const sourcesById = new Map<string, { companyId: string; fileName: string }>();
+  const companyLogos = new Map<
+    string,
+    { buffer: Buffer; mimeType: 'image/png' | 'image/jpeg' | 'image/webp'; ext: 'png' | 'jpg' | 'webp' }
+  >();
 
   const tokens = new Map<string, string>([
     ['token-admin-a', 'user-admin-a'],
@@ -796,11 +800,26 @@ export function createInMemoryTenantEnv() {
       }
 
       const companyId = crypto.randomUUID();
+      let persistedLogoUrl = params.logoUrl ?? null;
+      if (params.logoUpload) {
+        const verifiedMime =
+          params.logoUpload.ext === 'png'
+            ? ('image/png' as const)
+            : params.logoUpload.ext === 'jpg'
+              ? ('image/jpeg' as const)
+              : ('image/webp' as const);
+        companyLogos.set(companyId, {
+          buffer: params.logoUpload.buffer,
+          mimeType: verifiedMime,
+          ext: params.logoUpload.ext,
+        });
+        persistedLogoUrl = `https://storage.test/company-logos/${companyId}/logo.${params.logoUpload.ext}`;
+      }
       const company: CompanyWorkspace = {
         id: companyId,
         companyName: params.companyName,
         companySlug: params.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-        logoUrl: params.logoUrl,
+        logoUrl: persistedLogoUrl,
         primaryColour: params.primaryColour,
         secondaryColour: params.secondaryColour,
         subscriptionStatus: 'trialing',
@@ -895,11 +914,36 @@ export function createInMemoryTenantEnv() {
       return updated;
     },
 
-    async uploadCompanyLogo() {
-      throw new Error('Not used in unit tests');
+    async uploadCompanyLogo(params) {
+      const c = companies.get(params.companyId);
+      if (!c) throw new Error('Company not found.');
+      const storagePath = `company-logos/${params.companyId}/logo.${params.ext}`;
+      const logoUrl = `https://storage.test/${storagePath}`;
+      const verifiedMime =
+        params.ext === 'png'
+          ? ('image/png' as const)
+          : params.ext === 'jpg'
+            ? ('image/jpeg' as const)
+            : ('image/webp' as const);
+      companyLogos.set(params.companyId, {
+        buffer: params.buffer,
+        mimeType: verifiedMime,
+        ext: params.ext,
+      });
+      const updated = { ...c, logoUrl, updatedAt: new Date().toISOString() };
+      companies.set(params.companyId, updated);
+      return { company: updated, logoUrl, storagePath };
     },
     async removeCompanyLogo(companyId) {
-      return companies.get(companyId)!;
+      const c = companies.get(companyId);
+      if (!c) throw new Error('Company not found.');
+      companyLogos.delete(companyId);
+      const updated = { ...c, logoUrl: null, updatedAt: new Date().toISOString() };
+      companies.set(companyId, updated);
+      return updated;
+    },
+    async getCompanyLogoAsset(companyId) {
+      return companyLogos.get(companyId) || null;
     },
 
     async listMembers(companyId) {

@@ -1,4 +1,11 @@
 import type { CourseProject } from '../types';
+import {
+  buildCompanyMonogram,
+  parseDataUriLogoAsset,
+  sanitizeBrandHex,
+  type ExportBrandOptions,
+  type ResolvedLogoAsset,
+} from './exportBranding';
 
 export interface ZipEntryInput {
   name: string;
@@ -165,9 +172,7 @@ const SCORM_API_JS = `/* Lightweight SCORM 1.2 Runtime Wrapper (eStudy Course Bu
 })(window);
 `;
 
-export interface ExportBrandOptions {
-  companyName?: string;
-}
+export type { ExportBrandOptions, ResolvedLogoAsset };
 
 export function buildScorm12ZipEntries(
   project: CourseProject,
@@ -178,6 +183,23 @@ export function buildScorm12ZipEntries(
   const modules = project.content.modules || [];
   const cleanCompany = (brand?.companyName || '').trim();
   const brandHeader = cleanCompany ? `${cleanCompany} · eSTUDY SOUTH AFRICA` : 'eSTUDY SOUTH AFRICA';
+  const primaryHex = sanitizeBrandHex(brand?.primaryColour, '052B66');
+  const secondaryHex = sanitizeBrandHex(brand?.secondaryColour, '45CC42');
+
+  const resolvedAsset: ResolvedLogoAsset | null =
+    brand?.logoAsset ||
+    (brand?.logoUrl && brand.logoUrl.trim().startsWith('data:image/')
+      ? parseDataUriLogoAsset(brand.logoUrl)
+      : null);
+  const logoAssetHref = resolvedAsset ? `assets/company-logo.${resolvedAsset.ext}` : null;
+  const logoResourceLine = logoAssetHref
+    ? `\n      <file href="${logoAssetHref}"/>`
+    : '';
+  const logoAlt = escapeHtml(cleanCompany ? `${cleanCompany} logo` : 'Company logo');
+  const monogram = escapeHtml(buildCompanyMonogram(cleanCompany || 'eStudy'));
+  const logoMarkup = logoAssetHref
+    ? `<div class="logo-box"><img src="${logoAssetHref}" alt="${logoAlt}" class="company-logo" /></div>`
+    : `<div class="logo-box logo-monogram" aria-hidden="true">${monogram}</div>`;
 
   const orgItems = [
     `      <item identifier="ITEM-OVERVIEW" identifierref="RES-OVERVIEW">
@@ -196,17 +218,17 @@ export function buildScorm12ZipEntries(
   const resourceItems = [
     `    <resource identifier="RES-OVERVIEW" type="webcontent" adlcp:scormtype="sco" href="index.html">
       <file href="index.html"/>
-      <file href="shared/scorm_api.js"/>
+      <file href="shared/scorm_api.js"/>${logoResourceLine}
     </resource>`,
     ...modules.map(
       m => `    <resource identifier="RES-MOD-${m.moduleNumber}" type="webcontent" adlcp:scormtype="sco" href="module-${m.moduleNumber}.html">
       <file href="module-${m.moduleNumber}.html"/>
-      <file href="shared/scorm_api.js"/>
+      <file href="shared/scorm_api.js"/>${logoResourceLine}
     </resource>`
     ),
     `    <resource identifier="RES-ASSESSMENT" type="webcontent" adlcp:scormtype="sco" href="assessments.html">
       <file href="assessments.html"/>
-      <file href="shared/scorm_api.js"/>
+      <file href="shared/scorm_api.js"/>${logoResourceLine}
     </resource>`,
   ].join('\n');
 
@@ -241,17 +263,28 @@ ${resourceItems}
   <script src="shared/scorm_api.js"></script>
   <style>
     body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; max-width: 900px; margin: 32px auto; padding: 0 20px; line-height: 1.6; }
-    header { border-bottom: 3px solid #052B66; padding-bottom: 12px; margin-bottom: 24px; }
-    .brand { color: #052B66; font-weight: 700; font-size: 12px; letter-spacing: 0.06em; }
-    h1, h2, h3 { color: #052B66; }
+    header.doc-header { border-bottom: 3px solid #${primaryHex}; border-top: 4px solid #${secondaryHex}; padding: 14px 0 12px; margin-bottom: 24px; }
+    .header-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .header-meta { min-width: 0; flex: 1 1 260px; }
+    .logo-box { flex-shrink: 0; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 10px; display: inline-flex; align-items: center; justify-content: center; }
+    .logo-monogram { width: 44px; height: 44px; background: #${primaryHex}; color: #ffffff; font-weight: 800; font-size: 15px; border-color: #${primaryHex}; }
+    .company-logo { max-width: 170px; max-height: 52px; width: auto; height: auto; object-fit: contain; display: block; }
+    .brand { color: #${primaryHex}; font-weight: 700; font-size: 12px; letter-spacing: 0.06em; }
+    h1, h2, h3 { color: #${primaryHex}; }
+    header.doc-header h1 { margin: 4px 0 0; font-size: 24px; line-height: 1.25; }
     .card { border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; margin: 16px 0; background: #f8fafc; }
-    .btn { background: #052B66; color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; font-weight: 700; cursor: pointer; }
+    .btn { background: #${primaryHex}; color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; font-weight: 700; cursor: pointer; }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">${escapeHtml(brandHeader)} · ${escapeHtml(project.brief.code || 'COURSE')}</div>
-    <h1>${escapeHtml(pageTitle)}</h1>
+  <header class="doc-header">
+    <div class="header-row">
+      ${logoMarkup}
+      <div class="header-meta">
+        <div class="brand">${escapeHtml(brandHeader)} · ${escapeHtml(project.brief.code || 'COURSE')}</div>
+        <h1>${escapeHtml(pageTitle)}</h1>
+      </div>
+    </div>
   </header>
   ${body}
   <div style="margin-top:28px;padding-top:16px;border-top:1px solid #cbd5e1;">
@@ -339,9 +372,12 @@ ${resourceItems}
       .join('\n')}
   `;
 
-  return [
+  const entries: ZipEntryInput[] = [
     { name: 'imsmanifest.xml', content: imsManifest },
     { name: 'shared/scorm_api.js', content: SCORM_API_JS },
+    ...(resolvedAsset && logoAssetHref
+      ? [{ name: logoAssetHref, content: resolvedAsset.bytes }]
+      : []),
     { name: 'index.html', content: wrapHtml(title, overviewBody) },
     ...moduleEntries,
     { name: 'assessments.html', content: wrapHtml('Course Assessments', assessmentBody) },
@@ -351,6 +387,11 @@ ${resourceItems}
         {
           schema: 'eStudy-SCORM-1.2-Reference-v2',
           exportedAt: new Date().toISOString(),
+          companyId: brand?.companyId || undefined,
+          companyName: cleanCompany || undefined,
+          logoAssetPath: logoAssetHref || undefined,
+          primaryColour: `#${primaryHex}`,
+          secondaryColour: `#${secondaryHex}`,
           title: project.brief.title,
           code: project.brief.code,
           modulesCount: modules.length,
@@ -360,6 +401,7 @@ ${resourceItems}
       ),
     },
   ];
+  return entries;
 }
 
 export function buildScorm12ZipBytes(
