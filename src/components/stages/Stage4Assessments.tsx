@@ -16,7 +16,7 @@ import type {
   CourseProject,
 } from '../../types';
 import { computeFullAlignmentReport } from '../../utils/alignmentHelpers';
-import { apiFetch, parseApiJson } from '../../utils/apiClient';
+import { apiFetchWithAiBackup } from '../../utils/apiClient';
 
 interface Stage4AssessmentsProps {
   project: CourseProject;
@@ -55,6 +55,7 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
   const [isDesigning, setIsDesigning] = useState(false);
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   const [showLessonLinker, setShowLessonLinker] = useState(false);
 
@@ -144,21 +145,23 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
     setConfirmOverwrite(false);
     setIsDesigning(true);
     setErrorMsg(null);
+    setBackupNotice(null);
     try {
-      const res = await apiFetch('/api/v2/assessments/design', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/assessments/design',
+        {
           brief: project.brief,
           curriculum: project.curriculum,
           outcomes: project.outcomes,
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Assessment design failed.');
+      }
+      if (usedBackupModel) {
+        setBackupNotice('Primary AI request hit temporary capacity — backup AI model completed assessment regeneration.');
       }
       const items: AssessmentItem[] = Array.isArray(data.items) ? data.items : [];
       onUpdateProject(
@@ -297,6 +300,13 @@ export const Stage4Assessments: React.FC<Stage4AssessmentsProps> = ({
               Cancel
             </button>
           </div>
+        </div>
+      )}
+
+      {backupNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-700" />
+          <span>{backupNotice}</span>
         </div>
       )}
 

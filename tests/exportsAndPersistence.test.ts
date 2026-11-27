@@ -3,7 +3,13 @@ import express from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { createApiRouter, MemoryRateLimitStore } from '../src/server/apiRouter.js';
-import { compactProjectForCloudPayload, utf8ByteLength } from '../src/utils/apiClient.js';
+import {
+  apiFetchWithAiBackup,
+  compactProjectForCloudPayload,
+  utf8ByteLength,
+} from '../src/utils/apiClient.js';
+import { getGroqApiKeys } from '../src/server/ai/groqProvider.js';
+import { getBackupModelForProvider } from '../src/server/ai/modelRegistry.js';
 import {
   buildCloudRecoveryKey,
   clearCloudRecoveryDraft,
@@ -322,6 +328,61 @@ describe('Priority 3 & Exports — Cloud Version History, Payload Compaction, Se
       } else {
         (globalThis as any).localStorage = prevLocalStorage;
       }
+    }
+  });
+
+  it('automatically activates backup AI model failover on 429/503 responses and reads backup Groq key/model env settings', async () => {
+    const calls: Array<{ url: string; body: any }> = [];
+    const mockFetch = async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const parsedBody = JSON.parse(String(init?.body || '{}'));
+      calls.push({ url: String(url), body: parsedBody });
+      if (calls.length === 1) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: 'RATE_LIMIT_UNAVAILABLE',
+            error: 'Service temporarily unavailable while verifying request rate limits.',
+          }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response(
+        JSON.stringify({ success: true, updatedItem: { id: 'les-1', title: 'Recovered' } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    };
+
+    const result = await apiFetchWithAiBackup<any>(
+      '/api/v2/content/regenerate',
+      { model: 'openai/gpt-oss-120b', targetType: 'lesson' },
+      { fetchImpl: mockFetch, retryDelayMs: 0 }
+    );
+
+    expect(result.usedBackupModel).toBe(true);
+    expect(result.data.success).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].body.useBackupModel).toBeUndefined();
+    expect(calls[1].body.useBackupModel).toBe(true);
+
+    const prevKey = process.env.GROQ_API_KEY;
+    const prevBackupKey = process.env.GROQ_BACKUP_API_KEY;
+    const prevBackupModel = process.env.GROQ_BACKUP_MODEL;
+    try {
+      process.env.GROQ_API_KEY = 'gsk_primary_test_key_12345';
+      process.env.GROQ_BACKUP_API_KEY = 'gsk_backup_test_key_67890';
+      process.env.GROQ_BACKUP_MODEL = 'llama-3.3-70b-versatile';
+      expect(getGroqApiKeys()).toEqual([
+        'gsk_primary_test_key_12345',
+        'gsk_backup_test_key_67890',
+      ]);
+      expect(getBackupModelForProvider('groq')).toBe('llama-3.3-70b-versatile');
+    } finally {
+      if (prevKey === undefined) delete process.env.GROQ_API_KEY;
+      else process.env.GROQ_API_KEY = prevKey;
+      if (prevBackupKey === undefined) delete process.env.GROQ_BACKUP_API_KEY;
+      else process.env.GROQ_BACKUP_API_KEY = prevBackupKey;
+      if (prevBackupModel === undefined) delete process.env.GROQ_BACKUP_MODEL;
+      else process.env.GROQ_BACKUP_MODEL = prevBackupModel;
     }
   });
 });

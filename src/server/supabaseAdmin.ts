@@ -5,6 +5,7 @@ export interface AiUsageContext {
   companyId: string;
   userId?: string | null;
   operation: string;
+  preferBackupModel?: boolean;
 }
 
 export const aiUsageContextStorage = new AsyncLocalStorage<AiUsageContext>();

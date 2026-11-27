@@ -3,6 +3,7 @@ import type { AIProvider } from '../../types.js';
 export interface AIRequest {
   provider?: AIProvider;
   model?: string;
+  preferBackupModel?: boolean;
   systemInstruction?: string;
   prompt: string;
   responseFormat?: 'json' | 'text';
@@ -15,6 +16,7 @@ export interface AIResponse {
   text: string;
   provider: AIProvider;
   model: string;
+  failoverUsed?: boolean;
   durationMs: number;
   usage?: {
     inputTokens?: number;

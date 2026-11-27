@@ -39,6 +39,87 @@ export async function apiFetch(
   });
 }
 
+function parseRetryAfterWaitMs(res: Response | null): number {
+  const raw = res?.headers?.get?.('retry-after');
+  if (raw) {
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(Math.max(seconds * 1000, 750), 2500);
+    }
+  }
+  return 1200;
+}
+
+export async function apiFetchWithAiBackup<T = any>(
+  input: RequestInfo | URL,
+  payload: Record<string, any>,
+  options?: {
+    onBackupFailover?: () => void;
+    fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+    retryDelayMs?: number;
+  }
+): Promise<{ res: Response; data: T; usedBackupModel: boolean }> {
+  const fetcher = options?.fetchImpl || apiFetch;
+
+  let firstRes: Response | null = null;
+  let firstData: any = null;
+  let firstNetworkErr: any = null;
+
+  try {
+    firstRes = await fetcher(input, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    firstData = await parseApiJson<T>(firstRes);
+    if (firstRes.ok && firstData?.success) {
+      return { res: firstRes, data: firstData as T, usedBackupModel: false };
+    }
+  } catch (err) {
+    firstNetworkErr = err;
+  }
+
+  const retryableStatus =
+    firstRes !== null &&
+    (firstRes.status === 429 ||
+      firstRes.status === 502 ||
+      firstRes.status === 503 ||
+      firstRes.status === 504);
+
+  if (!firstNetworkErr && !retryableStatus) {
+    return {
+      res: firstRes!,
+      data: firstData as T,
+      usedBackupModel: false,
+    };
+  }
+
+  const waitMs =
+    typeof options?.retryDelayMs === 'number'
+      ? Math.max(0, options.retryDelayMs)
+      : parseRetryAfterWaitMs(firstRes);
+  if (waitMs > 0) {
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+  }
+
+  options?.onBackupFailover?.();
+
+  const backupRes = await fetcher(input, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...payload,
+      useBackupModel: true,
+    }),
+  });
+  const backupData = await parseApiJson<T>(backupRes);
+  return {
+    res: backupRes,
+    data: backupData,
+    usedBackupModel: true,
+  };
+}
+
 export function compactSourcesForApi(sources: SourceDocument[] = []): SourceDocument[] {
   return sources.slice(0, 6).map(s => ({
     ...s,

@@ -13,6 +13,8 @@ export function getGroqApiKeys(): string[] {
     process.env.GROQ_API_KEY,
     process.env.GROQ_API_KEY_2,
     process.env.GROQ_BACKUP_API_KEY,
+    process.env.GROQ_API_KEY_BACKUP,
+    process.env.GROQ_API_KEYS,
   ];
   const keys: string[] = [];
   const seen = new Set<string>();
@@ -32,10 +34,16 @@ export function getGroqApiKeys(): string[] {
   return keys;
 }
 
+export const GROQ_BACKUP_MODELS = [
+  'llama-3.3-70b-versatile',
+  'openai/gpt-oss-20b',
+  'qwen/qwen3.8-27b',
+  'llama-3.1-8b-instant',
+];
+
 const GROQ_FALLBACK_ORDER = [
   'openai/gpt-oss-120b',
-  'qwen/qwen3.8-27b',
-  'openai/gpt-oss-20b',
+  ...GROQ_BACKUP_MODELS,
 ];
 
 function isRateLimitOrSizeError(err: any): boolean {
@@ -52,6 +60,21 @@ function isRateLimitOrSizeError(err: any): boolean {
     msg.includes('tokens per minute') ||
     msg.includes('request too large') ||
     msg.includes('quota')
+  );
+}
+
+function isModelUnavailableError(err: any): boolean {
+  const status = err?.status || err?.statusCode;
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    status === 404 ||
+    msg.includes('model_not_found') ||
+    msg.includes('model_decommissioned') ||
+    msg.includes('does not exist') ||
+    msg.includes('decommissioned') ||
+    msg.includes('not supported') ||
+    msg.includes('context_length_exceeded') ||
+    msg.includes('reduce the length')
   );
 }
 
@@ -76,7 +99,8 @@ function isRetryableTransient(err: any): boolean {
     status === 504 ||
     msg.includes('timed out') ||
     msg.includes('timeout') ||
-    msg.includes('econnreset')
+    msg.includes('econnreset') ||
+    msg.includes('service unavailable')
   );
 }
 
@@ -126,10 +150,24 @@ export class GroqProvider implements AIProviderAdapter {
     const deadline = startTime + totalBudgetMs;
 
     const primaryModel = request.model?.trim() || 'openai/gpt-oss-120b';
-    const modelsToTry = [
-      primaryModel,
-      ...GROQ_FALLBACK_ORDER.filter(m => m !== primaryModel),
+    const envBackupModel = String(process.env.GROQ_BACKUP_MODEL || '').trim();
+    const backupList = [
+      ...(envBackupModel ? [envBackupModel] : []),
+      ...GROQ_BACKUP_MODELS,
     ];
+    const modelsToTry = Array.from(
+      new Set(
+        request.preferBackupModel
+          ? [...backupList, primaryModel]
+          : [primaryModel, ...backupList, ...GROQ_FALLBACK_ORDER]
+      )
+    );
+
+    // When explicit backup failover is requested and a secondary API key is configured, rotate backup key first
+    const orderedKeys =
+      request.preferBackupModel && apiKeys.length > 1
+        ? [...apiKeys.slice(1), apiKeys[0]]
+        : apiKeys;
 
     const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
     if (request.systemInstruction) {
@@ -144,7 +182,8 @@ export class GroqProvider implements AIProviderAdapter {
       apiKey: string,
       model: string,
       useJsonMode: boolean,
-      attemptTimeoutMs: number
+      attemptTimeoutMs: number,
+      isBackupAttempt: boolean
     ) => {
       const groq = new Groq({ apiKey });
       const callPromise = groq.chat.completions.create({
@@ -171,6 +210,7 @@ export class GroqProvider implements AIProviderAdapter {
         text,
         provider: 'groq' as const,
         model,
+        failoverUsed: isBackupAttempt,
         durationMs: Date.now() - startTime,
         usage: completion.usage
           ? {
@@ -183,15 +223,22 @@ export class GroqProvider implements AIProviderAdapter {
 
     const deadKeys = new Set<string>();
 
-    for (const model of modelsToTry) {
-      for (const apiKey of apiKeys) {
+    for (let mIdx = 0; mIdx < modelsToTry.length; mIdx++) {
+      const model = modelsToTry[mIdx];
+      const hasRemainingBackupModels = mIdx < modelsToTry.length - 1;
+      for (let kIdx = 0; kIdx < orderedKeys.length; kIdx++) {
+        const apiKey = orderedKeys[kIdx];
         if (deadKeys.has(apiKey)) continue;
         const remaining = deadline - Date.now();
         if (remaining < 3500) break;
 
-        const perModelTimeout = Math.min(24000, remaining - 500);
+        // Reserve budget for backup models & backup API keys when primary stalls
+        const maxPerAttempt = hasRemainingBackupModels ? 16000 : 24000;
+        const perModelTimeout = Math.min(maxPerAttempt, remaining - 500);
+        const isBackupAttempt = Boolean(request.preferBackupModel) || model !== primaryModel || kIdx > 0;
+
         try {
-          return await runCall(apiKey, model, true, perModelTimeout);
+          return await runCall(apiKey, model, true, perModelTimeout, isBackupAttempt);
         } catch (err: any) {
           lastError = err;
           if (/401|403|invalid api key|authentication/i.test(String(err?.message || '')) || err?.status === 401) {
@@ -204,7 +251,7 @@ export class GroqProvider implements AIProviderAdapter {
             const remAfter = deadline - Date.now();
             if (remAfter > 4000) {
               try {
-                return await runCall(apiKey, model, false, Math.min(20000, remAfter - 500));
+                return await runCall(apiKey, model, false, Math.min(16000, remAfter - 500), isBackupAttempt);
               } catch (err2: any) {
                 lastError = err2;
               }
@@ -212,22 +259,22 @@ export class GroqProvider implements AIProviderAdapter {
             continue;
           }
 
-          if (err?.status === 404 || /model_not_found|does not exist/i.test(String(err?.message || ''))) {
-            break; // skip unavailable model on all keys and move to next model
+          if (isModelUnavailableError(err)) {
+            break; // skip unavailable/decommissioned model and move immediately to next backup model
           }
 
           if (isRateLimitOrSizeError(err)) {
             sawRateLimit = true;
-            // Rotate to backup API key on same model first, then fallback models
+            // Rotate to backup API key on same model first, then backup models
             continue;
           }
 
           if (isRetryableTransient(err)) {
             const remRetry = deadline - Date.now();
-            if (remRetry > 5000) {
+            if (remRetry > 5000 && !hasRemainingBackupModels) {
               await new Promise(resolve => setTimeout(resolve, 600));
               try {
-                return await runCall(apiKey, model, true, Math.min(20000, deadline - Date.now() - 400));
+                return await runCall(apiKey, model, true, Math.min(18000, deadline - Date.now() - 400), isBackupAttempt);
               } catch (err2: any) {
                 lastError = err2;
               }
@@ -239,19 +286,19 @@ export class GroqProvider implements AIProviderAdapter {
     }
 
     // Last-chance short backoff if all models/keys hit 429 and retry-after fits safely in budget
-    const liveKeys = apiKeys.filter(k => !deadKeys.has(k));
+    const liveKeys = orderedKeys.filter(k => !deadKeys.has(k));
     if (sawRateLimit && lastError && liveKeys.length > 0) {
       const suggestedWait = parseRetryDelayMs(lastError);
       const waitMs = suggestedWait > 0 ? Math.min(suggestedWait + 350, 7500) : 2500;
       const remaining = deadline - Date.now();
       if (remaining > waitMs + 4500) {
         await new Promise(resolve => setTimeout(resolve, waitMs));
-        for (const fallbackModel of ['qwen/qwen3.8-27b', 'openai/gpt-oss-20b']) {
+        for (const fallbackModel of backupList) {
           for (const key of liveKeys) {
             const rem = deadline - Date.now();
             if (rem < 4000) break;
             try {
-              return await runCall(key, fallbackModel, true, Math.min(18000, rem - 300));
+              return await runCall(key, fallbackModel, true, Math.min(16000, rem - 300), true);
             } catch (retryErr: any) {
               lastError = retryErr;
             }

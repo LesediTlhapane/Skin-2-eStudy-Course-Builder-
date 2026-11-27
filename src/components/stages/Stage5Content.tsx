@@ -15,7 +15,7 @@ import type {
   GeneratedModuleContent,
   SourceVerificationStatus,
 } from '../../types';
-import { apiFetch, compactProjectForApi, compactSourcesForApi, parseApiJson } from '../../utils/apiClient';
+import { apiFetchWithAiBackup, compactProjectForApi, compactSourcesForApi } from '../../utils/apiClient';
 
 interface Stage5ContentProps {
   project: CourseProject;
@@ -128,10 +128,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       setGeneratingStatus(
         `Module ${modPlan.order}/${plannedModules.length}: Drafting overview, scenarios & knowledge checks...`
       );
-      const scaffoldRes = await apiFetch('/api/v2/content/generate-module-scaffold', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res: scaffoldRes, data: scaffoldData } = await apiFetchWithAiBackup<any>(
+        '/api/v2/content/generate-module-scaffold',
+        {
           brief: project.brief,
           modulePlan: modPlan,
           allModules: plannedModules,
@@ -140,9 +139,14 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           sources: compactSourcesForApi(project.sources),
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const scaffoldData = await parseApiJson<any>(scaffoldRes);
+        },
+        {
+          onBackupFailover: () =>
+            setGeneratingStatus(
+              `Module ${modPlan.order}/${plannedModules.length}: Switching to backup AI model for overview...`
+            ),
+        }
+      );
       if (!scaffoldRes.ok || !scaffoldData.success) {
         throw new Error(
           scaffoldData.error || `Failed to generate overview for Module ${modPlan.order}.`
@@ -171,10 +175,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
         `Module ${modPlan.order}/${plannedModules.length} · Writing Lesson ${lIdx + 1}/${plannedLessons.length}: ${lp.title}...`
       );
 
-      const lessonRes = await apiFetch('/api/v2/content/generate-lesson', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res: lessonRes, data: lessonData } = await apiFetchWithAiBackup<any>(
+        '/api/v2/content/generate-lesson',
+        {
           brief: project.brief,
           modulePlan: modPlan,
           lessonPlan: lp,
@@ -183,9 +186,14 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           sources: compactSourcesForApi(project.sources),
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const lessonData = await parseApiJson<any>(lessonRes);
+        },
+        {
+          onBackupFailover: () =>
+            setGeneratingStatus(
+              `Module ${modPlan.order}/${plannedModules.length} · Backup AI model writing Lesson ${lIdx + 1}/${plannedLessons.length}: ${lp.title}...`
+            ),
+        }
+      );
       if (!lessonRes.ok || !lessonData.success) {
         throw new Error(
           lessonData.error || `Failed to generate Lesson ${lIdx + 1} in Module ${modPlan.order}.`
@@ -271,10 +279,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
     setErrorMsg(null);
     setRegenSuccessMsg(null);
     try {
-      const res = await apiFetch('/api/v2/content/regenerate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const { res, data, usedBackupModel } = await apiFetchWithAiBackup<any>(
+        '/api/v2/content/regenerate',
+        {
           project: compactProjectForApi(project, { onlyModuleId: activePlan.id }),
           targetType,
           moduleId: activePlan.id,
@@ -282,9 +289,8 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
           instruction: regenPrompt.trim() || undefined,
           provider: selectedProvider,
           model: selectedModel,
-        }),
-      });
-      const data = await parseApiJson<any>(res);
+        }
+      );
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Selective regeneration failed.');
       }
@@ -337,7 +343,9 @@ export const Stage5Content: React.FC<Stage5ContentProps> = ({
       );
       setRegenPrompt('');
       setRegenSuccessMsg(
-        `Regenerated ${targetType.replace('_', ' ')} in Module ${activePlan.order}. Return to Stage 6 to re-run QA or continue editing.`
+        `Regenerated ${targetType.replace('_', ' ')} in Module ${activePlan.order}${
+          usedBackupModel ? ' (via backup AI model)' : ''
+        }. Return to Stage 6 to re-run QA or continue editing.`
       );
     } catch (err: any) {
       setErrorMsg(err?.message || 'Selective regeneration failed.');

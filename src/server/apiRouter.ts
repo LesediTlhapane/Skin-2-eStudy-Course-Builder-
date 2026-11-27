@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import {
   checkKeysConfigured,
+  getBackupModelForProvider,
   getRegisteredModels,
   extractUploadedDocumentText,
   analyseSourceDocumentWithAI,
@@ -259,29 +260,43 @@ export class SupabaseRateLimitStore implements RateLimitStore {
     if (!this.failClosed && Date.now() < this.rpcUnavailableUntil) {
       return this.fallback.consume(key, maxRequests, windowMs);
     }
-    try {
-      const admin = this.getAdminClient();
-      const { data, error } = await admin.rpc('consume_rate_limit', {
-        p_key: key,
-        p_max_requests: Math.max(1, Math.round(maxRequests)),
-        p_window_ms: Math.max(1000, Math.round(windowMs)),
-      });
-      if (error) {
-        return this.handleStoreError('rpc_error', key, maxRequests, windowMs, error.code || 'rpc_error');
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const admin = this.getAdminClient();
+        const { data, error } = await admin.rpc('consume_rate_limit', {
+          p_key: key,
+          p_max_requests: Math.max(1, Math.round(maxRequests)),
+          p_window_ms: Math.max(1000, Math.round(windowMs)),
+        });
+        if (error) {
+          // Do not retry schema-missing errors (PGRST202); fail over/closed immediately
+          if (attempt === 0 && error.code !== 'PGRST202' && /timeout|502|503|504|temporarily|connection/i.test(String(error.message || ''))) {
+            await new Promise(resolve => setTimeout(resolve, 150));
+            continue;
+          }
+          return this.handleStoreError('rpc_error', key, maxRequests, windowMs, error.code || 'rpc_error');
+        }
+        this.rpcUnavailableUntil = 0;
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!row) {
+          return this.handleStoreError('empty_rpc_result', key, maxRequests, windowMs);
+        }
+        return {
+          allowed: Boolean(row.allowed),
+          count: Number(row.current_count || 1),
+          retryAfterSeconds: Math.max(1, Number(row.retry_after_seconds || 1)),
+        };
+      } catch {
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 150));
+          continue;
+        }
+        return this.handleStoreError('runtime_error', key, maxRequests, windowMs);
       }
-      this.rpcUnavailableUntil = 0;
-      const row = Array.isArray(data) ? data[0] : data;
-      if (!row) {
-        return this.handleStoreError('empty_rpc_result', key, maxRequests, windowMs);
-      }
-      return {
-        allowed: Boolean(row.allowed),
-        count: Number(row.current_count || 1),
-        retryAfterSeconds: Math.max(1, Number(row.retry_after_seconds || 1)),
-      };
-    } catch {
-      return this.handleStoreError('runtime_error', key, maxRequests, windowMs);
     }
+
+    return this.handleStoreError('runtime_error', key, maxRequests, windowMs);
   }
 }
 
@@ -421,9 +436,15 @@ function runWithAiTelemetry<T>(
   fn: () => Promise<T>
 ): Promise<T> {
   const auth = req.tenantAuth;
-  if (!auth?.companyId) return fn();
+  const preferBackupModel = Boolean(req.body?.useBackupModel);
+  if (!auth?.companyId && !preferBackupModel) return fn();
   return aiUsageContextStorage.run(
-    { companyId: auth.companyId, userId: auth.userId, operation },
+    {
+      companyId: auth?.companyId || '',
+      userId: auth?.userId,
+      operation,
+      preferBackupModel,
+    },
     fn
   );
 }
@@ -466,6 +487,7 @@ export function createApiRouter(options?: {
       models: getRegisteredModels('groq'),
       keysConfigured: keys,
       defaultProvider: 'groq',
+      backupModel: getBackupModelForProvider('groq'),
     });
   });
 

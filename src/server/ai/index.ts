@@ -1,5 +1,9 @@
 export { aiRouter } from './aiRouter.js';
-export { checkKeysConfigured, getRegisteredModels } from './modelRegistry.js';
+export {
+  checkKeysConfigured,
+  getBackupModelForProvider,
+  getRegisteredModels,
+} from './modelRegistry.js';
 export { extractUploadedDocumentText } from './documentParser.js';
 export {
   analyseSourceDocumentWithAI,

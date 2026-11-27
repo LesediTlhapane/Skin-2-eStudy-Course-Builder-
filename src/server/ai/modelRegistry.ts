@@ -15,6 +15,17 @@ export const STATIC_MODEL_REGISTRY: AIModelMeta[] = [
     recommendedBadge: 'Recommended (Groq Default)',
   },
   {
+    id: 'llama-3.3-70b-versatile',
+    provider: 'groq',
+    displayName: 'Llama 3.3 70B Versatile (Groq Backup)',
+    description:
+      'High-reliability 70B backup model on Groq LPU for automatic failover during rate limits or model outages.',
+    contextWindow: 131072,
+    enabledForCourseGeneration: true,
+    enabledForCopilot: true,
+    recommendedBadge: 'Backup Model',
+  },
+  {
     id: 'qwen/qwen3.8-27b',
     provider: 'groq',
     displayName: 'Qwen 3.8 27B (Groq)',
@@ -33,6 +44,15 @@ export const STATIC_MODEL_REGISTRY: AIModelMeta[] = [
     enabledForCourseGeneration: true,
     enabledForCopilot: true,
   },
+  {
+    id: 'llama-3.1-8b-instant',
+    provider: 'groq',
+    displayName: 'Llama 3.1 8B Instant (Groq Emergency Fallback)',
+    description: 'Ultra-high-TPM emergency fallback Groq model when primary quotas are saturated.',
+    contextWindow: 131072,
+    enabledForCourseGeneration: true,
+    enabledForCopilot: true,
+  },
 ];
 
 export function getRegisteredModels(_provider?: AIProvider): AIModelMeta[] {
@@ -42,6 +62,14 @@ export function getRegisteredModels(_provider?: AIProvider): AIModelMeta[] {
 export function getDefaultModelForProvider(_provider: AIProvider): string {
   const match = STATIC_MODEL_REGISTRY.find(m => m.isDefault);
   return match ? match.id : 'openai/gpt-oss-120b';
+}
+
+export function getBackupModelForProvider(_provider: AIProvider): string {
+  const configuredBackup = String(process.env.GROQ_BACKUP_MODEL || '').trim();
+  if (configuredBackup) {
+    return configuredBackup;
+  }
+  return 'llama-3.3-70b-versatile';
 }
 
 export function checkKeysConfigured() {

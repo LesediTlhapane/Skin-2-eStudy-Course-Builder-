@@ -1,7 +1,11 @@
 import type { AIProvider } from '../../types.js';
 import type { AIProviderAdapter, AIRequest, AIResponse } from './types.js';
 import { groqProvider } from './groqProvider.js';
-import { getDefaultModelForProvider, getRegisteredModels } from './modelRegistry.js';
+import {
+  getBackupModelForProvider,
+  getDefaultModelForProvider,
+  getRegisteredModels,
+} from './modelRegistry.js';
 import { aiUsageContextStorage, recordAiUsage } from '../supabaseAdmin.js';
 
 class AIRouter {
@@ -24,21 +28,25 @@ class AIRouter {
   }
 
   public async execute(request: AIRequest): Promise<AIResponse> {
+    const usageCtx = aiUsageContextStorage.getStore();
+    const preferBackupModel = Boolean(request.preferBackupModel || usageCtx?.preferBackupModel);
     const provider = this.resolveProvider(request.provider);
     const adapter = this.getAdapter(provider);
     const validModelIds = new Set(getRegisteredModels(provider).map(m => m.id));
-    const model =
-      request.model?.trim() && validModelIds.has(request.model.trim())
-        ? request.model.trim()
-        : getDefaultModelForProvider(provider);
+    const requestedModel = request.model?.trim();
+    const model = preferBackupModel
+      ? getBackupModelForProvider(provider)
+      : requestedModel && validModelIds.has(requestedModel)
+      ? requestedModel
+      : getDefaultModelForProvider(provider);
 
     const response = await adapter.execute({
       ...request,
+      preferBackupModel,
       provider,
       model,
     });
 
-    const usageCtx = aiUsageContextStorage.getStore();
     if (usageCtx?.companyId) {
       void recordAiUsage({
         companyId: usageCtx.companyId,
